@@ -26,11 +26,18 @@ class JobManager extends EventEmitter {
   jobs = new Map<string, JobState>();
   words = new Map<string, Word[]>();
   private loaded = false;
+  private loading?: Promise<void>;
   private renderQueue: Promise<void> = Promise.resolve();
 
-  async init() {
-    if (this.loaded) return;
-    this.loaded = true;
+  /** Load every job from disk once. Concurrent callers (the SSE route and the first fetch land together) wait for the same load. */
+  init(): Promise<void> {
+    if (this.loaded) return Promise.resolve();
+    return (this.loading ??= this.load().then(() => {
+      this.loaded = true;
+    }));
+  }
+
+  private async load() {
     await mkdir(OUTPUT_ROOT, { recursive: true });
     for (const d of await readdir(OUTPUT_ROOT).catch(() => [] as string[])) {
       try {

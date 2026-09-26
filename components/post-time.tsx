@@ -7,8 +7,11 @@ import { AUDIENCES, audienceTz, bestPostTimes } from "@/lib/post-time";
 
 const KEY = "capy.audience";
 
-/** Best time to post this Short: next 3 slots in audience time, UTC, and your time. */
-export function PostTime() {
+/**
+ * Best time to post this Short: next 3 slots in audience time, UTC, and your time.
+ * `frame={false}` drops the card chrome so it can sit inside another card (the posting sheet).
+ */
+export function PostTime({ frame = true }: { frame?: boolean }) {
   const [audience, setAudience] = useState<string>("us-east");
   const [now, setNow] = useState(() => new Date());
   const yourTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -37,12 +40,18 @@ export function PostTime() {
   }
 
   return (
-    <div className="space-y-3 rounded-xl border bg-card p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 font-semibold">
-          <CalendarClock className="size-4 text-primary" /> Best time to post
-        </h2>
-        <div className="w-44">
+    <div className={frame ? "space-y-3 rounded-xl border bg-card p-5" : "space-y-3"}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {frame ? (
+          <h2 className="flex items-center gap-2 font-semibold">
+            <CalendarClock className="size-4 text-primary" /> Best time to post
+          </h2>
+        ) : (
+          <Label className="flex items-center gap-1.5">
+            <CalendarClock className="size-3.5 text-primary" /> Best time to post
+          </Label>
+        )}
+        <div className={frame ? "w-44" : "w-full"}>
           <Select value={audience} onChange={(e) => choose(e.target.value)} aria-label="Audience">
             {AUDIENCES.map((a) => (
               <option key={a.id} value={a.id}>
@@ -81,9 +90,12 @@ export function PostTime() {
         </ul>
       </div>
 
-      <p className="text-[11px] leading-snug text-muted-foreground">
-        Based on published Shorts studies (evenings 6–11pm audience-local, Fri/Thu/Sat strongest, Mon/Tue weakest); we schedule ~1h before the peak. Once your channel has data, YouTube Studio → Analytics → Audience → “When your viewers are on YouTube” beats this.
-      </p>
+      <details className="text-[11px] leading-snug text-muted-foreground">
+        <summary className="cursor-pointer select-none hover:text-foreground">How this is worked out</summary>
+        <p className="mt-1">
+          Based on published Shorts studies (evenings 6–11pm audience-local, Fri/Thu/Sat strongest, Mon/Tue weakest); we schedule ~1h before the peak. Once your channel has data, YouTube Studio → Analytics → Audience → “When your viewers are on YouTube” beats this.
+        </p>
+      </details>
     </div>
   );
 }
