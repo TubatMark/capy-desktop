@@ -8,6 +8,7 @@ vi.mock("../src/exec", () => ({
   ensureToolPaths: vi.fn(() => ""),
 }));
 vi.mock("../src/pick", () => ({ askClaude: vi.fn() }));
+vi.mock("../src/transcribe", () => ({ transcriberStatus: vi.fn(async () => ({ backend: null })) }));
 vi.mock("../src/render", () => ({
   renderClip: vi.fn(async () => {}),
   detectEncoder: vi.fn(async () => "h264_videotoolbox"),
@@ -16,6 +17,7 @@ vi.mock("../src/render", () => ({
 
 import { run, hasCommand } from "../src/exec";
 import { askClaude } from "../src/pick";
+import { transcriberStatus } from "../src/transcribe";
 import { renderClip } from "../src/render";
 import { CHECKS, FIX, runChecks } from "../server/doctor";
 import type { CheckResult } from "../lib/types";
@@ -24,6 +26,7 @@ const mRun = vi.mocked(run);
 const mAsk = vi.mocked(askClaude);
 const mRender = vi.mocked(renderClip);
 const mHas = vi.mocked(hasCommand);
+const mWhisper = vi.mocked(transcriberStatus);
 
 async function collect(): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
@@ -97,11 +100,26 @@ describe("runChecks", () => {
     expect(c.fix).toBe(FIX.claude);
   });
 
-  it("treats whisper as informational", async () => {
+  it("treats a missing transcriber as informational", async () => {
     const w = (await collect()).find((r) => r.name === "whisper")!;
     expect(w.ok).toBe(true);
     expect(w.detail).toContain("only needed for videos without captions");
-    mHas.mockImplementation(async (cmd: string) => cmd === "mlx_whisper");
+    mWhisper.mockResolvedValueOnce({ backend: "mlx_whisper" });
     expect((await collect()).find((r) => r.name === "whisper")!.detail).toContain("mlx_whisper");
+  });
+
+  it("names the model whisper-cli will use", async () => {
+    mWhisper.mockResolvedValueOnce({ backend: "whisper-cli", model: "/Users/x/models/ggml-large-v3-turbo.bin" });
+    const w = (await collect()).find((r) => r.name === "whisper")!;
+    expect(w.ok).toBe(true);
+    expect(w.detail).toBe("whisper-cli · ggml-large-v3-turbo.bin");
+  });
+
+  it("flags whisper-cli without a model as a failure with the download fix", async () => {
+    mWhisper.mockResolvedValueOnce({ backend: "whisper-cli", problem: "no model", fix: "curl -L ... ggml-large-v3-turbo.bin" });
+    const w = (await collect()).find((r) => r.name === "whisper")!;
+    expect(w.ok).toBe(false);
+    expect(w.detail).toContain("no model file");
+    expect(w.fix).toContain("curl -L");
   });
 });

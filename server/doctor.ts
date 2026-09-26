@@ -5,6 +5,7 @@ import { hasCommand, resolveBin, run } from "../src/exec";
 import { askClaude } from "../src/pick";
 import { detectEncoder, renderClip, NO_LIBASS } from "../src/render";
 import { effective } from "./settings";
+import { transcriberStatus } from "../src/transcribe";
 import type { CheckResult } from "../lib/types";
 
 /** Copy-pasteable fixes. Kept in one place so the CLI and the Settings page say the same thing. */
@@ -67,10 +68,14 @@ function probes(model: string): Record<CheckName, Probe> {
       }
     },
 
-    // informational: only needed for videos without captions
-    whisper: async () => ({
-      detail: (await hasCommand("mlx_whisper")) ? "mlx_whisper (optional fallback)" : (await hasCommand("whisper-cli")) ? "whisper-cli (optional fallback)" : "none — only needed for videos without captions",
-    }),
+    // only needed for videos without captions; but an installed whisper-cli with no model would fail those jobs
+    whisper: async () => {
+      const t = await transcriberStatus();
+      if (t.backend === "mlx_whisper") return { detail: "mlx_whisper (optional fallback)" };
+      if (t.backend === null) return { detail: "none — only needed for videos without captions" };
+      if (t.model !== undefined) return { detail: `${t.backend} · ${path.basename(t.model)}` };
+      return { ok: false, detail: `${t.backend} is installed but has no model file (needed for videos without captions)`, fix: t.fix };
+    },
 
     claude: async () => {
       try {
