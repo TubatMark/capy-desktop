@@ -6,6 +6,7 @@ import { pickClips, type PickOpts } from "./pick";
 import { renderClip, thumbnail, clipThumbnail, type RenderOpts } from "./render";
 import { transcribe } from "./transcribe";
 import { pad2, slug } from "./util";
+import { isCancelled } from "./exec";
 import type { Clip, VideoMeta, Word } from "./types";
 import { HOOK_FRAME_SEC } from "../lib/types";
 
@@ -70,6 +71,7 @@ export async function stageWords(
       words = await fetchCaptions(url, workDir, o.lang, yt, meta);
       if (!words) o.log?.("this video has no captions");
     } catch (e) {
+      if (isCancelled(e)) throw e;
       captionErr = (e instanceof Error ? e.message : String(e)).split("\n").filter(Boolean).pop();
       o.log?.(`caption download failed: ${captionErr}`);
     }
@@ -82,6 +84,7 @@ export async function stageWords(
       words = await transcribe(audio, workDir, { language: o.lang });
       source = "whisper";
     } catch (e) {
+      if (isCancelled(e)) throw e;
       const hint = captionErr ? `YouTube captions failed (${captionErr}). Try cookies from your browser, or wait a few minutes.\n` : "";
       throw new Error(hint + (e instanceof Error ? e.message : String(e)));
     }
