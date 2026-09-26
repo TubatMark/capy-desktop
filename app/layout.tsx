@@ -5,6 +5,7 @@ import Link from "next/link";
 import "./globals.css";
 import { ThemeToggle, THEME_INIT } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/logo";
+import { Backdrop } from "@/components/backdrop";
 
 export const metadata: Metadata = {
   title: "capy",
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
       <body className="min-h-screen">
+        <Backdrop />
         <header className="sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur">
           <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-6">
             <Link href="/" className="flex items-center gap-2.5" aria-label="capy home">
