@@ -6,11 +6,11 @@ import { Progress } from "@/components/ui/progress";
 import { fmtRemaining } from "@/lib/utils";
 import type { JobState, Stage } from "@/lib/types";
 
-const STAGES: { key: Stage; label: string }[] = [
-  { key: "meta", label: "Video info" },
-  { key: "captions", label: "Transcript" },
-  { key: "pick", label: "AI picks moments" },
-  { key: "segments", label: "Downloading clips" },
+const STAGES: { key: Stage; label: string; failed: string }[] = [
+  { key: "meta", label: "Video info", failed: "Couldn't read the video" },
+  { key: "captions", label: "Transcript", failed: "Transcript failed" },
+  { key: "pick", label: "AI picks moments", failed: "AI picks failed" },
+  { key: "segments", label: "Downloading clips", failed: "Footage download failed" },
 ];
 
 /** Stepper + countdown shown while a job is analyzing/preparing. */
@@ -26,10 +26,11 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="font-medium">
-            {cancelled ? "Cancelled" : job.status === "error" ? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
+            {cancelled ? "Cancelled" : job.status === "error" ? STAGES[current]?.failed ?? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
             {running && job.startedAt ? <span className="ml-2 font-mono text-xs font-normal text-muted-foreground"><Elapsed since={job.startedAt} /></span> : null}
           </p>
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">
+          {/* errors carry their own fix instructions, often several lines with a command: show all of it */}
+          <p className={"mt-0.5 text-sm text-muted-foreground " + (job.status === "error" ? "whitespace-pre-line break-words" : "truncate")}>
             {cancelled ? "Change the settings and paste the link again, or try again as is." : job.status === "error" ? job.error : lastLog?.msg ?? "Starting…"}
           </p>
         </div>
