@@ -57,12 +57,12 @@ export function PublishPanel({ jobId, clip }: { jobId: string; clip: ClipState }
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">Publish to YouTube</h2>
         <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null}>
-          {busy === "gen" ? <Loader2 className="animate-spin" /> : <Sparkles />} {p ? "Regenerate" : "Generate with Claude"}
+          {busy === "gen" ? <Loader2 className="animate-spin" /> : <Sparkles />} {p ? "Regenerate" : "Generate with AI"}
         </Button>
       </div>
       {err && <p className="text-xs text-red-300">{err}</p>}
       {!p ? (
-        <p className="text-sm text-muted-foreground">No upload text yet for this clip. Generate it and Claude will write a title, description and hashtags from the transcript.</p>
+        <p className="text-sm text-muted-foreground">No upload text yet for this clip. Generate it and AI will write a title, description and hashtags from the transcript.</p>
       ) : (
         <>
           <Field label="Title" value={p.ytTitle} hint={`${p.ytTitle.length}/100`}>

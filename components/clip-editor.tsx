@@ -366,7 +366,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
             <p className="text-xs text-muted-foreground">
               {fmtTime(draft.start)} → {fmtTime(draft.end)} · {Math.round(len)}s
             </p>
-            <Field label="Why Claude picked it">
+            <Field label="Why AI picked it">
               <Textarea value={draft.reason} onChange={(e) => edit({ reason: e.target.value })} rows={3} className="text-muted-foreground" disabled={locked} />
             </Field>
             {locked ? (
@@ -379,7 +379,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               <Button variant="outline" onClick={() => save(true)} disabled={saving} title="Move in/out to the nearest sentence or pause">
                 Snap to speech
               </Button>
-              <Button variant="outline" onClick={rewrite} disabled={rewriting} title="Ask Claude for a title and hook that match why it picked this clip">
+              <Button variant="outline" onClick={rewrite} disabled={rewriting} title="Ask AI for a title and hook that match why it picked this clip">
                 {rewriting ? <Loader2 className="animate-spin" /> : <Sparkles />} Rewrite title & hook
               </Button>
               <Button variant="ghost" size="icon" onClick={reset} disabled={!dirty} aria-label="Reset">

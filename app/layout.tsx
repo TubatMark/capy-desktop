@@ -9,7 +9,7 @@ import { Backdrop } from "@/components/backdrop";
 
 export const metadata: Metadata = {
   title: "capy",
-  description: "YouTube → captioned shorts, picked by Claude",
+  description: "YouTube → captioned shorts, picked by AI",
   icons: { icon: [{ url: "/favicon-32.png", sizes: "32x32" }, { url: "/icon-192.png", sizes: "192x192" }], apple: "/icon-192.png" },
 };
 

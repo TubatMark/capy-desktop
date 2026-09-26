@@ -34,7 +34,7 @@ export function VideoView({ id }: { id: string }) {
     await api(`/api/jobs/${id}/render`, { method: "POST", body: JSON.stringify({}) });
   }
   async function repick() {
-    if (!confirm("Ask Claude for a fresh set of picks? Your current picks and edits will be replaced.")) return;
+    if (!confirm("Ask AI for a fresh set of picks? Your current picks and edits will be replaced.")) return;
     await api(`/api/jobs/${id}/repick`, { method: "POST", body: JSON.stringify({}) });
   }
 
@@ -67,7 +67,7 @@ export function VideoView({ id }: { id: string }) {
           {job.status === "ready" && job.tookMs && (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Timer className="size-3.5" /> Link to picks took <span className="font-mono text-foreground">{fmtDur(job.tookMs)}</span>
-              {job.pickCostUsd ? <span> · Claude ~${job.pickCostUsd.toFixed(2)} equiv.</span> : null}
+              {job.pickCostUsd ? <span> · AI ~${job.pickCostUsd.toFixed(2)} equiv.</span> : null}
             </p>
           )}
           {!busy && (
@@ -81,7 +81,7 @@ export function VideoView({ id }: { id: string }) {
                 <Wand2 /> Render {selected.length} selected
               </Button>
               <Button variant="outline" onClick={repick}>
-                <RefreshCw /> Ask Claude again
+                <RefreshCw /> Ask AI again
               </Button>
               {renderedCount > 0 && (
                 <Button variant="outline" asChild>
@@ -146,7 +146,7 @@ export function VideoView({ id }: { id: string }) {
         {job.clips.length === 0 ? (
           <div className="grid place-items-center rounded-xl border border-dashed py-16 text-muted-foreground">
             <Clapperboard className="mb-2 size-8 opacity-50" />
-            {busy ? "Picks will appear here as soon as Claude is done." : "No picks yet."}
+            {busy ? "Picks will appear here as soon as AI is done." : "No picks yet."}
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">

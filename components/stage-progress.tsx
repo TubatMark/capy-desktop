@@ -8,7 +8,7 @@ import type { JobState, Stage } from "@/lib/types";
 const STAGES: { key: Stage; label: string }[] = [
   { key: "meta", label: "Video info" },
   { key: "captions", label: "Transcript" },
-  { key: "pick", label: "Claude picks moments" },
+  { key: "pick", label: "AI picks moments" },
   { key: "segments", label: "Downloading clips" },
 ];
 
