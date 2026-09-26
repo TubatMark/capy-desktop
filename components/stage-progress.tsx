@@ -53,7 +53,8 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
       {/* vertical list when narrow, 2 columns from 28rem, one row from 36rem */}
       <ol className="mt-4 grid grid-cols-1 gap-2 @md:grid-cols-2 @xl:grid-cols-4">
         {STAGES.map((s, i) => {
-          const state = job.status === "error" && i === current ? "error" : i < current || !running ? "done" : i === current ? "active" : "todo";
+          // after an error or cancel, the stages that never ran stay "todo" instead of pretending they finished
+          const state = job.status === "error" ? (i < current ? "done" : i === current ? "error" : "todo") : i < current || !running ? "done" : i === current ? "active" : "todo";
           return (
             <li key={s.key} className="flex min-w-0 items-center gap-2 text-sm">
               <span
