@@ -152,7 +152,7 @@ describe("regressions from e2e review", () => {
   });
   it("clamps long clips on a word end, not mid-word", () => {
     const words = sentence(Array.from({ length: 300 }, () => "word"), 0, 0.37);
-    const [c] = postProcess([{ start: 10, end: 100, title: "t", hook: "", reason: "", score: 5 }], words, 111, { minSec: 20, maxSec: 60 });
+    const [c] = postProcess([{ start: 10, end: 100, title: "t", hook: "", reason: "", score: 5, ytTitle: "", description: "", hashtags: [] }], words, 111, { minSec: 20, maxSec: 60 });
     expect(c!.end - c!.start).toBeLessThanOrEqual(60);
     const cutAt = c!.end - 0.25;
     expect(words.some((w) => Math.abs(w.end - cutAt) < 1e-6)).toBe(true);
