@@ -1,0 +1,12 @@
+node_modules/
+output/
+.smoke/
+*.log
+.env
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.ship/
+shots/
+.DS_Store
+*.tgz

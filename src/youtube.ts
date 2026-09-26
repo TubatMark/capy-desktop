@@ -1,0 +1,161 @@
+import { mkdir, readdir, readFile } from "node:fs/promises";
+import path from "node:path";
+import { resolveBin, run } from "./exec";
+import type { VideoMeta, Word } from "./types";
+import { parseJson3 } from "./captions";
+
+export interface YtOpts {
+  proxy?: string;
+  cookies?: string;
+  /** Read cookies straight from a browser profile, e.g. "chrome" or "safari". */
+  cookiesFromBrowser?: string;
+}
+
+function common(o: YtOpts): string[] {
+  const a: string[] = ["--no-warnings", "--no-playlist"];
+  if (o.proxy) a.push("--proxy", o.proxy);
+  if (o.cookies) a.push("--cookies", o.cookies);
+  if (o.cookiesFromBrowser) a.push("--cookies-from-browser", o.cookiesFromBrowser);
+  return a;
+}
+
+export function videoIdFromUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
+    if (u.hostname.endsWith("youtube.com")) {
+      const v = u.searchParams.get("v");
+      if (v) return v;
+      const m = u.pathname.match(/\/(shorts|live|embed)\/([A-Za-z0-9_-]{11})/);
+      if (m) return m[2]!;
+    }
+  } catch {
+    /* not a URL */
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(url) ? url : null;
+}
+
+export async function fetchMeta(url: string, o: YtOpts = {}): Promise<VideoMeta> {
+  const { stdout } = await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", url]);
+  const j = JSON.parse(stdout);
+  return {
+    id: j.id,
+    title: j.title ?? j.id,
+    channel: j.channel ?? j.uploader,
+    duration: Number(j.duration ?? 0),
+    url: j.webpage_url ?? url,
+    language: j.language ?? undefined,
+    subtitles: Object.keys(j.subtitles ?? {}),
+    autoCaptions: Object.keys(j.automatic_captions ?? {}),
+  };
+}
+
+/**
+ * Pick the caption track whose words match what's actually spoken.
+ * Tries the spoken language as given ("en-US") and its base ("en"): manual subs first,
+ * then the original auto-caption track ("en-orig"), then plain auto ("en").
+ * Never guesses among other languages' "-orig" tracks (YouTube lists many for dubbed videos).
+ */
+export function pickCaptionLang(meta: VideoMeta, lang?: string): { lang: string; auto: boolean } | null {
+  const is = (l: string, p: string) => l === p || l.startsWith(p + "-") || l.startsWith(p + "_");
+  const spoken = lang ?? meta.language;
+  const tryLang = (c: string) => {
+    const manual = meta.subtitles.find((l) => is(l, c));
+    if (manual) return { lang: manual, auto: false };
+    const auto = meta.autoCaptions.find((l) => l === `${c}-orig`) ?? meta.autoCaptions.find((l) => l === c);
+    return auto ? { lang: auto, auto: true } : null;
+  };
+  for (const c of new Set([spoken, spoken?.split(/[-_]/)[0]].filter(Boolean) as string[])) {
+    const hit = tryLang(c);
+    if (hit) return hit;
+  }
+  // language unknown: a single original-speech track beats a possibly machine-translated "en"
+  const origs = meta.autoCaptions.filter((l) => l.endsWith("-orig"));
+  if (origs.length === 1) return { lang: origs[0]!, auto: true };
+  const en = tryLang("en");
+  if (en) return en;
+  if (meta.subtitles[0]) return { lang: meta.subtitles[0], auto: false };
+  if (meta.autoCaptions[0]) return { lang: meta.autoCaptions[0], auto: true };
+  return null;
+}
+
+/** Download YouTube captions as json3 and parse into words. Returns null when the video has no captions. */
+export async function fetchCaptions(
+  url: string,
+  dir: string,
+  lang?: string,
+  o: YtOpts = {},
+  meta?: VideoMeta,
+): Promise<Word[] | null> {
+  meta ??= await fetchMeta(url, o);
+  const pick = pickCaptionLang(meta, lang);
+  if (!pick) return null;
+  await mkdir(dir, { recursive: true });
+  const args = [
+    ...common(o),
+    "--skip-download",
+    pick.auto ? "--write-auto-subs" : "--write-subs",
+    "--sub-langs",
+    pick.lang,
+    "--sub-format",
+    "json3",
+    "-o",
+    path.join(dir, "captions"),
+    url,
+  ];
+  await run("yt-dlp", args);
+  const files = (await readdir(dir)).filter((f) => f.startsWith("captions") && f.endsWith(".json3"));
+  if (files.length === 0) return null;
+  const raw = await readFile(path.join(dir, files[0]!), "utf8");
+  const words = parseJson3(raw);
+  return words.length > 0 ? words : null;
+}
+
+/** Download the full audio track (m4a) for Whisper fallback. */
+export async function fetchAudio(url: string, out: string, o: YtOpts = {}): Promise<string> {
+  await run("yt-dlp", [...common(o), "-f", "bestaudio[ext=m4a]/bestaudio", "-o", out, url]);
+  return out;
+}
+
+/**
+ * Download only [start, end] of the source, at the best resolution up to `maxRes`.
+ * Uses --download-sections so a 1-hour source never comes down in full.
+ *
+ * Quality: a 9:16 crop of a 16:9 frame keeps only ~56% of its width, so a 1080p
+ * source gets stretched 1.8x. A 4K source gets scaled *down* instead — much sharper.
+ * yt-dlp must re-encode the section for a frame-accurate cut; that pass is made
+ * near-lossless so the final render is the only real compression step.
+ */
+export async function fetchSection(
+  url: string,
+  start: number,
+  end: number,
+  out: string,
+  o: YtOpts = {},
+  maxRes = 2160,
+): Promise<string> {
+  const ffmpeg = resolveBin("ffmpeg");
+  const intermediate =
+    process.platform === "darwin"
+      ? "-c:v h264_videotoolbox -b:v 80M -profile:v high -pix_fmt yuv420p -c:a aac -b:a 256k"
+      : "-c:v libx264 -preset ultrafast -crf 12 -pix_fmt yuv420p -c:a aac -b:a 256k";
+  await run("yt-dlp", [
+    ...common(o),
+    "-f",
+    `bv*[height<=${maxRes}]+ba/b[height<=${maxRes}]/b`,
+    "-S",
+    `res:${maxRes},fps`,
+    "--download-sections",
+    `*${start.toFixed(2)}-${end.toFixed(2)}`,
+    "--force-keyframes-at-cuts",
+    "--downloader-args",
+    `ffmpeg_o:${intermediate}`,
+    ...(ffmpeg !== "ffmpeg" ? ["--ffmpeg-location", path.dirname(ffmpeg)] : []),
+    "--merge-output-format",
+    "mp4",
+    "-o",
+    out,
+    url,
+  ]);
+  return out;
+}
