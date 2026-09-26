@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Loader2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { fmtRemaining } from "@/lib/utils";
 import type { JobState, Stage } from "@/lib/types";
@@ -13,8 +14,9 @@ const STAGES: { key: Stage; label: string }[] = [
 ];
 
 /** Stepper + countdown shown while a job is analyzing/preparing. */
-export function StageProgress({ job }: { job: JobState }) {
+export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () => void }) {
   const running = job.status === "analyzing" || job.status === "preparing";
+  const cancelled = job.status === "error" && job.error === "Cancelled";
   const idx = STAGES.findIndex((s) => s.key === job.stage);
   const current = idx >= 0 ? idx : STAGES.length;
   const lastLog = job.log[job.log.length - 1];
@@ -26,15 +28,24 @@ export function StageProgress({ job }: { job: JobState }) {
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-48">
           <p className="font-medium">
-            {job.status === "error" ? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
+            {cancelled ? "Cancelled" : job.status === "error" ? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
             {running && job.startedAt ? <span className="ml-2 font-mono text-xs font-normal text-muted-foreground"><Elapsed since={job.startedAt} /></span> : null}
           </p>
-          <p className={"mt-0.5 text-sm text-muted-foreground " + (job.status === "error" ? "break-words" : "truncate")}>{job.status === "error" ? job.error : lastLog?.msg ?? "Starting…"}</p>
+          <p className={"mt-0.5 text-sm text-muted-foreground " + (job.status === "error" ? "break-words" : "truncate")}>
+            {cancelled ? "Change the settings and paste the link again, or try again as is." : job.status === "error" ? job.error : lastLog?.msg ?? "Starting…"}
+          </p>
         </div>
         {running && (
-          <div className="shrink-0 text-right">
-            <p className="font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
-            <p className="text-xs text-muted-foreground">until picks are ready</p>
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="text-right">
+              <p className="font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
+              <p className="text-xs text-muted-foreground">until picks are ready</p>
+            </div>
+            {onCancel && (
+              <Button size="sm" variant="outline" onClick={onCancel} title="Stop picking and downloading. You can change the clip count and run it again.">
+                <X /> Cancel
+              </Button>
+            )}
           </div>
         )}
       </div>
