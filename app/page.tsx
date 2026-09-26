@@ -18,7 +18,7 @@ export default async function Home() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/capy-logo.png" alt="capy" className="mx-auto mb-2 h-44 w-auto drop-shadow-sm" />
         <h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl">Long video in. Shorts out.</h1>
-        <p className="mt-3 text-pretty text-muted-foreground">Paste a YouTube link. Claude finds the moments, you tweak them, capy renders captioned 9:16 clips on your Mac.</p>
+        <p className="mt-3 text-pretty text-muted-foreground">Paste a YouTube link. AI finds the moments, you tweak them, capy renders captioned 9:16 clips on your Mac.</p>
         <div className="mt-8">
           <UrlForm large />
         </div>
