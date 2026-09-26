@@ -67,11 +67,11 @@ describe("postProcess", () => {
   it("drops overlaps keeping the higher score, clamps length, sorts by time", () => {
     const clips = postProcess(
       [
-        { start: 100, end: 130, title: "b", hook: "", reason: "", score: 6 },
-        { start: 10, end: 40, title: "a", hook: "", reason: "", score: 8 },
-        { start: 20, end: 50, title: "a2", hook: "", reason: "", score: 5 },
-        { start: 150, end: 250, title: "long", hook: "", reason: "", score: 7 },
-        { start: 160, end: 162, title: "tiny", hook: "", reason: "", score: 9 },
+        { start: 100, end: 130, title: "b", hook: "", reason: "", score: 6, ytTitle: "", description: "", hashtags: [] },
+        { start: 10, end: 40, title: "a", hook: "", reason: "", score: 8, ytTitle: "", description: "", hashtags: [] },
+        { start: 20, end: 50, title: "a2", hook: "", reason: "", score: 5, ytTitle: "", description: "", hashtags: [] },
+        { start: 150, end: 250, title: "long", hook: "", reason: "", score: 7, ytTitle: "", description: "", hashtags: [] },
+        { start: 160, end: 162, title: "tiny", hook: "", reason: "", score: 9, ytTitle: "", description: "", hashtags: [] },
       ],
       words,
       200,
