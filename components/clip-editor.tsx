@@ -246,7 +246,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
           ) : (
           <div className="grid gap-4 md:grid-cols-[300px_minmax(0,1fr)]">
             {/* phone frame */}
-            <div className="mx-auto w-full max-w-[340px] md:w-[300px]">
+            <div className="mx-auto w-[min(100%,calc(70vh*9/16))] max-w-[340px] md:w-[300px]">
               <div className="relative overflow-hidden rounded-[28px] border-4 border-neutral-800 bg-black shadow-2xl [container-type:inline-size]" style={{ aspectRatio: "9/16" }}>
                 {showRendered ? (
                   <video ref={videoRef} key={r.url} src={r.url} className="absolute inset-0 size-full object-contain" onTimeUpdate={onTime} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} playsInline />
