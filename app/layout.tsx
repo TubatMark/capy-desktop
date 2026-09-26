@@ -3,9 +3,9 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import Link from "next/link";
 import "./globals.css";
-import { ThemeToggle, THEME_INIT } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/logo";
 import { Backdrop } from "@/components/backdrop";
+import { NavLink } from "@/components/nav-link";
 
 export const metadata: Metadata = {
   title: "capy",
@@ -15,10 +15,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
-      </head>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-screen">
         <Backdrop />
         <header className="sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur">
@@ -29,13 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Wordmark className="h-7" />
             </Link>
             <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-              <Link href="/" className="hover:text-foreground">
-                Library
-              </Link>
+              <NavLink href="/">Library</NavLink>
+              <NavLink href="/settings">Settings</NavLink>
             </nav>
-            <div className="ml-auto">
-              <ThemeToggle />
-            </div>
           </div>
         </header>
         <main className="mx-auto max-w-[1600px] px-6 py-8">{children}</main>

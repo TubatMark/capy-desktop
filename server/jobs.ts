@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { stageMeta, stageWords, stagePick, stageSegment, stageRender, segmentFor, exists, writePublishFiles } from "../src/pipeline";
+import { stageMeta, stageWords, stagePick, stageSegment, stageRender, segmentFor, exists, writePublishFiles, thumbCandidates } from "../src/pipeline";
+import { thumbnail } from "../src/render";
 import { videoIdFromUrl } from "../src/youtube";
 import { snapToWords } from "../src/captions";
 import { generatePublish, rewriteTitleHook } from "../src/pick";
@@ -11,6 +12,8 @@ import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { loadTimings, learn, type Timings } from "./estimates";
 import type { ClipState, JobSettings, JobState, Stage } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
+import { agentSpec } from "../src/agents";
+import { loadAppSettings } from "./settings";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 
@@ -132,6 +135,15 @@ class JobManager extends EventEmitter {
     if (!job.title) return; // folder name isn't known until metadata arrives
     await mkdir(path.join(OUTPUT_ROOT, job.dir), { recursive: true });
     await writeFile(path.join(OUTPUT_ROOT, job.dir, "job.json"), JSON.stringify(job, null, 2));
+  }
+
+  /** The AI chosen in Settings (Claude by default) and the model to ask it for. */
+  private async ai(job: JobState) {
+    const app = await loadAppSettings();
+    const agent = app.agent;
+    const model =
+      app.models[agent] ?? (agent === "claude" ? (job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL) : undefined);
+    return { agent, model };
   }
 
   private emitJob(job: JobState) {
@@ -310,13 +322,14 @@ class JobManager extends EventEmitter {
       // 3. pick (skip if we already have clips and weren't asked to repick)
       await this.setStage(job, "pick");
       if (o.repick || job.clips.length === 0) {
-        const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
-        this.log(job, "pick", `asking ${model} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s)`);
+        const { agent, model } = await this.ai(job);
+        this.log(job, "pick", `asking ${agentSpec(agent).name}${model ? ` (${model})` : ""} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s)`);
         const t2 = Date.now();
         const res = await stagePick(words, meta, {
           count: job.settings.count,
           minSec: job.settings.minSec,
           maxSec: job.settings.maxSec,
+          agent,
           model,
           focus: job.settings.focus,
           onRetry: (m) => this.log(job, "pick", m),
@@ -330,7 +343,7 @@ class JobManager extends EventEmitter {
           render: { status: "none" },
           publish: c.ytTitle ? { ytTitle: c.ytTitle, description: c.description ?? "", hashtags: c.hashtags ?? [] } : undefined,
         }));
-        await writeFile(path.join(jobDir, "clips.json"), JSON.stringify({ video: job.url, model, clips: res.clips, raw: res.raw }, null, 2));
+        await writeFile(path.join(jobDir, "clips.json"), JSON.stringify({ video: job.url, agent, model, clips: res.clips, raw: res.raw }, null, 2));
         this.log(job, "pick", `${job.clips.length} clips picked in ${((Date.now() - t2) / 1000).toFixed(1)}s`);
       }
 
@@ -399,14 +412,20 @@ class JobManager extends EventEmitter {
     }
     const { snap: _s, ...rest } = patch;
     Object.assign(c, rest);
-    if (patch.publish && c.render.status === "done" && c.render.file) {
+    const rendered = renderFile(c);
+    if (patch.publish && rendered) {
       // keep the .txt next to the mp4 in sync without re-rendering
-      void writePublishFiles(c.render.file, { ...c, ytTitle: c.publish?.ytTitle, description: c.publish?.description, hashtags: c.publish?.hashtags }).catch(() => {});
+      void writePublishFiles(rendered, { ...c, ytTitle: c.publish?.ytTitle, description: c.publish?.description, hashtags: c.publish?.hashtags }).catch(() => {});
     }
     if (c.end - c.start < 3) c.end = c.start + 3;
     const timingChanged = before.start !== c.start || before.end !== c.end;
     const textChanged = before.title !== c.title || before.hook !== c.hook;
     if ((timingChanged || textChanged) && c.render.status === "done") c.render.status = "stale";
+    if (timingChanged) {
+      // the candidate frames were taken from the old range
+      c.thumbs = undefined;
+      c.thumbAt = undefined;
+    }
     if (timingChanged && !this.segmentCovers(c)) {
       // edit went outside the padded segment: fetch a new one in the background
       c.render = { status: "none" };
@@ -455,12 +474,58 @@ class JobManager extends EventEmitter {
     const c = job.clips.find((x) => x.n === n);
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
-    const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
-    c.publish = await generatePublish(words, { title: job.title ?? "", channel: job.channel }, c, model);
-    if (c.render.status === "done" && c.render.file) {
-      const { thumb, text } = await writePublishFiles(c.render.file, { ...c, ...c.publish });
+    const { agent, model } = await this.ai(job);
+    c.publish = await generatePublish(words, { title: job.title ?? "", channel: job.channel }, c, model, agent);
+    const rendered = renderFile(c);
+    if (rendered) {
+      const { thumb, text } = await writePublishFiles(rendered, { ...c, ...c.publish });
       c.render.thumbUrl = toMediaUrl(thumb) + `?v=${Date.now()}`;
       c.render.textUrl = toMediaUrl(text);
+    }
+    await this.update(job);
+    return c;
+  }
+
+  /** Grab candidate thumbnail frames: from the rendered clip when there is one, else from the source footage. */
+  async generateThumbs(id: string, n: number) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    const c = job.clips.find((x) => x.n === n);
+    if (!c) throw new Error("No such clip");
+    const jobDir = path.join(OUTPUT_ROOT, job.dir);
+    const rendered = renderFile(c);
+    const src =
+      rendered
+        ? { file: rendered, offset: 0 }
+        : c.segment?.status === "done"
+          ? { file: segFile(jobDir, c, job), offset: c.start - c.segment.start }
+          : null;
+    if (!src) throw new Error("Footage is still downloading. Try again in a moment.");
+    const files = await thumbCandidates(jobDir, c.n, c, src, job.settings.layout);
+    const v = Date.now();
+    c.thumbs = files.map((f) => ({ url: toMediaUrl(f.file) + `?v=${v}`, at: f.at }));
+    await this.update(job);
+    return c;
+  }
+
+  /** Use the frame `at` seconds into the clip as its thumbnail. Rewrites NN-title.jpg when the clip is rendered. */
+  async chooseThumb(id: string, n: number, at: number) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    const c = job.clips.find((x) => x.n === n);
+    if (!c) throw new Error("No such clip");
+    if (!Number.isFinite(at) || at < 0) throw new Error("Bad frame time");
+    c.thumbAt = at;
+    const jobDir = path.join(OUTPUT_ROOT, job.dir);
+    const rendered = renderFile(c);
+    if (rendered) {
+      const { thumb } = await writePublishFiles(rendered, { ...c, ytTitle: c.publish?.ytTitle, description: c.publish?.description, hashtags: c.publish?.hashtags });
+      c.render.thumbUrl = toMediaUrl(thumb) + `?v=${Date.now()}`;
+    } else if (c.segment?.status === "done") {
+      // not rendered yet: update the card picture; the real thumbnail is grabbed from the render later
+      const file = path.join(jobDir, "work", `${String(c.n).padStart(2, "0")}.jpg`);
+      await thumbnail(segFile(jobDir, c, job), file, c.start - c.segment.start + at, job.settings.layout);
+      c.thumbUrl = toMediaUrl(file) + `?v=${Date.now()}`;
     }
     await this.update(job);
     return c;
@@ -473,8 +538,8 @@ class JobManager extends EventEmitter {
     const c = job.clips.find((x) => x.n === n);
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
-    const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
-    return rewriteTitleHook(words, { title: job.title ?? "", channel: job.channel }, c, model);
+    const { agent, model } = await this.ai(job);
+    return rewriteTitleHook(words, { title: job.title ?? "", channel: job.channel }, c, model, agent);
   }
 
   // ---------- rendering ----------
@@ -524,6 +589,8 @@ class JobManager extends EventEmitter {
         tookMs,
       };
       this.log(job, "render", `clip ${c.n} done in ${(tookMs / 1000).toFixed(1)}s`);
+      // candidate thumbnails from the finished clip, so the publish panel has options right away
+      void this.generateThumbs(job.id, c.n).catch(() => {});
     } catch (e) {
       c.render = { status: "error", error: e instanceof Error ? e.message : String(e) };
       this.log(job, "render", `clip ${c.n} failed: ${c.render.error!.split("\n")[0]}`);
@@ -532,6 +599,13 @@ class JobManager extends EventEmitter {
       await this.update(job);
     }
   }
+}
+
+/** Absolute path of the rendered mp4, rebuilt from its media url so job.json survives the output folder moving. */
+function renderFile(c: ClipState): string | undefined {
+  if (c.render.status !== "done" || !c.render.url) return undefined;
+  const rel = decodeURIComponent(c.render.url.replace(/^\/api\/media\//, "").split("?")[0]!);
+  return path.join(OUTPUT_ROOT, rel);
 }
 
 function segFile(jobDir: string, c: ClipState, job: JobState) {

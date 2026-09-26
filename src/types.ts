@@ -28,6 +28,8 @@ export interface Clip {
   ytTitle?: string;
   description?: string;
   hashtags?: string[];
+  /** Seconds into the clip to grab the thumbnail from (default: the hook frame). */
+  thumbAt?: number;
 }
 
 export interface RenderedClip extends Clip {

@@ -1,7 +1,8 @@
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { Clip, Word } from "./types";
 import { snapToWords, transcriptForPrompt } from "./captions";
+import { askAgent } from "./agents";
+import type { AgentId } from "../lib/types";
 
 const ClipSchema = z.object({
   start: z.number().describe("Clip start in seconds"),
@@ -21,6 +22,8 @@ export interface PickOpts {
   count: number;
   minSec: number;
   maxSec: number;
+  /** Which AI to ask (default claude). */
+  agent?: AgentId;
   model?: string;
   /** Extra guidance from the user, e.g. "every joke that landed" */
   focus?: string;
@@ -35,88 +38,30 @@ export interface PickResult {
   durationMs: number;
 }
 
-export class ClaudeAuthError extends Error {}
+export { askClaude, ClaudeAuthError } from "./agents";
 
-/**
- * One-shot Claude call through the Agent SDK (billed to the `claude` login on this machine).
- * Fails fast on auth errors instead of silently retrying for minutes, and drops
- * ANTHROPIC_API_KEY from the subprocess so usage goes to the Claude plan
- * (set CAPY_USE_API_KEY=1 to keep it).
- */
-export async function askClaude(
-  prompt: string,
-  options: Options,
-  o: { timeoutMs?: number; onRetry?: (msg: string) => void } = {},
-): Promise<any> {
-  const abortController = new AbortController();
-  const env: Record<string, string | undefined> = { ...process.env };
-  if (!(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY)) delete env.ANTHROPIC_API_KEY;
-  let timedOut = false;
-  const timer = o.timeoutMs
-    ? setTimeout(() => {
-        timedOut = true;
-        abortController.abort();
-      }, o.timeoutMs)
-    : undefined;
-
-  let result: any;
-  try {
-    for await (const m of query({ prompt, options: { ...options, env, abortController } })) {
-      if (m.type === "system" && (m as any).subtype === "api_retry") {
-        const r = m as any;
-        if (r.error_status === 401 || r.error_status === 403) {
-          abortController.abort();
-          throw new ClaudeAuthError("Claude login missing or expired. Run `claude`, log in, then try again.");
-        }
-        o.onRetry?.(`Claude API retry ${r.attempt}/${r.max_retries} (${r.error_status ?? "network error"})`);
-      }
-      if (m.type === "result") result = m;
-    }
-  } catch (e) {
-    if (e instanceof ClaudeAuthError) throw e;
-    if (timedOut) throw new Error(`Claude did not answer within ${Math.round(o.timeoutMs! / 1000)}s`);
-    throw e;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-
-  if (!result) throw new Error(timedOut ? "Claude timed out" : "Claude returned no result");
-  if (result.is_error) {
-    const text = String(result.result ?? result.subtype);
-    if (/log ?in|auth/i.test(text)) throw new ClaudeAuthError(`${text}. Run \`claude\` and log in.`);
-    throw new Error(`Claude returned an error: ${text}`);
-  }
-  return result;
-}
-
-/** Ask Claude to choose the best moments; returns clips snapped to word boundaries. */
+/** Ask the chosen AI (Claude by default) for the best moments; returns clips snapped to word boundaries. */
 export async function pickClips(words: Word[], meta: { title: string; duration: number; channel?: string }, o: PickOpts): Promise<PickResult> {
   const t0 = Date.now();
-  const result = await askClaude(
-    buildPrompt(transcriptForPrompt(words), meta, o),
-    {
-      model: o.model,
-      tools: [],
-      settingSources: [],
-      persistSession: false,
-      maxTurns: 3,
-      effort: o.effort ?? "medium",
-      systemPrompt:
-        "You are a senior short-form video editor. You find the moments in long videos that perform best as vertical shorts. You only answer with the requested JSON.",
-      outputFormat: { type: "json_schema", schema: picksJsonSchema() },
-    },
-    { onRetry: o.onRetry },
-  );
+  const res = await askAgent(o.agent ?? "claude", buildPrompt(transcriptForPrompt(words), meta, o), {
+    model: o.model,
+    maxTurns: 3,
+    effort: o.effort ?? "medium",
+    system:
+      "You are a senior short-form video editor. You find the moments in long videos that perform best as vertical shorts. You only answer with the requested JSON.",
+    schema: picksJsonSchema(),
+    onRetry: o.onRetry,
+  });
 
-  const raw = result.structured_output ?? tryParse(result.result);
-  if (!raw) throw new Error("Claude returned no structured output");
+  const raw = res.data;
+  if (!raw) throw new Error("The AI returned no structured output");
   const parsed = PicksSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`Claude output failed validation: ${parsed.error.message}`);
+  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
 
   return {
     clips: postProcess(parsed.data.clips, words, meta.duration, o),
     raw,
-    costUsd: result.total_cost_usd ?? 0,
+    costUsd: res.costUsd,
     durationMs: Date.now() - t0,
   };
 }
@@ -125,17 +70,6 @@ export async function pickClips(words: Word[], meta: { title: string; duration: 
 export function picksJsonSchema(): Record<string, unknown> {
   const { $schema: _drop, ...schema } = z.toJSONSchema(PicksSchema, { target: "draft-7" }) as Record<string, unknown>;
   return schema;
-}
-
-function tryParse(s: unknown): unknown {
-  if (typeof s !== "string") return undefined;
-  const m = s.match(/\{[\s\S]*\}/);
-  if (!m) return undefined;
-  try {
-    return JSON.parse(m[0]);
-  } catch {
-    return undefined;
-  }
 }
 
 export function buildPrompt(transcript: string, meta: { title: string; duration: number; channel?: string }, o: PickOpts): string {
@@ -170,6 +104,7 @@ export async function rewriteTitleHook(
   meta: { title: string; channel?: string },
   clip: { start: number; end: number; title: string; hook: string; reason: string },
   model?: string,
+  agent: AgentId = "claude",
 ): Promise<{ title: string; hook: string }> {
   const excerpt = words
     .filter((w) => w.start >= clip.start - 0.1 && w.start < clip.end)
@@ -187,19 +122,15 @@ Write a better title and on-screen hook for this vertical short:
 - hook: under 40 chars, no emoji. The text a viewer with zero context reads before anyone speaks: set up the situation or stakes in third person and name who is in it when the video title or channel tells you (e.g. "Mia & Jay almost fall out over a missed trip"). Only quote the transcript if the quote alone states the conflict.
 - title: under 60 chars, says what happens (the conflict, reveal, or payoff), specific.
 Same language as the speakers.`;
-  const r = await askClaude(prompt, {
+  const { data: raw } = await askAgent(agent, prompt, {
     model,
-    tools: [],
-    settingSources: [],
-    persistSession: false,
     maxTurns: 2,
     effort: "low",
-    systemPrompt: "You are a senior short-form video editor who writes hooks that stop the scroll without lying about the content. Answer only with the requested JSON.",
-    outputFormat: { type: "json_schema", schema: stripSchema(z.toJSONSchema(TitleHookSchema, { target: "draft-7" }) as Record<string, unknown>) },
+    system: "You are a senior short-form video editor who writes hooks that stop the scroll without lying about the content. Answer only with the requested JSON.",
+    schema: stripSchema(z.toJSONSchema(TitleHookSchema, { target: "draft-7" }) as Record<string, unknown>),
   });
-  const raw = r.structured_output ?? tryParse(r.result);
   const parsed = TitleHookSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`Claude output failed validation: ${parsed.error.message}`);
+  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
   return parsed.data;
 }
 
@@ -209,6 +140,7 @@ export async function generatePublish(
   meta: { title: string; channel?: string },
   clip: { start: number; end: number; title: string; hook: string },
   model?: string,
+  agent: AgentId = "claude",
 ): Promise<{ ytTitle: string; description: string; hashtags: string[] }> {
   const excerpt = words
     .filter((w) => w.start >= clip.start - 0.1 && w.start < clip.end)
@@ -226,19 +158,15 @@ Write the YouTube Shorts upload text for this clip:
 - description: 2-4 short lines: what happens, a hook question or CTA, then "Credit: ${meta.channel ?? "original creator"}", then the hashtags on the last line.
 - hashtags: 4-8 without the # sign: creator names, topic, and shorts.
 Same language as the speakers.`;
-  const r = await askClaude(prompt, {
+  const { data: raw } = await askAgent(agent, prompt, {
     model,
-    tools: [],
-    settingSources: [],
-    persistSession: false,
     maxTurns: 2,
     effort: "low",
-    systemPrompt: "You write YouTube Shorts titles and descriptions that get clicks without lying about the content. Answer only with the requested JSON.",
-    outputFormat: { type: "json_schema", schema: stripSchema(z.toJSONSchema(PublishSchema, { target: "draft-7" }) as Record<string, unknown>) },
+    system: "You write YouTube Shorts titles and descriptions that get clicks without lying about the content. Answer only with the requested JSON.",
+    schema: stripSchema(z.toJSONSchema(PublishSchema, { target: "draft-7" }) as Record<string, unknown>),
   });
-  const raw = r.structured_output ?? tryParse(r.result);
   const parsed = PublishSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`Claude output failed validation: ${parsed.error.message}`);
+  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
   return parsed.data;
 }
 

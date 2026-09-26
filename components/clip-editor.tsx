@@ -215,7 +215,8 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      {/* three columns on wide screens: player+transcript · details+render · publish+timing. On lg the third column tucks under the second. */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_330px_330px] 2xl:grid-cols-[minmax(0,1fr)_360px_360px]">
         {/* left column must be allowed to shrink: min-w-0 */}
         {/* left: player + timeline + transcript */}
         <div className="min-w-0 space-y-4">
@@ -263,7 +264,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                 ) : (
                   <div className="absolute inset-0 grid place-items-center text-center text-xs text-muted-foreground">
                     {seg?.status === "error" ? (
-                      <span className="px-4 text-red-300">Download failed: {seg.error}</span>
+                      <span className="px-4 text-red-600">Download failed: {seg.error}</span>
                     ) : (
                       <span>
                         <Loader2 className="mx-auto mb-2 size-5 animate-spin" />
@@ -284,12 +285,12 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               </div>
             </div>
 
-            {/* right of phone: YouTube or transcript */}
-            <div className="min-h-[300px] min-w-0 md:h-[533px]">
+            {/* right of phone: YouTube or transcript, in a card like the rest of the page */}
+            <div className="min-h-[300px] min-w-0 rounded-xl border bg-card p-4 md:h-[533px]">
               {view === "youtube" ? (
                 <YouTubeEmbed videoId={job.videoId} seekTo={draft.start} className="h-full" />
               ) : (
-                <div className="flex h-full flex-col gap-2">
+                <div className="flex h-full flex-col gap-3">
                   <div className="flex h-8 items-center gap-2">
                     {locked ? (
                       <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -332,7 +333,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               onSeek={seek}
             />
           )}
-          {outsideSeg && !locked && <p className="text-xs text-amber-300">This range goes past the downloaded footage. Saving will fetch a new segment.</p>}
+          {outsideSeg && !locked && <p className="text-xs text-amber-700">This range goes past the downloaded footage. Saving will fetch a new segment.</p>}
           {!locked && (
             <p className="text-xs text-muted-foreground">
               <kbd className="rounded border px-1">space</kbd> play · <kbd className="rounded border px-1">I</kbd> / <kbd className="rounded border px-1">O</kbd> set in/out at playhead · <kbd className="rounded border px-1">←</kbd> <kbd className="rounded border px-1">→</kbd> nudge 0.1s (shift: 1s) · drag the yellow handles to trim
@@ -340,7 +341,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
           )}
         </div>
 
-        {/* right: fields */}
+        {/* middle: clip fields + render */}
         <div className="space-y-4">
           <div className="space-y-4 rounded-xl border bg-card p-5">
             <div className="flex items-center justify-between">
@@ -404,7 +405,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                 </p>
               </div>
             )}
-            {r.status === "error" && <p className="text-xs text-red-300">{r.error}</p>}
+            {r.status === "error" && <p className="text-xs text-red-600">{r.error}</p>}
             <div className="flex flex-wrap gap-2">
               {locked ? (
                 <Button onClick={requestRerender} title="Unlock this clip to edit and render it again">
@@ -429,11 +430,15 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                   </a>
                 </Button>
               )}
-              <Button variant="ghost" size="icon" className="ml-auto text-red-300 hover:text-red-200" onClick={remove} aria-label="Delete clip">
+              <Button variant="ghost" size="icon" className="ml-auto text-red-500 hover:text-red-600" onClick={remove} aria-label="Delete clip">
                 <Trash2 />
               </Button>
             </div>
           </div>
+        </div>
+
+        {/* right: publish + timing */}
+        <div className="space-y-4 lg:col-start-2 xl:col-start-auto">
           <PublishPanel jobId={id} clip={clip} />
           <PostTime />
         </div>

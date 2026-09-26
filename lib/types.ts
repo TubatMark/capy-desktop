@@ -29,6 +29,15 @@ export interface RenderState {
   textUrl?: string;
 }
 
+/** Seconds into a rendered clip where the hook is still on screen: the default thumbnail frame. */
+export const HOOK_FRAME_SEC = 1.4;
+
+export interface ThumbOption {
+  url: string;
+  /** Seconds into the clip. */
+  at: number;
+}
+
 export interface ClipState {
   n: number;
   start: number;
@@ -41,6 +50,10 @@ export interface ClipState {
   /** Padded segment on disk that the editor plays and renders from. */
   segment?: { start: number; end: number; url: string; status: "queued" | "downloading" | "done" | "error"; error?: string; remaining?: number };
   thumbUrl?: string;
+  /** Candidate frames for the YouTube thumbnail (from the rendered clip, or the source footage before a render). */
+  thumbs?: ThumbOption[];
+  /** Seconds into the clip the chosen thumbnail frame is taken from; unset = the default hook frame. */
+  thumbAt?: number;
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
   publish?: { ytTitle: string; description: string; hashtags: string[] };
@@ -110,3 +123,31 @@ export const DEFAULT_SETTINGS: JobSettings = {
   hook: true,
   maxRes: 2160,
 };
+
+/** AI coding CLIs capy knows how to drive for picking clips and writing titles. */
+export type AgentId = "claude" | "codex" | "cursor" | "gemini" | "opencode" | "droid" | "copilot" | "qwen" | "amp";
+
+export interface AgentInfo {
+  id: AgentId;
+  name: string;
+  vendor: string;
+  /** Command to run it; shown as the install check. */
+  bin: string;
+  installed: boolean;
+  /** Absolute path of the binary we found. */
+  path?: string;
+  version?: string;
+  install: string;
+  url: string;
+  /** Example model id for the model field. */
+  modelHint: string;
+}
+
+/** App-wide preferences, saved to output/.settings.json. */
+export interface AppSettings {
+  agent: AgentId;
+  /** Model per agent; empty means the CLI's own default. */
+  models: Partial<Record<AgentId, string>>;
+}
+
+export const DEFAULT_APP_SETTINGS: AppSettings = { agent: "claude", models: {} };
