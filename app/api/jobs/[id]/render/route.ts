@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { jobs } from "@/server/jobs";
+import { FORBIDDEN, getAccess } from "@/server/access";
 
 export const dynamic = "force-dynamic";
 
 /** Render all selected clips (or the `ns` given). */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const access = await getAccess(req);
+  if (!access.can.render) return NextResponse.json(FORBIDDEN, { status: 403 });
   const { id } = await ctx.params;
   const body = await req.json().catch(() => ({}));
   try {

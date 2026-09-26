@@ -16,11 +16,12 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
+        // below md every control is at least 40px tall (touch / small-window targets)
+        default: "h-9 px-4 py-2 max-md:h-10",
+        sm: "h-8 rounded-md px-3 text-xs max-md:h-10",
         lg: "h-11 rounded-lg px-6 text-base",
-        icon: "size-9",
-        "icon-sm": "size-8",
+        icon: "size-9 max-md:size-10",
+        "icon-sm": "size-8 max-md:size-10",
       },
     },
     defaultVariants: { variant: "default", size: "default" },

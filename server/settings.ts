@@ -1,0 +1,183 @@
+import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { MODELS, type AppSettings } from "../lib/types";
+
+/**
+ * App-wide settings in <CAPY_DATA_DIR>/settings.json. This module is the only reader/writer.
+ *
+ * Precedence, lowest to highest: built-in default → environment (`CAPY_*`, `.env`) →
+ * settings.json → per-job settings (applied by the job manager, not here).
+ */
+
+export const DEFAULT_SETTINGS: AppSettings = { claudeAuth: "subscription" };
+
+/** Browsers yt-dlp can read cookies from (`--cookies-from-browser`). */
+export const BROWSERS = ["chrome", "safari", "firefox", "brave", "edge", "arc"] as const;
+
+/** Where the app keeps its own files (settings.json). Electron passes app.getPath("userData"), which is the same folder. */
+export function dataDir(): string {
+  return expandHome(process.env.CAPY_DATA_DIR?.trim() || path.join(homedir(), "Library", "Application Support", "capy"));
+}
+
+export function settingsFile(): string {
+  return path.join(dataDir(), "settings.json");
+}
+
+/** `~` and `~/x` → absolute. Anything else is returned untouched. */
+export function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return path.join(homedir(), p.slice(2));
+  return p;
+}
+
+/**
+ * Module state lives on globalThis: Next.js compiles pages and route handlers as separate module
+ * graphs (and dev reloads re-evaluate modules), so a plain module variable would give each of them
+ * its own stale copy. The cache is also validated against the file's mtime, so a write from any
+ * instance — or a hand edit — is picked up on the next read.
+ */
+interface State {
+  cache: { file: string; mtime: number; raw: Partial<AppSettings> } | null;
+  /** The key that was in the environment before we touched it; `null` = not captured yet. */
+  originalEnvKey: string | undefined | null;
+}
+declare global {
+  // eslint-disable-next-line no-var
+  var __capySettings: State | undefined;
+}
+const state: State = (globalThis.__capySettings ??= { cache: null, originalEnvKey: null });
+
+/** Drop the in-memory copy so the next read hits the disk (tests, and after CAPY_DATA_DIR changes). */
+export function resetSettingsCache() {
+  state.cache = null;
+  state.originalEnvKey = null;
+}
+
+function mtimeOf(file: string): number {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return -1; // missing
+  }
+}
+
+/** What is literally in the file (no defaults), so we can tell "unset" from "set to the default". */
+function raw(): Partial<AppSettings> {
+  const file = settingsFile();
+  const mtime = mtimeOf(file);
+  const c = state.cache;
+  if (c && c.file === file && c.mtime === mtime) return c.raw;
+  let parsed: Partial<AppSettings> = {};
+  if (mtime >= 0) {
+    try {
+      const obj = JSON.parse(readFileSync(file, "utf8"));
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) parsed = clean(obj as Record<string, unknown>);
+    } catch {
+      /* unreadable: defaults */
+    }
+  }
+  state.cache = { file, mtime, raw: parsed };
+  return parsed;
+}
+
+/** Keep only known keys with sane types. */
+function clean(obj: Record<string, unknown>): Partial<AppSettings> {
+  const out: Partial<AppSettings> = {};
+  if (typeof obj.browser === "string" && obj.browser) out.browser = obj.browser;
+  if (typeof obj.outputDir === "string" && obj.outputDir) out.outputDir = obj.outputDir;
+  if (typeof obj.model === "string" && obj.model) out.model = obj.model;
+  if (obj.claudeAuth === "subscription" || obj.claudeAuth === "apiKey") out.claudeAuth = obj.claudeAuth;
+  if (typeof obj.apiKey === "string" && obj.apiKey) out.apiKey = obj.apiKey;
+  if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt)) out.checkedAt = obj.checkedAt;
+  return out;
+}
+
+/** Settings as stored, with defaults filled in. Sync and cached; a missing file yields the defaults. */
+export function loadSettings(): AppSettings {
+  return { ...DEFAULT_SETTINGS, ...raw() };
+}
+
+/** A partial update; `""` or `null` on any key removes it from the file. */
+export type SettingsPatch = { [K in keyof AppSettings]?: AppSettings[K] | "" | null };
+
+/**
+ * Merge `patch` into the file. An empty string (or null) deletes that key. The file is written
+ * with mode 0600 because it may hold an API key. Returns the new settings (unredacted).
+ */
+export function saveSettings(patch: SettingsPatch): AppSettings {
+  const next: Record<string, unknown> = { ...raw() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    if (v === "" || v === null) delete next[k];
+    else next[k] = v;
+  }
+  const cleaned = clean(next);
+  const file = settingsFile();
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cleaned, null, 2) + "\n", { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, file);
+  state.cache = { file, mtime: mtimeOf(file), raw: cleaned };
+  applyToEnv();
+  return loadSettings();
+}
+
+/** Safe to send to the browser: the API key becomes "••••" + its last 4 characters. */
+export function redact(s: AppSettings): AppSettings {
+  const { apiKey, ...rest } = s;
+  return apiKey ? { ...rest, apiKey: `••••${apiKey.slice(-4)}` } : rest;
+}
+
+export interface EffectiveSettings {
+  browser?: string;
+  outputDir?: string;
+  model: string;
+  claudeAuth: AppSettings["claudeAuth"];
+  apiKey?: string;
+}
+
+function env(...names: string[]): string | undefined {
+  for (const n of names) {
+    const v = process.env[n]?.trim();
+    if (v) return v;
+  }
+  return undefined;
+}
+
+/** Resolved values: default → env (`CAPY_BROWSER`, `CAPY_OUTPUT`, `CAPY_MODEL`, `CAPY_USE_API_KEY`) → settings.json. */
+export function effective(): EffectiveSettings {
+  const s = raw();
+  const outputDir = s.outputDir ?? env("CAPY_OUTPUT", "CLIPRUN_OUTPUT");
+  return {
+    browser: s.browser ?? env("CAPY_BROWSER", "CLIPRUN_BROWSER"),
+    outputDir: outputDir ? expandHome(outputDir) : undefined,
+    model: s.model ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
+    claudeAuth: s.claudeAuth ?? (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY") ? "apiKey" : "subscription"),
+    apiKey: s.apiKey ?? envApiKey(),
+  };
+}
+
+/** The key from the environment, not one we put there from settings.json. */
+function envApiKey(): string | undefined {
+  return (state.originalEnvKey === null ? process.env.ANTHROPIC_API_KEY : state.originalEnvKey) || undefined;
+}
+
+/**
+ * Make `src/pick.ts` honour the billing choice: `apiKey` mode sets `CAPY_USE_API_KEY=1` and
+ * `ANTHROPIC_API_KEY`; `subscription` mode unsets `CAPY_USE_API_KEY` so the SDK subprocess
+ * drops any key and bills the local `claude` login. Call at startup and after every save.
+ */
+export function applyToEnv(): void {
+  if (state.originalEnvKey === null) state.originalEnvKey = process.env.ANTHROPIC_API_KEY;
+  const e = effective();
+  if (e.claudeAuth === "apiKey" && e.apiKey) {
+    process.env.CAPY_USE_API_KEY = "1";
+    process.env.ANTHROPIC_API_KEY = e.apiKey;
+  } else {
+    delete process.env.CAPY_USE_API_KEY;
+    if (state.originalEnvKey) process.env.ANTHROPIC_API_KEY = state.originalEnvKey;
+    else delete process.env.ANTHROPIC_API_KEY;
+  }
+}

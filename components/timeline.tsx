@@ -66,13 +66,13 @@ export function Timeline({
   const bars = words.filter((w) => w.end > segStart && w.start < segEnd);
 
   return (
-    <div className="select-none">
-      <div className="mb-1 flex justify-between font-mono text-[11px] text-muted-foreground">
-        <span>{fmtTime(segStart)}</span>
-        <span>
+    <div className="min-w-0 select-none">
+      <div className="mb-1 flex justify-between gap-2 font-mono text-[11px] text-muted-foreground">
+        <span className="shrink-0">{fmtTime(segStart)}</span>
+        <span className="min-w-0 truncate text-center">
           in {fmtTime(start)} · out {fmtTime(end)} · {Math.round(end - start)}s
         </span>
-        <span>{fmtTime(segEnd)}</span>
+        <span className="shrink-0">{fmtTime(segEnd)}</span>
       </div>
       <div ref={ref} className="relative h-16 cursor-crosshair rounded-lg border bg-neutral-900" onPointerDown={drag("seek")}>
         {/* word bars */}
@@ -91,14 +91,15 @@ export function Timeline({
         {/* clip band */}
         <div className="pointer-events-none absolute inset-y-0 border-y-2 border-primary" style={{ left: `${pct(start)}%`, width: `${pct(end) - pct(start)}%` }} />
         {/* handles */}
+        {/* handles: wider below md so they can be grabbed on touch / in a small window */}
         <div
-          className="absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-ew-resize rounded-l-md bg-primary hover:bg-primary/80"
+          className="absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-ew-resize rounded-l-md bg-primary hover:bg-primary/80 max-md:w-5"
           style={{ left: `${pct(start)}%` }}
           onPointerDown={drag("start")}
           title="Drag to set in point"
         />
         <div
-          className="absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-ew-resize rounded-r-md bg-primary hover:bg-primary/80"
+          className="absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-ew-resize rounded-r-md bg-primary hover:bg-primary/80 max-md:w-5"
           style={{ left: `${pct(end)}%` }}
           onPointerDown={drag("end")}
           title="Drag to set out point"

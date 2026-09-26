@@ -1,6 +1,33 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
+
+/**
+ * Finder-launched apps get a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so Homebrew and
+ * pip-installed tools (yt-dlp, ffmpeg, mlx_whisper) would be invisible. Prepend the usual
+ * places if they are missing. Idempotent; returns the resulting PATH.
+ */
+export function ensureToolPaths(): string {
+  const home = homedir();
+  const want = ["/opt/homebrew/bin", "/usr/local/bin", path.join(home, ".local", "bin")];
+  const py = path.join(home, "Library", "Python");
+  let versions: string[] = [];
+  try {
+    versions = readdirSync(py);
+  } catch {
+    /* no user Python installs */
+  }
+  for (const v of versions.sort()) {
+    const bin = path.join(py, v, "bin");
+    if (existsSync(bin)) want.push(bin);
+  }
+  const current = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const missing = want.filter((d) => !current.includes(d));
+  if (missing.length) process.env.PATH = [...missing, ...current].join(path.delimiter);
+  return process.env.PATH ?? "";
+}
+ensureToolPaths();
 
 /** Homebrew's slim `ffmpeg` has no libass; `ffmpeg-full` does but is keg-only (not on PATH). */
 const FFMPEG_DIRS = ["/opt/homebrew/opt/ffmpeg-full/bin", "/usr/local/opt/ffmpeg-full/bin"];

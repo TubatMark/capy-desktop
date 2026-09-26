@@ -14,7 +14,11 @@
     "clip": "tsx src/cli.ts",
     "check": "tsx src/cli.ts check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "desktop:bundle": "node scripts/desktop-bundle.mjs",
+    "desktop:dev": "pnpm desktop:bundle && electron .",
+    "desktop:build": "node scripts/desktop-build.mjs",
+    "desktop:pack": "node scripts/desktop-build.mjs --dir"
   },
   "engines": {
     "node": ">=20"
@@ -42,10 +46,20 @@
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   },
-  "packageManager": "pnpm@10.18.3"
+  "packageManager": "pnpm@10.18.3",
+  "main": "dist-electron/main.cjs",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
 }

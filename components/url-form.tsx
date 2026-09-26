@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { AccessGate } from "@/components/access-gate";
 import { api } from "@/hooks/use-job";
 import type { JobState, JobSettings } from "@/lib/types";
 import { DEFAULT_SETTINGS } from "@/lib/types";
@@ -32,29 +33,32 @@ export function UrlForm({ large = false }: { large?: boolean }) {
   }
 
   return (
-    <form onSubmit={submit} className="w-full">
-      <div className={large ? "flex flex-col gap-3 sm:flex-row" : "flex gap-2"}>
+    <form onSubmit={submit} className="w-full min-w-0">
+      {/* input on its own row below sm; the button row then fills the width */}
+      <div className={large ? "flex flex-col gap-3 sm:flex-row" : "flex flex-wrap gap-2"}>
         <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="Paste a YouTube link…"
-          className={large ? "h-12 text-base" : ""}
+          className={large ? "h-12 min-w-0 flex-1 text-base" : "min-w-0 flex-1"}
           autoFocus={large}
           required
         />
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size={large ? "lg" : "default"} onClick={() => setOpen((o) => !o)} aria-label="Settings">
+        <div className="flex shrink-0 gap-2">
+          <Button type="button" variant="outline" size={large ? "lg" : "default"} className={large ? "px-3" : ""} onClick={() => setOpen((o) => !o)} aria-label="Clip settings" aria-expanded={open}>
             <Settings2 />
           </Button>
-          <Button type="submit" size={large ? "lg" : "default"} disabled={busy || !url.trim()}>
-            {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-            Make clips
-          </Button>
+          <AccessGate action="createJob">
+            <Button type="submit" size={large ? "lg" : "default"} className="flex-1" disabled={busy || !url.trim()}>
+              {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+              Make clips
+            </Button>
+          </AccessGate>
         </div>
       </div>
-      {err && <p className="mt-2 text-sm text-red-400">{err}</p>}
+      {err && <p className="mt-2 break-words text-sm text-red-400">{err}</p>}
       {open && (
-        <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border bg-card p-4 sm:grid-cols-4 lg:grid-cols-6">
+        <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border bg-card p-4 text-left sm:grid-cols-3 lg:grid-cols-6">
           <Field label="Clips">
             <Input type="number" min={1} max={30} value={s.count} onChange={(e) => setS({ ...s, count: Number(e.target.value) })} />
           </Field>
@@ -83,7 +87,7 @@ export function UrlForm({ large = false }: { large?: boolean }) {
               <option value={1080}>1080p (faster)</option>
             </Select>
           </Field>
-          <Field label="Focus (optional)" className="col-span-2 sm:col-span-4 lg:col-span-6">
+          <Field label="Focus (optional)" className="col-span-2 sm:col-span-3 lg:col-span-6">
             <Input value={s.focus ?? ""} onChange={(e) => setS({ ...s, focus: e.target.value || undefined })} placeholder='e.g. "every joke that landed" or "the parts about money"' />
           </Field>
         </div>
@@ -94,7 +98,7 @@ export function UrlForm({ large = false }: { large?: boolean }) {
 
 function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`flex flex-col gap-1.5 ${className}`}>
+    <div className={`flex min-w-0 flex-col gap-1.5 ${className}`}>
       <Label>{label}</Label>
       {children}
     </div>

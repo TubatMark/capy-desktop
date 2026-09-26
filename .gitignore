@@ -10,3 +10,5 @@ next-env.d.ts
 shots/
 .DS_Store
 *.tgz
+dist/
+dist-electron/

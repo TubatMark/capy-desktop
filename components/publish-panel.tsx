@@ -53,14 +53,14 @@ export function PublishPanel({ jobId, clip }: { jobId: string; clip: ClipState }
   const thumb = clip.render.thumbUrl;
 
   return (
-    <div className="space-y-4 rounded-xl border bg-card p-5">
-      <div className="flex items-center justify-between">
+    <div className="min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">Publish to YouTube</h2>
         <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null}>
           {busy === "gen" ? <Loader2 className="animate-spin" /> : <Sparkles />} {p ? "Regenerate" : "Generate with AI"}
         </Button>
       </div>
-      {err && <p className="text-xs text-red-300">{err}</p>}
+      {err && <p className="break-words text-xs text-red-300">{err}</p>}
       {!p ? (
         <p className="text-sm text-muted-foreground">No upload text yet for this clip. Generate it and AI will write a title, description and hashtags from the transcript.</p>
       ) : (
@@ -87,10 +87,10 @@ export function PublishPanel({ jobId, clip }: { jobId: string; clip: ClipState }
         {thumb ? (
           <div className="mt-2 flex items-start gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={thumb} alt="" className="w-24 rounded-md border" style={{ aspectRatio: "9/16", objectFit: "cover" }} />
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p>Grabbed from the rendered clip with the hook on screen. Upload it under “Thumbnail → Upload file”.</p>
-              <div className="flex gap-2">
+            <img src={thumb} alt="" className="w-20 shrink-0 rounded-md border sm:w-24" style={{ aspectRatio: "9/16", objectFit: "cover" }} />
+            <div className="min-w-0 space-y-2 text-sm text-muted-foreground">
+              <p className="text-pretty">Grabbed from the rendered clip with the hook on screen. Upload it under “Thumbnail → Upload file”.</p>
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" asChild>
                   <a href={thumb.split("?")[0]} download>
                     <Download /> Thumbnail
@@ -117,14 +117,14 @@ export function PublishPanel({ jobId, clip }: { jobId: string; clip: ClipState }
 function Field({ label, value, hint, children }: { label: string; value: string; hint?: string; children: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <Label>
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="min-w-0 truncate">
           {label} {hint && <span className="ml-1 normal-case tracking-normal text-muted-foreground/70">{hint}</span>}
         </Label>
         <button
           type="button"
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground hover:text-foreground max-md:min-h-10"
           onClick={async () => {
             await navigator.clipboard.writeText(value);
             setCopied(true);

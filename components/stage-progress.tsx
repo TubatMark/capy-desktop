@@ -20,14 +20,16 @@ export function StageProgress({ job }: { job: JobState }) {
   const lastLog = job.log[job.log.length - 1];
 
   return (
-    <div className="rounded-xl border bg-card p-5">
-      <div className="flex items-center justify-between gap-4">
-        <div>
+    // @container: the card sits in a page-wide row on small screens but in a 40% column on lg,
+    // so its own width (not the viewport) decides whether the steps run vertically or in a row.
+    <div className="@container min-w-0 rounded-xl border bg-card p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-48">
           <p className="font-medium">
             {job.status === "error" ? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
             {running && job.startedAt ? <span className="ml-2 font-mono text-xs font-normal text-muted-foreground"><Elapsed since={job.startedAt} /></span> : null}
           </p>
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">{job.status === "error" ? job.error : lastLog?.msg ?? "Starting…"}</p>
+          <p className={"mt-0.5 text-sm text-muted-foreground " + (job.status === "error" ? "break-words" : "truncate")}>{job.status === "error" ? job.error : lastLog?.msg ?? "Starting…"}</p>
         </div>
         {running && (
           <div className="shrink-0 text-right">
@@ -37,11 +39,12 @@ export function StageProgress({ job }: { job: JobState }) {
         )}
       </div>
       <Progress value={job.status === "error" ? 0 : running ? job.estimate.progress : 1} className="mt-4" />
-      <ol className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* vertical list when narrow, 2 columns from 28rem, one row from 36rem */}
+      <ol className="mt-4 grid grid-cols-1 gap-2 @md:grid-cols-2 @xl:grid-cols-4">
         {STAGES.map((s, i) => {
           const state = job.status === "error" && i === current ? "error" : i < current || !running ? "done" : i === current ? "active" : "todo";
           return (
-            <li key={s.key} className="flex items-center gap-2 text-sm">
+            <li key={s.key} className="flex min-w-0 items-center gap-2 text-sm">
               <span
                 className={
                   "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] " +
@@ -56,7 +59,7 @@ export function StageProgress({ job }: { job: JobState }) {
               >
                 {state === "done" ? <Check className="size-3" strokeWidth={3} /> : state === "active" ? <Loader2 className="size-3 animate-spin" /> : state === "error" ? <AlertCircle className="size-3" /> : i + 1}
               </span>
-              <span className={state === "todo" ? "text-muted-foreground" : ""}>{s.label}</span>
+              <span className={"truncate " + (state === "todo" ? "text-muted-foreground" : "")}>{s.label}</span>
               {state === "active" && job.estimate.stageRemaining > 0 && <span className="ml-auto font-mono text-xs text-muted-foreground">{fmtRemaining(job.estimate.stageRemaining)}</span>}
             </li>
           );

@@ -13,10 +13,10 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
   const seg = clip.segment;
 
   return (
-    <div className="group relative">
+    <div className="group relative min-w-0">
       <Link
         href={`/v/${jobId}/clip/${clip.n}`}
-        className="phone-card relative block overflow-hidden rounded-2xl border border-white/10 bg-neutral-900 shadow-lg transition-transform duration-200 hover:-translate-y-1 hover:border-white/30"
+        className="phone-card relative block min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-neutral-900 shadow-lg transition-transform duration-200 hover:-translate-y-1 hover:border-white/30"
       >
         {clip.thumbUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -27,11 +27,11 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
 
         {/* top row */}
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between p-3">
-          <span className="rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-white/90 backdrop-blur">
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3">
+          <span className="truncate rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-white/90 backdrop-blur">
             {fmtTime(clip.start)} · {Math.round(len)}s
           </span>
-          <span className="flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-primary backdrop-blur">
+          <span className="flex shrink-0 items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-primary backdrop-blur">
             <Sparkles className="size-3" />
             {clip.score}/10
           </span>
@@ -55,16 +55,23 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
         </div>
 
         {/* bottom text */}
-        <div className="absolute inset-x-0 bottom-0 p-3">
-          {clip.hook && <p className="mb-1 line-clamp-2 text-[11px] font-medium uppercase tracking-wide text-primary">{clip.hook}</p>}
-          <p className="line-clamp-2 text-sm font-semibold leading-snug text-white">{clip.title}</p>
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-white/70">
+        <div className="absolute inset-x-0 bottom-0 min-w-0 p-3">
+          {clip.hook && <p className="mb-1 line-clamp-2 break-words text-[11px] font-medium uppercase tracking-wide text-primary">{clip.hook}</p>}
+          <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-white">{clip.title}</p>
+          <div className="mt-2 flex min-w-0 items-center gap-2 text-[11px] text-white/70">
             <RenderStatus clip={clip} />
           </div>
         </div>
       </Link>
 
-      <div className="absolute left-3 top-11 z-10" onClick={(e) => e.stopPropagation()}>
+      {/* 40px hit area around the 20px checkbox: clicks on the padding toggle it too */}
+      <div
+        className="absolute left-0.5 top-9 z-10 grid size-10 cursor-pointer place-items-center"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.target === e.currentTarget) onSelect(!clip.selected);
+        }}
+      >
         <Checkbox checked={clip.selected} onCheckedChange={(v) => onSelect(v === true)} aria-label="Select clip" />
       </div>
     </div>

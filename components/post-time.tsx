@@ -37,12 +37,13 @@ export function PostTime() {
   }
 
   return (
-    <div className="space-y-3 rounded-xl border bg-card p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 font-semibold">
+    <div className="@container min-w-0 space-y-3 rounded-xl border bg-card p-4 sm:p-5">
+      {/* the audience select drops under the heading when the card is narrower than 22rem */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 whitespace-nowrap font-semibold">
           <CalendarClock className="size-4 text-primary" /> Best time to post
         </h2>
-        <div className="w-44">
+        <div className="w-full min-w-0 @[22rem]:w-44">
           <Select value={audience} onChange={(e) => choose(e.target.value)} aria-label="Audience">
             {AUDIENCES.map((a) => (
               <option key={a.id} value={a.id}>
@@ -56,10 +57,10 @@ export function PostTime() {
       {best && (
         <div className="rounded-lg border border-primary/40 bg-primary/10 p-3">
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               <p className="text-xs font-medium uppercase tracking-wide text-primary">Recommended · {best.dayName}</p>
               <p className="mt-1 font-mono text-lg tabular-nums">{best.utc} UTC</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-pretty text-sm text-muted-foreground">
                 {best.audienceLocal} audience time · {best.yourLocal} your time
               </p>
             </div>
@@ -74,8 +75,8 @@ export function PostTime() {
         <ul className="mt-1.5 space-y-1 text-sm">
           {slots.slice(1).map((s) => (
             <li key={s.at.toISOString()} className="flex items-center justify-between gap-2">
-              <span className="font-mono">{s.utc} UTC</span>
-              <span className="text-xs text-muted-foreground">{s.audienceLocal.split(", ")[1] ?? s.audienceLocal} local</span>
+              <span className="whitespace-nowrap font-mono">{s.utc} UTC</span>
+              <span className="min-w-0 truncate text-xs text-muted-foreground">{s.audienceLocal.split(", ")[1] ?? s.audienceLocal} local</span>
             </li>
           ))}
         </ul>
@@ -93,7 +94,7 @@ function CopyBtn({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className="flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+      className="flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground max-md:min-h-10"
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setOk(true);

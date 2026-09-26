@@ -7,12 +7,12 @@ import { snapToWords } from "../src/captions";
 import { generatePublish, rewriteTitleHook } from "../src/pick";
 import { pool } from "../src/util";
 import type { Word } from "../src/types";
+import { boot } from "./boot";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
+import { effective } from "./settings";
 import { loadTimings, learn, type Timings } from "./estimates";
 import type { ClipState, JobSettings, JobState, Stage } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
-
-const DEFAULT_MODEL = "claude-sonnet-5";
 
 /**
  * In-process job runner. State is persisted to output/<dir>/job.json so the app
@@ -28,6 +28,7 @@ class JobManager extends EventEmitter {
   async init() {
     if (this.loaded) return;
     this.loaded = true;
+    boot();
     await mkdir(OUTPUT_ROOT, { recursive: true });
     for (const d of await readdir(OUTPUT_ROOT).catch(() => [] as string[])) {
       try {
@@ -265,7 +266,7 @@ class JobManager extends EventEmitter {
 
   private yt(job: JobState) {
     return {
-      cookiesFromBrowser: job.settings.browser ?? (process.env.CAPY_BROWSER ?? process.env.CLIPRUN_BROWSER),
+      cookiesFromBrowser: job.settings.browser ?? effective().browser,
       proxy: process.env.YT_PROXY,
     };
   }
@@ -310,7 +311,7 @@ class JobManager extends EventEmitter {
       // 3. pick (skip if we already have clips and weren't asked to repick)
       await this.setStage(job, "pick");
       if (o.repick || job.clips.length === 0) {
-        const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
+        const model = job.settings.model ?? effective().model;
         this.log(job, "pick", `asking ${model} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s)`);
         const t2 = Date.now();
         const res = await stagePick(words, meta, {
@@ -455,7 +456,7 @@ class JobManager extends EventEmitter {
     const c = job.clips.find((x) => x.n === n);
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
-    const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
+    const model = job.settings.model ?? effective().model;
     c.publish = await generatePublish(words, { title: job.title ?? "", channel: job.channel }, c, model);
     if (c.render.status === "done" && c.render.file) {
       const { thumb, text } = await writePublishFiles(c.render.file, { ...c, ...c.publish });
@@ -473,7 +474,7 @@ class JobManager extends EventEmitter {
     const c = job.clips.find((x) => x.n === n);
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
-    const model = job.settings.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
+    const model = job.settings.model ?? effective().model;
     return rewriteTitleHook(words, { title: job.title ?? "", channel: job.channel }, c, model);
   }
 

@@ -1,22 +1,23 @@
 #!/usr/bin/env tsx
-import { mkdir, mkdtemp, writeFile, readFile, access, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, readFile, access, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { loadDotEnv } from "./env";
 loadDotEnv();
+import { applyToEnv, effective } from "../server/settings";
+import { runChecks } from "../server/doctor";
 import { fetchAudio, fetchCaptions, fetchMeta, fetchSection, videoIdFromUrl } from "./youtube";
 import { wordsInRange } from "./captions";
-import { askClaude, pickClips } from "./pick";
-import { renderClip, detectEncoder, probeVideo, NO_LIBASS } from "./render";
+import { pickClips } from "./pick";
+import { renderClip, detectEncoder, probeVideo } from "./render";
 import { transcribe } from "./transcribe";
 import { writePublishFiles } from "./pipeline";
-import { hasCommand, resolveBin, run } from "./exec";
 import { fmtTime, log, pad2, pool, slug } from "./util";
 import type { Clip, RenderedClip, VideoMeta, Word } from "./types";
+import { MODELS } from "../lib/types";
 
-/** Good judgment at a fraction of Opus usage. Override with --model or CAPY_MODEL. */
-const DEFAULT_MODEL = "claude-sonnet-5";
+/** Good judgment at a fraction of Opus usage. Override with --model, CAPY_MODEL, or the app's Settings page. */
+const DEFAULT_MODEL = MODELS[0].id;
 
 const HELP = `capy — YouTube URL -> captioned 9:16 shorts, picked by Claude
 
@@ -79,6 +80,7 @@ async function main() {
     },
   });
 
+  applyToEnv(); // honour the app's Claude billing setting (settings.json) in the CLI too
   if (positionals[0] === "doctor" || positionals[0] === "check") return doctor();
   const url = positionals[0];
   if (v.help || !url) {
@@ -95,9 +97,10 @@ async function main() {
   const maxRes = int("--max-res", v["max-res"]!, 360, 4320);
   if (!["center", "blur"].includes(v.layout!)) throw new Error(`--layout must be center or blur (got "${v.layout}")`);
   if (!["bold", "clean"].includes(v.style!)) throw new Error(`--style must be bold or clean (got "${v.style}")`);
-  const model = v.model ?? (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
+  const app = effective(); // default → env → settings.json; flags win
+  const model = v.model ?? app.model;
 
-  const yt = { proxy: v.proxy ?? process.env.YT_PROXY, cookies: v.cookies, cookiesFromBrowser: v.browser ?? (process.env.CAPY_BROWSER ?? process.env.CLIPRUN_BROWSER) };
+  const yt = { proxy: v.proxy ?? process.env.YT_PROXY, cookies: v.cookies, cookiesFromBrowser: v.browser ?? app.browser };
   if (yt.cookies && jobs > 1) jobs = 1; // parallel yt-dlp runs would both rewrite the cookies file
   const captions = !v["no-captions"];
   const hook = !v["no-hook"];
@@ -280,54 +283,13 @@ async function exists(p: string) {
 }
 
 async function doctor() {
-  const model = (process.env.CAPY_MODEL ?? process.env.CLIPRUN_MODEL) ?? DEFAULT_MODEL;
-  const checks: [string, () => Promise<string>][] = [
-    ["node", async () => process.version],
-    ["yt-dlp", async () => (await run("yt-dlp", ["--version"])).stdout.trim()],
-    ["ffmpeg", async () => {
-      const v = (await run("ffmpeg", ["-version"])).stdout.split("\n")[0]!.replace("ffmpeg version ", "").split(" ")[0]!;
-      const bin = resolveBin("ffmpeg");
-      return bin === "ffmpeg" ? v : `${v} (${bin})`;
-    }],
-    ["captions", async () => {
-      // real test render through the same code path as clips
-      const dir = await mkdtemp(path.join(tmpdir(), "capy-check-"));
-      try {
-        const src = path.join(dir, "src.mp4");
-        await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=1", "-f", "lavfi", "-i", "sine=d=1", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", src]);
-        await renderClip(src, path.join(dir, "out.mp4"), [{ text: "test", start: 0.1, end: 0.6 }], { layout: "center", style: "bold", encoder: "auto", captions: true, hook: { text: "hook", seconds: 1 } });
-        return "burned-in captions render ok";
-      } catch (e) {
-        const msg = (e as Error).message;
-        return msg === NO_LIBASS ? `ERROR: ${msg}` : `ERROR: ${msg.split("\n").slice(-2).join(" ")}`;
-      } finally {
-        await rm(dir, { recursive: true, force: true });
-      }
-    }],
-    ["encoder", async () => detectEncoder("auto")],
-    ["whisper", async () =>
-      (await hasCommand("mlx_whisper")) ? "mlx_whisper (optional fallback)" : (await hasCommand("whisper-cli")) ? "whisper-cli (optional fallback)" : "none — only needed for videos without captions"],
-    [`claude`, async () => {
-      const r = await askClaude(
-        "Reply with the single word: ready",
-        { model, tools: [], settingSources: [], persistSession: false, maxTurns: 1 },
-        { timeoutMs: 60_000 },
-      );
-      return `${model} ok (${String(r.result).trim().slice(0, 20)})`;
-    }],
-  ];
+  const model = effective().model;
   let bad = 0;
-  for (const [name, fn] of checks) {
-    if (name === "claude") process.stdout.write(`  … ${name.padEnd(12)} asking ${model}…\r`);
-    try {
-      const r = await fn();
-      const fail = /MISSING|ERROR/.test(r);
-      if (fail) bad++;
-      console.log(`  ${fail ? "✗" : "✓"} ${name.padEnd(12)} ${r}`.padEnd(60));
-    } catch (e) {
-      bad++;
-      console.log(`  ✗ ${name.padEnd(12)} ${(e as Error).message.split("\n")[0]}`.padEnd(60));
-    }
+  process.stdout.write(`  … checking (claude can take a minute)\r`);
+  for await (const r of runChecks({ model })) {
+    if (!r.ok) bad++;
+    console.log(`  ${r.ok ? "✓" : "✗"} ${r.name.padEnd(12)} ${r.detail}`.padEnd(60));
+    if (!r.ok && r.fix) console.log(`    fix: ${r.fix}`);
   }
   console.log(bad ? `\n${bad} problem(s). Fix them, then run a clip.` : "\nAll good. Try: pnpm clip https://youtu.be/VIDEO_ID --pick-only");
   process.exitCode = bad ? 1 : 0;
