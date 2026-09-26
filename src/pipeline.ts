@@ -7,6 +7,7 @@ import { renderClip, thumbnail, clipThumbnail, type RenderOpts } from "./render"
 import { transcribe } from "./transcribe";
 import { pad2, slug } from "./util";
 import type { Clip, VideoMeta, Word } from "./types";
+import { HOOK_FRAME_SEC } from "../lib/types";
 
 /** Seconds of extra footage downloaded on each side of a pick so edits don't need a re-download. */
 export const SEGMENT_PAD = 15;
@@ -159,13 +160,46 @@ export async function stageRender(
   return out;
 }
 
+export { HOOK_FRAME_SEC };
+
+/** How many candidate frames `thumbCandidates` grabs. */
+export const THUMB_OPTIONS = 6;
+
+/**
+ * Grab evenly spaced candidate frames for the YouTube thumbnail into work/NN-thumb-I.jpg.
+ * `src.offset` is where the clip starts inside `src.file` (0 for a rendered mp4).
+ * Returns each file with `at` = seconds into the clip.
+ */
+export async function thumbCandidates(
+  jobDir: string,
+  n: number,
+  clip: { start: number; end: number },
+  src: { file: string; offset: number },
+  layout: RenderOpts["layout"],
+): Promise<Array<{ file: string; at: number }>> {
+  const len = clip.end - clip.start;
+  const last = Math.max(0, len - 0.3);
+  // the hook frame first, then the rest spread across the clip
+  const ats = [Math.min(HOOK_FRAME_SEC, last)];
+  for (let i = 1; i < THUMB_OPTIONS; i++) ats.push(Math.min(last, (len * (i + 0.5)) / THUMB_OPTIONS));
+  const out: Array<{ file: string; at: number }> = [];
+  for (const [i, at] of ats.entries()) {
+    const file = path.join(jobDir, "work", `${pad2(n)}-thumb-${i}.jpg`);
+    await thumbnail(src.file, file, src.offset + at, layout, 540);
+    out.push({ file, at: Math.round(at * 10) / 10 });
+  }
+  return out;
+}
+
 /** Next to NN-title.mp4, write NN-title.jpg (thumbnail) and NN-title.txt (title/description/hashtags to paste into YouTube). */
 export async function writePublishFiles(renderedMp4: string, clip: Clip): Promise<{ thumb: string; text: string }> {
   const base = renderedMp4.replace(/\.mp4$/, "");
   const thumb = `${base}.jpg`;
   const text = `${base}.txt`;
+  // the chosen frame, else the hook frame; never past the end of the clip
+  const at = Math.max(0, Math.min(clip.thumbAt ?? HOOK_FRAME_SEC, clip.end - clip.start - 0.2));
   try {
-    await clipThumbnail(renderedMp4, thumb);
+    await clipThumbnail(renderedMp4, thumb, at);
   } catch {
     await clipThumbnail(renderedMp4, thumb, 0.2);
   }

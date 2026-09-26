@@ -1,15 +1,17 @@
-/**
- * The capy wordmark from the asset pack; swaps ink/cream with the theme.
- * `className` (size + visibility, e.g. "hidden h-7 sm:block") goes on one wrapper so a
- * caller's `sm:block` cannot un-hide the off-theme variant.
- */
+/** capy wordmark from the asset pack (ink on cream). */
 export function Wordmark({ className = "h-7" }: { className?: string }) {
-  return (
-    <span className={`${className} shrink-0`}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/capy-wordmark-dark.png" alt="capy" className="h-full w-auto dark:hidden" />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/capy-wordmark-light.png" alt="capy" className="hidden h-full w-auto dark:block" />
-    </span>
-  );
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/capy-wordmark-dark.png" alt="capy" className={`${className} w-auto`} />;
+}
+
+/** Head mark. */
+export function Mark({ className = "size-8" }: { className?: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/capy-mark.png" alt="" className={className} />;
+}
+
+/** Full logo for the home hero. */
+export function HeroLogo({ className = "h-44" }: { className?: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/capy-logo.png" alt="capy" className={`${className} mx-auto w-auto`} />;
 }

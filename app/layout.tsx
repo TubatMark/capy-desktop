@@ -2,11 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import Link from "next/link";
-import { Settings } from "lucide-react";
 import "./globals.css";
-import { ThemeToggle, THEME_INIT } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/logo";
 import { Backdrop } from "@/components/backdrop";
+import { NavLink } from "@/components/nav-link";
 
 export const metadata: Metadata = {
   title: "capy",
@@ -21,10 +20,7 @@ const isDesktop = process.env.CAPY_DESKTOP === "1";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} data-desktop={isDesktop ? "" : undefined} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
-      </head>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} data-desktop={isDesktop ? "" : undefined}>
       <body className="min-h-screen overflow-x-hidden">
         <Backdrop />
         <header className="app-header sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur">
@@ -35,17 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Wordmark className="hidden h-7 sm:block" />
             </Link>
             <nav className="no-drag flex items-center gap-4 text-sm text-muted-foreground">
-              <Link href="/" className="hover:text-foreground">
-                Library
-              </Link>
-              <Link href="/settings" className="flex items-center gap-1.5 hover:text-foreground" aria-label="Settings">
-                <Settings className="size-4" aria-hidden />
-                <span className="hidden sm:inline">Settings</span>
-              </Link>
+              <NavLink href="/">Library</NavLink>
+              <NavLink href="/settings">Settings</NavLink>
             </nav>
-            <div className="no-drag ml-auto">
-              <ThemeToggle />
-            </div>
           </div>
         </header>
         <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8">{children}</main>

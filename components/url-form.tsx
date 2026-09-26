@@ -56,7 +56,7 @@ export function UrlForm({ large = false }: { large?: boolean }) {
           </AccessGate>
         </div>
       </div>
-      {err && <p className="mt-2 break-words text-sm text-red-400">{err}</p>}
+      {err && <p className="mt-2 break-words text-sm text-red-600">{err}</p>}
       {open && (
         <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border bg-card p-4 text-left sm:grid-cols-3 lg:grid-cols-6">
           <Field label="Clips">

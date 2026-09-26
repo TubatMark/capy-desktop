@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { MODELS, type AppSettings } from "@/lib/types";
+import type { AppSettings } from "@/lib/types";
 
 const BROWSERS: { value: string; label: string }[] = [
   { value: "", label: "None — no cookies" },
@@ -22,7 +22,6 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
   const [saved, setSaved] = useState<AppSettings>(initial);
   const [browser, setBrowser] = useState(initial.browser ?? "");
   const [outputDir, setOutputDir] = useState(initial.outputDir ?? "");
-  const [model, setModel] = useState(initial.model ?? MODELS[0].id);
   const [claudeAuth, setClaudeAuth] = useState<AppSettings["claudeAuth"]>(initial.claudeAuth);
   /** A new key typed in this session; empty means "keep what is stored". */
   const [apiKey, setApiKey] = useState("");
@@ -30,20 +29,18 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  const knownModel = MODELS.some((m) => m.id === model);
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const patch: Partial<AppSettings> = { browser, outputDir: outputDir.trim(), model, claudeAuth };
+    const patch: Partial<AppSettings> = { browser, outputDir: outputDir.trim(), claudeAuth };
     if (removeKey) patch.apiKey = "";
     else if (apiKey.trim()) patch.apiKey = apiKey.trim();
     try {
       const r = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-      const data = (await r.json().catch(() => ({}))) as AppSettings & { error?: string };
-      if (!r.ok) throw new Error(data.error ?? r.statusText);
-      setSaved(data);
+      const data = (await r.json().catch(() => ({}))) as { settings?: AppSettings; error?: string };
+      if (!r.ok || !data.settings) throw new Error(data.error ?? r.statusText);
+      setSaved(data.settings);
       setApiKey("");
       setRemoveKey(false);
       setMsg({ kind: "ok", text: "Saved" });
@@ -89,28 +86,17 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
             }
           >
             <Input value={outputDir} onChange={(e) => setOutputDir(e.target.value)} placeholder="~/Movies/capy" spellCheck={false} autoComplete="off" />
-            {outputChanged && <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">Takes effect the next time you open capy.</p>}
+            {outputChanged && <p className="mt-1.5 text-xs text-amber-600">Takes effect the next time you open capy.</p>}
           </Field>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Claude</CardTitle>
-          <CardDescription>Which model picks the clips and how the calls are billed.</CardDescription>
+          <CardTitle>Claude billing</CardTitle>
+          <CardDescription>How calls to Claude are billed. Pick the AI and model above.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          <Field label="Model" hint="The default for new videos. Each video can override it.">
-            <Select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
-              {MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-              {!knownModel && <option value={model}>{model} (custom)</option>}
-            </Select>
-          </Field>
-
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Billing</legend>
             <Radio

@@ -29,6 +29,15 @@ export interface RenderState {
   textUrl?: string;
 }
 
+/** Seconds into a rendered clip where the hook is still on screen: the default thumbnail frame. */
+export const HOOK_FRAME_SEC = 1.4;
+
+export interface ThumbOption {
+  url: string;
+  /** Seconds into the clip. */
+  at: number;
+}
+
 export interface ClipState {
   n: number;
   start: number;
@@ -41,6 +50,10 @@ export interface ClipState {
   /** Padded segment on disk that the editor plays and renders from. */
   segment?: { start: number; end: number; url: string; status: "queued" | "downloading" | "done" | "error"; error?: string; remaining?: number };
   thumbUrl?: string;
+  /** Candidate frames for the YouTube thumbnail (from the rendered clip, or the source footage before a render). */
+  thumbs?: ThumbOption[];
+  /** Seconds into the clip the chosen thumbnail frame is taken from; unset = the default hook frame. */
+  thumbAt?: number;
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
   publish?: { ytTitle: string; description: string; hashtags: string[] };
@@ -111,6 +124,27 @@ export const DEFAULT_SETTINGS: JobSettings = {
   maxRes: 2160,
 };
 
+/** AI coding CLIs capy knows how to drive for picking clips and writing titles. */
+export const AGENT_IDS = ["claude", "codex", "cursor", "gemini", "opencode", "droid", "copilot", "qwen", "amp"] as const;
+export type AgentId = (typeof AGENT_IDS)[number];
+
+export interface AgentInfo {
+  id: AgentId;
+  name: string;
+  vendor: string;
+  /** Command to run it; shown as the install check. */
+  bin: string;
+  installed: boolean;
+  /** Absolute path of the binary we found. */
+  path?: string;
+  version?: string;
+  install: string;
+  url: string;
+  /** Example model id for the model field. */
+  modelHint: string;
+}
+
+
 /** Picker models offered in Settings. First is the default. */
 export const MODELS = [
   { id: "claude-sonnet-5", label: "Sonnet 5 — good judgment, moderate usage" },
@@ -120,18 +154,22 @@ export const MODELS = [
 
 /** App-wide settings stored in <CAPY_DATA_DIR>/settings.json (see server/settings.ts). */
 export interface AppSettings {
+  /** The AI that picks clips and writes titles, hooks and descriptions. */
+  agent: AgentId;
+  /** Model per agent; empty means the agent's own default (Claude: the first of MODELS). */
+  models: Partial<Record<AgentId, string>>;
   /** Browser whose YouTube cookies yt-dlp should use (chrome, safari, …). */
   browser?: string;
   /** Where jobs and rendered clips are written. Applies after relaunch. */
   outputDir?: string;
-  /** Default picker model. */
-  model?: string;
   /** "subscription" bills the local `claude` login; "apiKey" uses `apiKey`. */
   claudeAuth: "subscription" | "apiKey";
   apiKey?: string;
   /** Unix ms of the last completed setup check. */
   checkedAt?: number;
 }
+
+export const DEFAULT_APP_SETTINGS: AppSettings = { agent: "claude", models: {}, claudeAuth: "subscription" };
 
 /** One line of the setup check (server/doctor.ts, GET /api/check). */
 export interface CheckResult {

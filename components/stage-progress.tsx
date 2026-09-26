@@ -53,7 +53,7 @@ export function StageProgress({ job }: { job: JobState }) {
                     : state === "active"
                       ? "border-primary text-primary"
                       : state === "error"
-                        ? "border-red-400 text-red-400"
+                        ? "border-red-500 text-red-600"
                         : "border-border text-muted-foreground")
                 }
               >

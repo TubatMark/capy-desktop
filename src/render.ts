@@ -153,11 +153,13 @@ export async function renderClip(
 export const NO_LIBASS =
   "This ffmpeg can't burn in captions (built without libass). Fix: brew install ffmpeg-full  (capy finds it automatically)";
 
-/** Grab one 9:16 thumbnail (JPEG) from `input` at `atSec`, cropped like the center layout. */
-export async function thumbnail(input: string, output: string, atSec: number, layout: RenderOpts["layout"] = "center"): Promise<void> {
+/** Grab one 9:16 thumbnail (JPEG) from `input` at `atSec`, cropped like the center layout. `width` sets the output size (height follows 9:16). */
+export async function thumbnail(input: string, output: string, atSec: number, layout: RenderOpts["layout"] = "center", width = 360): Promise<void> {
+  const w = width;
+  const h = Math.round((width * 16) / 9);
   const vf = layout === "blur"
-    ? "scale=360:640:force_original_aspect_ratio=decrease,pad=360:640:(ow-iw)/2:(oh-ih)/2:black"
-    : "scale=360:640:force_original_aspect_ratio=increase,crop=360:640";
+    ? `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`
+    : `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`;
   await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", Math.max(0, atSec).toFixed(2), "-i", input, "-frames:v", "1", "-vf", vf, "-q:v", "3", output]);
 }
 

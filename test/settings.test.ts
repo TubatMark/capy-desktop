@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MODELS } from "../lib/types";
@@ -45,7 +45,7 @@ describe("settings", () => {
 
   it("returns defaults when there is no file", () => {
     expect(existsSync(settingsFile())).toBe(false);
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
     const e = effective();
     expect(e.browser).toBeUndefined();
     expect(e.outputDir).toBeUndefined();
@@ -66,13 +66,13 @@ describe("settings", () => {
     expect(e.claudeAuth).toBe("apiKey");
     expect(e.apiKey).toBe("sk-env-1234");
     // env does not leak into what is stored
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
   });
 
   it("lets settings.json win over the environment", () => {
     process.env.CAPY_BROWSER = "chrome";
     process.env.CAPY_MODEL = "claude-opus-5-5";
-    saveSettings({ browser: "safari", model: "claude-haiku-4-5-20251001", outputDir: "/tmp/x" });
+    saveSettings({ browser: "safari", models: { claude: "claude-haiku-4-5-20251001" }, outputDir: "/tmp/x" });
     const e = effective();
     expect(e.browser).toBe("safari");
     expect(e.model).toBe("claude-haiku-4-5-20251001");
@@ -91,36 +91,50 @@ describe("settings", () => {
   });
 
   it("merges partial patches and clears keys with an empty string", () => {
-    saveSettings({ browser: "chrome", model: "claude-opus-5-5" });
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription", browser: "chrome", model: "claude-opus-5-5" });
+    saveSettings({ browser: "chrome", models: { claude: "claude-opus-5-5" } });
+    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "subscription", browser: "chrome" });
     saveSettings({ browser: "" });
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription", model: "claude-opus-5-5" });
+    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "subscription" });
     saveSettings({ claudeAuth: "apiKey", apiKey: "sk-abc-1234", checkedAt: 42 });
-    expect(loadSettings()).toEqual({ claudeAuth: "apiKey", apiKey: "sk-abc-1234", checkedAt: 42, model: "claude-opus-5-5" });
-    // undefined means "leave alone"
-    saveSettings({ model: undefined });
-    expect(loadSettings().model).toBe("claude-opus-5-5");
+    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "apiKey", apiKey: "sk-abc-1234", checkedAt: 42 });
+    // undefined means "leave alone"; per-agent models merge, and "" drops one
+    saveSettings({ models: undefined });
+    expect(loadSettings().models.claude).toBe("claude-opus-5-5");
+    saveSettings({ models: { codex: "gpt-5" } });
+    expect(loadSettings().models).toEqual({ claude: "claude-opus-5-5", codex: "gpt-5" });
+    saveSettings({ models: { claude: "" } });
+    expect(loadSettings().models).toEqual({ codex: "gpt-5" });
+    expect(effective().model).toBe(MODELS[0].id);
     // survives a cache reset (i.e. it really is on disk)
     resetSettingsCache();
     expect(loadSettings().apiKey).toBe("sk-abc-1234");
   });
 
   it("redacts the API key", () => {
-    expect(redact({ claudeAuth: "apiKey", apiKey: "sk-ant-api03-abcdef1234" })).toEqual({ claudeAuth: "apiKey", apiKey: "••••1234" });
-    expect(redact({ claudeAuth: "subscription", browser: "chrome" })).toEqual({ claudeAuth: "subscription", browser: "chrome" });
-    expect(redact({ claudeAuth: "subscription", apiKey: "" })).not.toHaveProperty("apiKey");
+    const base = { agent: "claude" as const, models: {} };
+    expect(redact({ ...base, claudeAuth: "apiKey", apiKey: "sk-ant-api03-abcdef1234" })).toEqual({ ...base, claudeAuth: "apiKey", apiKey: "••••1234" });
+    expect(redact({ ...base, claudeAuth: "subscription", browser: "chrome" })).toEqual({ ...base, claudeAuth: "subscription", browser: "chrome" });
+    expect(redact({ ...base, claudeAuth: "subscription", apiKey: "" })).not.toHaveProperty("apiKey");
+  });
+
+  it("reads the old single `model` key as the Claude model", () => {
+    mkdirSync(path.dirname(settingsFile()), { recursive: true });
+    writeFileSync(settingsFile(), JSON.stringify({ model: "claude-opus-5-5" }));
+    resetSettingsCache();
+    expect(loadSettings().models).toEqual({ claude: "claude-opus-5-5" });
+    expect(effective().model).toBe("claude-opus-5-5");
   });
 
   it("ignores junk in the file", () => {
     saveSettings({ browser: "chrome" });
     // hand-edit the file with unknown keys / wrong types
     const file = settingsFile();
-    writeFileSync(file, JSON.stringify({ browser: 5, model: "", nope: true, claudeAuth: "other", checkedAt: "x" }));
+    writeFileSync(file, JSON.stringify({ browser: 5, model: "", models: { nope: "x", codex: 3 }, agent: "hal", nope: true, claudeAuth: "other", checkedAt: "x" }));
     resetSettingsCache();
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
     writeFileSync(file, "not json");
     resetSettingsCache();
-    expect(loadSettings()).toEqual({ claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
   });
 
   it("applyToEnv sets and clears CAPY_USE_API_KEY / ANTHROPIC_API_KEY", () => {

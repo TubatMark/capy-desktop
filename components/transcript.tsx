@@ -13,7 +13,7 @@ export function Transcript({ words, start, end, playhead, onSeek }: { words: Wor
   }, [playhead]);
 
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden break-words rounded-lg border bg-neutral-950/60 p-3 text-[15px] leading-7">
+    <div className="h-full overflow-y-auto overflow-x-hidden break-words rounded-lg border bg-white p-3 text-[15px] leading-7">
       {words.map((w, i) => {
         const inside = w.start >= start - 0.05 && w.start < end;
         const cur = playhead >= w.start && playhead < (words[i + 1]?.start ?? w.end);
@@ -23,7 +23,7 @@ export function Transcript({ words, start, end, playhead, onSeek }: { words: Wor
             ref={cur ? curRef : undefined}
             className={
               "cursor-pointer rounded px-0.5 transition-colors " +
-              (cur ? "bg-primary text-primary-foreground" : inside ? "text-foreground hover:bg-accent" : "text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground")
+              (cur ? "bg-primary text-primary-foreground" : inside ? "text-foreground hover:bg-accent" : "text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground")
             }
             onClick={() => onSeek(w.start)}
             title={`${w.start.toFixed(1)}s — click to move the playhead here`}

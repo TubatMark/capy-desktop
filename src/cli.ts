@@ -9,6 +9,7 @@ import { runChecks } from "../server/doctor";
 import { fetchAudio, fetchCaptions, fetchMeta, fetchSection, videoIdFromUrl } from "./youtube";
 import { wordsInRange } from "./captions";
 import { pickClips } from "./pick";
+import { agentSpec } from "./agents";
 import { renderClip, detectEncoder, probeVideo } from "./render";
 import { transcribe } from "./transcribe";
 import { writePublishFiles } from "./pipeline";
@@ -36,7 +37,9 @@ Options:
   --no-captions          Skip burned-in captions
   --no-hook              Skip the hook text overlay
   --lang <code>          Caption language to prefer (default: the spoken language)
-  --model <id>           Claude model for picking (default: ${DEFAULT_MODEL};
+  --agent <id>           AI that picks: claude (default), codex, cursor, gemini,
+                         opencode, droid, copilot, qwen, amp (or CAPY_AGENT)
+  --model <id>           Model for picking (Claude default: ${DEFAULT_MODEL};
                          claude-haiku-4-5 is cheaper, claude-opus-5-5 is best)
   --browser <name>       Use cookies from your browser: chrome, safari, firefox, brave
                          (fixes 429 / "confirm you're not a bot")
@@ -66,6 +69,7 @@ async function main() {
       "no-captions": { type: "boolean", default: false },
       "no-hook": { type: "boolean", default: false },
       lang: { type: "string" },
+      agent: { type: "string" },
       model: { type: "string" },
       proxy: { type: "string" },
       cookies: { type: "string" },
@@ -98,7 +102,8 @@ async function main() {
   if (!["center", "blur"].includes(v.layout!)) throw new Error(`--layout must be center or blur (got "${v.layout}")`);
   if (!["bold", "clean"].includes(v.style!)) throw new Error(`--style must be bold or clean (got "${v.style}")`);
   const app = effective(); // default → env → settings.json; flags win
-  const model = v.model ?? app.model;
+  const agent = agentSpec(v.agent ?? app.agent).id;
+  const model = v.model ?? (agent === "claude" ? app.model : app.models[agent]);
 
   const yt = { proxy: v.proxy ?? process.env.YT_PROXY, cookies: v.cookies, cookiesFromBrowser: v.browser ?? app.browser };
   if (yt.cookies && jobs > 1) jobs = 1; // parallel yt-dlp runs would both rewrite the cookies file
@@ -169,20 +174,21 @@ async function main() {
     log("pick", `${clips.length} clips from ${path.relative(process.cwd(), picksSource)} (--repick to ask Claude again)`);
     for (const c of clips) log("pick", `  ${fmtTime(c.start)}-${fmtTime(c.end)}  [${c.score}/10] ${c.title}`);
   } else {
-    if (process.env.ANTHROPIC_API_KEY && !(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY)) {
+    if (agent === "claude" && process.env.ANTHROPIC_API_KEY && !(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY)) {
       log("pick", "ignoring ANTHROPIC_API_KEY so this uses your Claude plan (CAPY_USE_API_KEY=1 to use the key)");
     }
-    log("pick", `asking ${model} for ${count} clips (${minSec}-${maxSec}s)`);
+    log("pick", `asking ${agentSpec(agent).name}${model ? ` (${model})` : ""} for ${count} clips (${minSec}-${maxSec}s)`);
     const res = await pickClips(words, meta, {
       count,
       minSec,
       maxSec,
+      agent,
       model,
       focus: v.focus,
       onRetry: (m) => log("pick", m),
     });
     clips = res.clips;
-    await writeFile(clipsFile, JSON.stringify({ video: meta.url, model, clips, raw: res.raw }, null, 2));
+    await writeFile(clipsFile, JSON.stringify({ video: meta.url, agent, model, clips, raw: res.raw }, null, 2));
     log("pick", `${clips.length} clips in ${(res.durationMs / 1000).toFixed(1)}s (~$${res.costUsd.toFixed(3)} API-equivalent, billed to your plan)`);
     for (const c of clips) log("pick", `  ${fmtTime(c.start)}-${fmtTime(c.end)}  [${c.score}/10] ${c.title}`);
   }

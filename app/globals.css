@@ -1,8 +1,6 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
-/* Light (default): the cream + brown of the capy logo */
+/* Light only: the cream + brown of the capy logo */
 :root {
   --background: oklch(0.985 0.012 80);
   --foreground: oklch(0.24 0.03 45);
@@ -35,38 +33,6 @@
   --blob-c: oklch(0.84 0.09 25 / 38%);
   --grid-line: oklch(0.24 0.03 45 / 7%);
   --sticker-opacity: 0.92;
-}
-
-/* Dark: warm charcoal so the brown logo still feels at home */
-.dark {
-  --background: oklch(0.15 0.012 50);
-  --foreground: oklch(0.96 0.01 80);
-  --card: oklch(0.19 0.012 50);
-  --card-foreground: oklch(0.96 0.01 80);
-  --popover: oklch(0.19 0.012 50);
-  --popover-foreground: oklch(0.96 0.01 80);
-  --primary: oklch(0.76 0.14 55);
-  --primary-foreground: oklch(0.18 0.03 45);
-  --secondary: oklch(0.26 0.012 50);
-  --secondary-foreground: oklch(0.96 0.01 80);
-  --muted: oklch(0.24 0.012 50);
-  --muted-foreground: oklch(0.7 0.015 70);
-  --accent: oklch(0.28 0.014 50);
-  --accent-foreground: oklch(0.96 0.01 80);
-  --destructive: oklch(0.62 0.22 25);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.76 0.14 55 / 60%);
-
-  --ink: oklch(0.08 0.01 45);
-  --sticker-orange: oklch(0.58 0.13 50);
-  --sticker-yellow: oklch(0.7 0.13 90);
-  --sticker-cream: oklch(0.78 0.02 80);
-  --blob-a: oklch(0.62 0.14 50 / 22%);
-  --blob-b: oklch(0.72 0.13 88 / 13%);
-  --blob-c: oklch(0.58 0.12 25 / 16%);
-  --grid-line: oklch(1 0 0 / 5%);
-  --sticker-opacity: 0.85;
 }
 
 @theme inline {
@@ -103,9 +69,6 @@
   }
   html {
     color-scheme: light;
-  }
-  html.dark {
-    color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground antialiased;
@@ -192,7 +155,6 @@
 .sticker-sun {
   background: var(--sticker-yellow);
 }
-
 @media (prefers-reduced-motion: reduce) {
   .backdrop-blob {
     animation: none;

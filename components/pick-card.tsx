@@ -82,19 +82,19 @@ export function RenderStatus({ clip }: { clip: ClipState }) {
   const r = clip.render;
   if (r.status === "done")
     return (
-      <span className="flex items-center gap-1 text-emerald-300">
+      <span className="flex items-center gap-1 text-emerald-600">
         <Check className="size-3" /> rendered{r.tookMs ? ` in ${(r.tookMs / 1000).toFixed(0)}s` : ""}
       </span>
     );
-  if (r.status === "rendering") return <span className="text-white">rendering {Math.round((r.progress ?? 0) * 100)}% · {fmtRemaining(r.remaining ?? 0)}</span>;
+  if (r.status === "rendering") return <span className="text-foreground">rendering {Math.round((r.progress ?? 0) * 100)}% · {fmtRemaining(r.remaining ?? 0)}</span>;
   if (r.status === "queued") return <span>queued to render</span>;
-  if (r.status === "stale") return <span className="text-amber-300">edited · re-render</span>;
+  if (r.status === "stale") return <span className="text-amber-700">edited · re-render</span>;
   if (r.status === "error")
     return (
-      <span className="flex items-center gap-1 text-red-300">
+      <span className="flex items-center gap-1 text-red-600">
         <AlertCircle className="size-3" /> failed
       </span>
     );
-  if (clip.segment?.status === "error") return <span className="text-red-300">download failed</span>;
+  if (clip.segment?.status === "error") return <span className="text-red-600">download failed</span>;
   return <span>not rendered</span>;
 }

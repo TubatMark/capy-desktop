@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { MODELS, type AppSettings } from "../lib/types";
+import { AGENT_IDS, DEFAULT_APP_SETTINGS, MODELS, type AgentId, type AppSettings } from "../lib/types";
 
 /**
  * App-wide settings in <CAPY_DATA_DIR>/settings.json. This module is the only reader/writer.
@@ -10,7 +10,11 @@ import { MODELS, type AppSettings } from "../lib/types";
  * settings.json → per-job settings (applied by the job manager, not here).
  */
 
-export const DEFAULT_SETTINGS: AppSettings = { claudeAuth: "subscription" };
+export const DEFAULT_SETTINGS: AppSettings = DEFAULT_APP_SETTINGS;
+
+export function isAgentId(v: unknown): v is AgentId {
+  return (AGENT_IDS as readonly string[]).includes(v as string);
+}
 
 /** Browsers yt-dlp can read cookies from (`--cookies-from-browser`). */
 export const BROWSERS = ["chrome", "safari", "firefox", "brave", "edge", "arc"] as const;
@@ -86,7 +90,16 @@ function clean(obj: Record<string, unknown>): Partial<AppSettings> {
   const out: Partial<AppSettings> = {};
   if (typeof obj.browser === "string" && obj.browser) out.browser = obj.browser;
   if (typeof obj.outputDir === "string" && obj.outputDir) out.outputDir = obj.outputDir;
-  if (typeof obj.model === "string" && obj.model) out.model = obj.model;
+  if (isAgentId(obj.agent)) out.agent = obj.agent;
+  const models: AppSettings["models"] = {};
+  if (obj.models && typeof obj.models === "object") {
+    for (const [k, v] of Object.entries(obj.models as Record<string, unknown>)) {
+      if (isAgentId(k) && typeof v === "string" && v.trim()) models[k] = v.trim().slice(0, 200);
+    }
+  }
+  // older files stored a single Claude model
+  if (!models.claude && typeof obj.model === "string" && obj.model) models.claude = obj.model;
+  if (Object.keys(models).length) out.models = models;
   if (obj.claudeAuth === "subscription" || obj.claudeAuth === "apiKey") out.claudeAuth = obj.claudeAuth;
   if (typeof obj.apiKey === "string" && obj.apiKey) out.apiKey = obj.apiKey;
   if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt)) out.checkedAt = obj.checkedAt;
@@ -95,11 +108,22 @@ function clean(obj: Record<string, unknown>): Partial<AppSettings> {
 
 /** Settings as stored, with defaults filled in. Sync and cached; a missing file yields the defaults. */
 export function loadSettings(): AppSettings {
-  return { ...DEFAULT_SETTINGS, ...raw() };
+  const r = raw();
+  return { ...DEFAULT_SETTINGS, ...r, models: { ...r.models } };
+}
+
+/** Async aliases for callers that predate the sync API. */
+export async function loadAppSettings(): Promise<AppSettings> {
+  return loadSettings();
+}
+export async function saveAppSettings(patch: SettingsPatch): Promise<AppSettings> {
+  return saveSettings(patch);
 }
 
 /** A partial update; `""` or `null` on any key removes it from the file. */
-export type SettingsPatch = { [K in keyof AppSettings]?: AppSettings[K] | "" | null };
+export type SettingsPatch = { [K in Exclude<keyof AppSettings, "models">]?: AppSettings[K] | "" | null } & {
+  models?: Partial<Record<AgentId, string | "" | null>>;
+};
 
 /**
  * Merge `patch` into the file. An empty string (or null) deletes that key. The file is written
@@ -109,6 +133,17 @@ export function saveSettings(patch: SettingsPatch): AppSettings {
   const next: Record<string, unknown> = { ...raw() };
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue;
+    if (k === "models" && v && typeof v === "object") {
+      // per-agent merge; an empty string drops that agent's model
+      const merged: Record<string, string> = { ...((next.models as Record<string, string> | undefined) ?? {}) };
+      for (const [id, m] of Object.entries(v as Record<string, string | "" | null | undefined>)) {
+        if (m === undefined) continue;
+        if (m === "" || m === null) delete merged[id];
+        else merged[id] = m;
+      }
+      next.models = merged;
+      continue;
+    }
     if (v === "" || v === null) delete next[k];
     else next[k] = v;
   }
@@ -131,8 +166,12 @@ export function redact(s: AppSettings): AppSettings {
 }
 
 export interface EffectiveSettings {
+  agent: AgentId;
+  /** Model per agent as stored; `model` below is the resolved Claude model. */
+  models: AppSettings["models"];
   browser?: string;
   outputDir?: string;
+  /** The Claude model: settings → CAPY_MODEL → the first of MODELS. */
   model: string;
   claudeAuth: AppSettings["claudeAuth"];
   apiKey?: string;
@@ -150,10 +189,13 @@ function env(...names: string[]): string | undefined {
 export function effective(): EffectiveSettings {
   const s = raw();
   const outputDir = s.outputDir ?? env("CAPY_OUTPUT", "CLIPRUN_OUTPUT");
+  const agentEnv = env("CAPY_AGENT");
   return {
+    agent: s.agent ?? (isAgentId(agentEnv) ? agentEnv : "claude"),
+    models: { ...s.models },
     browser: s.browser ?? env("CAPY_BROWSER", "CLIPRUN_BROWSER"),
     outputDir: outputDir ? expandHome(outputDir) : undefined,
-    model: s.model ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
+    model: s.models?.claude ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
     claudeAuth: s.claudeAuth ?? (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY") ? "apiKey" : "subscription"),
     apiKey: s.apiKey ?? envApiKey(),
   };

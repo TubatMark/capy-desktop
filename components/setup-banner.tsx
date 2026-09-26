@@ -25,8 +25,8 @@ export function SetupBanner() {
     fetch("/api/settings")
       .then(async (r) => {
         if (!alive || !r.ok) return;
-        const s = (await r.json()) as Partial<AppSettings>;
-        if (!s.checkedAt) setShow(true);
+        const { settings } = (await r.json()) as { settings?: Partial<AppSettings> };
+        if (!settings?.checkedAt) setShow(true);
       })
       .catch(() => {});
     return () => {
