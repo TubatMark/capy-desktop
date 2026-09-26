@@ -237,13 +237,18 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
             </div>
           </div>
 
+          {view === "youtube" ? (
+            /* YouTube tab: only the embed, sized by the column width so it never spills over the other cards */
+            <div className="rounded-xl border bg-card p-4">
+              <YouTubeEmbed videoId={job.videoId} seekTo={draft.start} className="w-full" />
+              <p className="mt-3 text-xs text-muted-foreground">Starts at {fmtTime(draft.start)}, the clip's in point.</p>
+            </div>
+          ) : (
           <div className="grid gap-4 md:grid-cols-[300px_minmax(0,1fr)]">
             {/* phone frame */}
             <div className="mx-auto w-full max-w-[340px] md:w-[300px]">
               <div className="relative overflow-hidden rounded-[28px] border-4 border-neutral-800 bg-black shadow-2xl [container-type:inline-size]" style={{ aspectRatio: "9/16" }}>
-                {view === "youtube" ? (
-                  <div className="absolute inset-0 grid place-items-center p-2 text-center text-xs text-muted-foreground">Use the player on the right →</div>
-                ) : showRendered ? (
+                {showRendered ? (
                   <video ref={videoRef} key={r.url} src={r.url} className="absolute inset-0 size-full object-contain" onTimeUpdate={onTime} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} playsInline />
                 ) : segReady ? (
                   <>
@@ -273,11 +278,9 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                     )}
                   </div>
                 )}
-                {view !== "youtube" && (
-                  <button onClick={togglePlay} className="absolute inset-0 grid place-items-center opacity-0 transition-opacity hover:opacity-100 focus:opacity-100" aria-label={playing ? "Pause" : "Play"}>
-                    <span className="rounded-full bg-black/60 p-4 text-white backdrop-blur">{playing ? <Pause className="size-7" /> : <Play className="size-7 fill-current" />}</span>
-                  </button>
-                )}
+                <button onClick={togglePlay} className="absolute inset-0 grid place-items-center opacity-0 transition-opacity hover:opacity-100 focus:opacity-100" aria-label={playing ? "Pause" : "Play"}>
+                  <span className="rounded-full bg-black/60 p-4 text-white backdrop-blur">{playing ? <Pause className="size-7" /> : <Play className="size-7 fill-current" />}</span>
+                </button>
               </div>
               <div className="mt-2 flex items-center justify-between font-mono text-xs text-muted-foreground">
                 <span>{fmtTimeMs(Math.max(0, t - draft.start))}</span>
@@ -285,38 +288,35 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               </div>
             </div>
 
-            {/* right of phone: YouTube or transcript, in a card like the rest of the page */}
+            {/* right of phone: the transcript, in a card like the rest of the page */}
             <div className="min-h-[300px] min-w-0 rounded-xl border bg-card p-4 md:h-[533px]">
-              {view === "youtube" ? (
-                <YouTubeEmbed videoId={job.videoId} seekTo={draft.start} className="h-full" />
-              ) : (
-                <div className="flex h-full flex-col gap-3">
-                  <div className="flex h-8 items-center gap-2">
-                    {locked ? (
-                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Lock className="size-3.5" /> Rendered transcript · click a word to jump there
-                      </span>
-                    ) : (
-                      <>
-                        <Button size="sm" variant="outline" onClick={setIn} title="Set the clip's start at the playhead (I)">
-                          <SkipBack /> Set In
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={setOut} title="Set the clip's end at the playhead (O)">
-                          Set Out <SkipForward />
-                        </Button>
-                      </>
-                    )}
-                    <span className="ml-auto font-mono text-xs text-muted-foreground">
-                      {locked ? fmtTimeMs(Math.max(0, t - clip.start)) : `playhead ${fmtTimeMs(t)}`}
+            <div className="flex h-full flex-col gap-3">
+                <div className="flex h-8 items-center gap-2">
+                  {locked ? (
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Lock className="size-3.5" /> Rendered transcript · click a word to jump there
                     </span>
-                  </div>
-                  <div className="min-h-0 flex-1">
-                    <Transcript words={shownWords} start={draft.start} end={draft.end} playhead={t} onSeek={seek} />
-                  </div>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" onClick={setIn} title="Set the clip's start at the playhead (I)">
+                        <SkipBack /> Set In
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={setOut} title="Set the clip's end at the playhead (O)">
+                        Set Out <SkipForward />
+                      </Button>
+                    </>
+                  )}
+                  <span className="ml-auto font-mono text-xs text-muted-foreground">
+                    {locked ? fmtTimeMs(Math.max(0, t - clip.start)) : `playhead ${fmtTimeMs(t)}`}
+                  </span>
                 </div>
-              )}
+                <div className="min-h-0 flex-1">
+                  <Transcript words={shownWords} start={draft.start} end={draft.end} playhead={t} onSeek={seek} />
+                </div>
+              </div>
             </div>
           </div>
+          )}
 
           {seg && !locked && (
             <Timeline
