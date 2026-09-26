@@ -198,3 +198,17 @@
     animation: none;
   }
 }
+
+/* ---- Desktop shell (Electron sets data-desktop on <html>; see app/layout.tsx) ---- */
+/* The header doubles as the title bar: draggable, with room for the macOS traffic lights. */
+html[data-desktop] .app-header {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+html[data-desktop] .app-header > div {
+  padding-left: 84px;
+}
+html[data-desktop] .no-drag,
+html[data-desktop] .no-drag * {
+  -webkit-app-region: no-drag;
+}

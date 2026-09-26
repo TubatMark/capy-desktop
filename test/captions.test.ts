@@ -160,7 +160,7 @@ describe("regressions from e2e review", () => {
   it("keeps back-to-back clips", () => {
     const words = sentence(Array.from({ length: 400 }, (_, i) => (i % 10 === 9 ? "end." : "w")), 0, 0.5);
     const clips = postProcess(
-      [{ start: 20, end: 50, title: "a", hook: "", reason: "", score: 8 }, { start: 50, end: 80, title: "b", hook: "", reason: "", score: 7 }],
+      [{ start: 20, end: 50, title: "a", hook: "", reason: "", score: 8, ytTitle: "", description: "", hashtags: [] }, { start: 50, end: 80, title: "b", hook: "", reason: "", score: 7, ytTitle: "", description: "", hashtags: [] }],
       words, 200, { minSec: 20, maxSec: 60 },
     );
     expect(clips.map((c) => c.title)).toEqual(["a", "b"]);

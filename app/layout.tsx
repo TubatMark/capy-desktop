@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import Link from "next/link";
+import { Settings } from "lucide-react";
 import "./globals.css";
 import { ThemeToggle, THEME_INIT } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/logo";
@@ -13,32 +14,41 @@ export const metadata: Metadata = {
   icons: { icon: [{ url: "/favicon-32.png", sizes: "32x32" }, { url: "/icon-192.png", sizes: "192x192" }], apple: "/icon-192.png" },
 };
 
+export const viewport: Viewport = { width: "device-width", initialScale: 1 };
+
+/** Set by the Electron shell; the header then leaves room for the traffic lights and becomes draggable (globals.css). */
+const isDesktop = process.env.CAPY_DESKTOP === "1";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} data-desktop={isDesktop ? "" : undefined} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
-      <body className="min-h-screen">
+      <body className="min-h-screen overflow-x-hidden">
         <Backdrop />
-        <header className="sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur">
-          <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-6">
-            <Link href="/" className="flex items-center gap-2.5" aria-label="capy home">
+        <header className="app-header sticky top-0 z-40 border-b border-border/60 bg-background/85 backdrop-blur">
+          <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4 sm:gap-6 sm:px-6">
+            <Link href="/" className="no-drag flex shrink-0 items-center gap-2.5" aria-label="capy home">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/capy-mark.png" alt="" className="size-8" />
-              <Wordmark className="h-7" />
+              <Wordmark className="hidden h-7 sm:block" />
             </Link>
-            <nav className="flex items-center gap-4 text-sm text-muted-foreground">
+            <nav className="no-drag flex items-center gap-4 text-sm text-muted-foreground">
               <Link href="/" className="hover:text-foreground">
                 Library
               </Link>
+              <Link href="/settings" className="flex items-center gap-1.5 hover:text-foreground" aria-label="Settings">
+                <Settings className="size-4" aria-hidden />
+                <span className="hidden sm:inline">Settings</span>
+              </Link>
             </nav>
-            <div className="ml-auto">
+            <div className="no-drag ml-auto">
               <ThemeToggle />
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-[1600px] px-6 py-8">{children}</main>
+        <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8">{children}</main>
       </body>
     </html>
   );
