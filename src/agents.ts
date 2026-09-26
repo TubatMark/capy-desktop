@@ -3,6 +3,7 @@ import { access, constants, mkdtemp, readFile, rm, writeFile } from "node:fs/pro
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { CancelledError, currentSignal, isCancelled } from "./exec";
 import type { AgentId, AgentInfo } from "../lib/types";
 
 export class ClaudeAuthError extends Error {}
@@ -19,6 +20,10 @@ export async function askClaude(
   o: { timeoutMs?: number; onRetry?: (msg: string) => void } = {},
 ): Promise<any> {
   const abortController = new AbortController();
+  const outer = currentSignal();
+  if (outer?.aborted) throw new CancelledError();
+  const onOuterAbort = () => abortController.abort();
+  outer?.addEventListener("abort", onOuterAbort, { once: true });
   const env: Record<string, string | undefined> = { ...process.env };
   if (!(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY)) delete env.ANTHROPIC_API_KEY;
   let timedOut = false;
@@ -43,12 +48,15 @@ export async function askClaude(
       if (m.type === "result") result = m;
     }
   } catch (e) {
+    if (outer?.aborted) throw new CancelledError();
     if (e instanceof ClaudeAuthError) throw e;
     if (timedOut) throw new Error(`Claude did not answer within ${Math.round(o.timeoutMs! / 1000)}s`);
     throw e;
   } finally {
     if (timer) clearTimeout(timer);
+    outer?.removeEventListener("abort", onOuterAbort);
   }
+  if (outer?.aborted) throw new CancelledError();
 
   if (!result) throw new Error(timedOut ? "Claude timed out" : "Claude returned no result");
   if (result.is_error) {
@@ -266,10 +274,13 @@ interface SpawnResult {
 
 function spawnText(bin: string, args: string[], o: { stdin?: string; cwd?: string; timeoutMs: number }): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
+    const signal = currentSignal();
+    if (signal?.aborted) return reject(new CancelledError());
     const p = spawn(bin, args, {
       cwd: o.cwd,
       env: { ...process.env, PATH: childPath(), NO_COLOR: "1", CI: "1" },
       stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      signal,
     });
     let stdout = "";
     let stderr = "";
@@ -283,10 +294,11 @@ function spawnText(bin: string, args: string[], o: { stdin?: string; cwd?: strin
     p.stderr!.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-32 * 1024)));
     p.on("error", (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(isCancelled(e) ? new CancelledError() : e);
     });
     p.on("close", (code) => {
       clearTimeout(timer);
+      if (signal?.aborted) return reject(new CancelledError());
       resolve({ code, stdout, stderr, timedOut });
     });
     if (o.stdin !== undefined) {

@@ -7,6 +7,7 @@ import { videoIdFromUrl } from "../src/youtube";
 import { snapToWords } from "../src/captions";
 import { generatePublish, rewriteTitleHook } from "../src/pick";
 import { pool } from "../src/util";
+import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../src/exec";
 import type { Word } from "../src/types";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { loadTimings, learn, type Timings } from "./estimates";
@@ -28,6 +29,14 @@ class JobManager extends EventEmitter {
   private loaded = false;
   private loading?: Promise<void>;
   private renderQueue: Promise<void> = Promise.resolve();
+  /**
+   * One controller per analyze run, so "Cancel" can stop every process it spawned. Created lazily: the
+   * singleton instance outlives dev reloads (only its prototype is swapped), so a field initializer would be missing.
+   */
+  private _analyzing?: Map<string, AbortController>;
+  private get analyzing() {
+    return (this._analyzing ??= new Map<string, AbortController>());
+  }
 
   /** Load every job from disk once. Concurrent callers (the SSE route and the first fetch land together) wait for the same load. */
   init(): Promise<void> {
@@ -207,6 +216,7 @@ class JobManager extends EventEmitter {
   }
 
   private async setStage(job: JobState, stage: Stage) {
+    throwIfCancelled();
     job.stage = stage;
     job.stageStartedAt = Date.now();
     await this.recomputeEstimate(job);
@@ -289,7 +299,28 @@ class JobManager extends EventEmitter {
     };
   }
 
+  /** Stop the running analyze for this job. Picks from before a re-pick stay; footage not yet downloaded is marked. */
+  async cancel(id: string) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    const ac = this.analyzing.get(id);
+    if (!ac) return job;
+    this.log(job, job.stage, "cancelling…");
+    ac.abort();
+    return job;
+  }
+
   private async runAnalyze(job: JobState, o: { repick: boolean }) {
+    const ac = new AbortController();
+    this.analyzing.set(job.id, ac);
+    try {
+      await withCancel(ac.signal, () => this.analyze(job, o));
+    } finally {
+      this.analyzing.delete(job.id);
+    }
+  }
+
+  private async analyze(job: JobState, o: { repick: boolean }) {
     job.status = "analyzing";
     job.error = undefined;
     job.startedAt = Date.now();
@@ -365,9 +396,17 @@ class JobManager extends EventEmitter {
       this.log(job, "done", `ready in ${fmtDur(job.tookMs)} — ${job.clips.length} picks, footage downloaded`);
       await this.update(job);
     } catch (e) {
-      job.status = "error";
-      job.error = e instanceof Error ? e.message : String(e);
-      this.log(job, "error", job.error);
+      if (isCancelled(e)) {
+        // footage that never finished is marked so the clip page says so instead of spinning forever
+        for (const c of job.clips) if (c.segment && c.segment.status !== "done") c.segment = { ...c.segment, status: "error", error: "Cancelled" };
+        job.status = job.clips.length ? "ready" : "error";
+        job.error = job.clips.length ? undefined : "Cancelled";
+        this.log(job, "error", `cancelled during ${job.stage}`);
+      } else {
+        job.status = "error";
+        job.error = e instanceof Error ? e.message : String(e);
+        this.log(job, "error", job.error);
+      }
       await this.update(job);
     } finally {
       this.stopTicker(job);
@@ -391,6 +430,7 @@ class JobManager extends EventEmitter {
         c.thumbUrl = toMediaUrl(seg.thumb) + `?v=${Date.now()}`;
         await learn("segmentSecPerSec", (Date.now() - t0) / 1000 / Math.max(1, seg.end - seg.start));
       } catch (e) {
+        if (isCancelled(e)) throw new CancelledError();
         c.segment = { ...c.segment!, status: "error", error: e instanceof Error ? e.message.split("\n").pop() : String(e) };
         this.log(job, "segments", `clip ${c.n} download failed: ${c.segment.error}`);
       }

@@ -33,6 +33,10 @@ export function VideoView({ id }: { id: string }) {
   async function renderSelected() {
     await api(`/api/jobs/${id}/render`, { method: "POST", body: JSON.stringify({}) });
   }
+  async function cancel() {
+    if (!confirm("Stop making clips? You can change the clip count and run it again.")) return;
+    await api(`/api/jobs/${id}/cancel`, { method: "POST" });
+  }
   async function repick() {
     if (!confirm("Ask AI for a fresh set of picks? Your current picks and edits will be replaced.")) return;
     await api(`/api/jobs/${id}/repick`, { method: "POST", body: JSON.stringify({}) });
@@ -63,7 +67,7 @@ export function VideoView({ id }: { id: string }) {
         </div>
 
         <div className="space-y-4">
-          <StageProgress job={job} />
+          <StageProgress job={job} onCancel={busy ? cancel : undefined} />
           {job.status === "ready" && job.tookMs && (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Timer className="size-3.5" /> Link to picks took <span className="font-mono text-foreground">{fmtDur(job.tookMs)}</span>
