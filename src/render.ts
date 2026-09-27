@@ -1,8 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { run } from "./exec";
-import { buildAss, STYLES, type HookSpec } from "./ass";
+import { buildAss, STYLES, styleFor, type HookSpec } from "./ass";
 import type { Word } from "./types";
+import { vibeById, type Look, type VibeId } from "../lib/look";
 
 export interface RenderOpts {
   /** "center" crops the middle third; "blur" letterboxes over a blurred copy. */
@@ -12,6 +13,8 @@ export interface RenderOpts {
   encoder: "auto" | "h264_videotoolbox" | "libx264";
   hook?: HookSpec;
   captions: boolean;
+  /** Per-video caption/hook styling and colour vibe; omit for the style's defaults. */
+  look?: Look;
   /** Cut this window out of the input (seconds from the input's start). Omit to use the whole file. */
   trim?: { start: number; duration: number };
   /** Progress callback with seconds of output encoded so far. */
@@ -56,6 +59,11 @@ export function verticalFilter(layout: RenderOpts["layout"], sharpen = false): s
   return `[0:v]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920${sharp}`;
 }
 
+/** ffmpeg filter snippet for a colour vibe ("" for the original colours). */
+export function vibeFilter(id: VibeId): string {
+  return vibeById(id).ffmpeg;
+}
+
 /** Width, height and frame rate of the first video stream. */
 export async function probeVideo(file: string): Promise<{ width: number; height: number; fps: number }> {
   const { stdout } = await run("ffprobe", [
@@ -93,13 +101,15 @@ export async function renderClip(
   input = path.resolve(input);
   output = path.resolve(output);
   assPath = path.resolve(assPath);
-  const style = STYLES[o.style] ?? STYLES.bold!;
+  const style = styleFor(o.style in STYLES ? (o.style as "bold" | "clean") : "bold", o.look);
   const enc = await detectEncoder(o.encoder);
   const useSubs = o.captions || !!o.hook;
   if (useSubs) await writeFile(assPath, buildAss(o.captions ? words : [], style, o.hook), "utf8");
 
   const src = await probeVideo(input);
   let filter = verticalFilter(o.layout, upscaleFactor(src, o.layout) > 1.15);
+  const vibe = o.look ? vibeFilter(o.look.vibe) : "";
+  if (vibe) filter += `,${vibe}`;
   // ffmpeg runs in the .ass folder and references it by bare name: avoids filter-path escaping bugs
   // Named option on purpose: some ffmpeg builds reject the positional form ("No option name near ...").
   if (useSubs) filter += `,ass=filename=${escapeFilterPath(path.basename(assPath))}`;

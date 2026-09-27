@@ -44,6 +44,9 @@ describe("parseWhisperJson", () => {
   });
 });
 
+/** Publish fields every pick now carries; the tests only care about timing. */
+const pub = { ytTitle: "", description: "", hashtags: [] as string[] };
+
 const sentence = (texts: string[], start = 0, each = 0.5): Word[] => texts.map((t, i) => ({ text: t, start: start + i * each, end: start + (i + 1) * each }));
 
 describe("snapToWords", () => {
@@ -67,11 +70,11 @@ describe("postProcess", () => {
   it("drops overlaps keeping the higher score, clamps length, sorts by time", () => {
     const clips = postProcess(
       [
-        { start: 100, end: 130, title: "b", hook: "", reason: "", score: 6 },
-        { start: 10, end: 40, title: "a", hook: "", reason: "", score: 8 },
-        { start: 20, end: 50, title: "a2", hook: "", reason: "", score: 5 },
-        { start: 150, end: 250, title: "long", hook: "", reason: "", score: 7 },
-        { start: 160, end: 162, title: "tiny", hook: "", reason: "", score: 9 },
+        { ...pub, start: 100, end: 130, title: "b", hook: "", reason: "", score: 6 },
+        { ...pub, start: 10, end: 40, title: "a", hook: "", reason: "", score: 8 },
+        { ...pub, start: 20, end: 50, title: "a2", hook: "", reason: "", score: 5 },
+        { ...pub, start: 150, end: 250, title: "long", hook: "", reason: "", score: 7 },
+        { ...pub, start: 160, end: 162, title: "tiny", hook: "", reason: "", score: 9 },
       ],
       words,
       200,
@@ -152,7 +155,7 @@ describe("regressions from e2e review", () => {
   });
   it("clamps long clips on a word end, not mid-word", () => {
     const words = sentence(Array.from({ length: 300 }, () => "word"), 0, 0.37);
-    const [c] = postProcess([{ start: 10, end: 100, title: "t", hook: "", reason: "", score: 5 }], words, 111, { minSec: 20, maxSec: 60 });
+    const [c] = postProcess([{ ...pub, start: 10, end: 100, title: "t", hook: "", reason: "", score: 5 }], words, 111, { minSec: 20, maxSec: 60 });
     expect(c!.end - c!.start).toBeLessThanOrEqual(60);
     const cutAt = c!.end - 0.25;
     expect(words.some((w) => Math.abs(w.end - cutAt) < 1e-6)).toBe(true);
@@ -160,7 +163,7 @@ describe("regressions from e2e review", () => {
   it("keeps back-to-back clips", () => {
     const words = sentence(Array.from({ length: 400 }, (_, i) => (i % 10 === 9 ? "end." : "w")), 0, 0.5);
     const clips = postProcess(
-      [{ start: 20, end: 50, title: "a", hook: "", reason: "", score: 8 }, { start: 50, end: 80, title: "b", hook: "", reason: "", score: 7 }],
+      [{ ...pub, start: 20, end: 50, title: "a", hook: "", reason: "", score: 8 }, { ...pub, start: 50, end: 80, title: "b", hook: "", reason: "", score: 7 }],
       words, 200, { minSec: 20, maxSec: 60 },
     );
     expect(clips.map((c) => c.title)).toEqual(["a", "b"]);

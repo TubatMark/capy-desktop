@@ -13,6 +13,7 @@ import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { loadTimings, learn, type Timings } from "./estimates";
 import type { ClipState, JobSettings, JobState, Stage } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
+import { looksEqual, normalizeLook } from "../lib/look";
 import { agentSpec } from "../src/agents";
 import { loadAppSettings } from "./settings";
 
@@ -482,6 +483,41 @@ class JobManager extends EventEmitter {
     return c;
   }
 
+  /**
+   * Change how every clip of this video renders (look, caption style, layout, captions/hook on-off).
+   * Finished renders are marked stale so the cards offer a re-render; nothing is re-rendered here.
+   */
+  async updateSettings(id: string, patch: Partial<Pick<JobSettings, "look" | "style" | "layout" | "captions" | "hook">>) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    if (job.status === "analyzing" || job.status === "preparing") throw new Error("Wait for the picks to finish");
+    const style = patch.style ?? job.settings.style;
+    const next: JobSettings = { ...job.settings, style };
+    if (patch.layout !== undefined) next.layout = patch.layout;
+    if (patch.captions !== undefined) next.captions = patch.captions;
+    if (patch.hook !== undefined) next.hook = patch.hook;
+    if (patch.look !== undefined) next.look = normalizeLook(patch.look, style);
+    const changed: string[] = [];
+    if (next.style !== job.settings.style) changed.push("style");
+    if (next.layout !== job.settings.layout) changed.push("layout");
+    if (next.captions !== job.settings.captions) changed.push("captions");
+    if (next.hook !== job.settings.hook) changed.push("hook");
+    if (!looksEqual(normalizeLook(next.look, next.style), normalizeLook(job.settings.look, job.settings.style))) changed.push("look");
+    job.settings = next;
+    if (changed.length) {
+      let stale = 0;
+      for (const c of job.clips) {
+        if (c.render.status === "done") {
+          c.render.status = "stale";
+          stale++;
+        }
+      }
+      this.log(job, "render", `${changed.join(", ")} changed · ${stale} clip${stale === 1 ? "" : "s"} need a re-render`);
+    }
+    await this.update(job);
+    return job;
+  }
+
   async addClip(id: string, start: number, end: number) {
     const job = this.jobs.get(id);
     if (!job) throw new Error("No such job");
@@ -618,6 +654,7 @@ class JobManager extends EventEmitter {
         style: job.settings.style,
         captions: job.settings.captions,
         hook: job.settings.hook,
+        look: normalizeLook(job.settings.look, job.settings.style),
         onProgress: (outSec) => {
           c.render.progress = Math.min(0.99, outSec / len);
           this.emitJob(job);

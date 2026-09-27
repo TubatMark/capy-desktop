@@ -1,4 +1,5 @@
 import type { Word } from "./types";
+import { hexToAss, normalizeLook, type Look } from "../lib/look";
 
 export interface CaptionStyle {
   /** Font family; must be installed. Arial Black / Helvetica ship with macOS. */
@@ -18,7 +19,14 @@ export interface CaptionStyle {
   /** Max characters per group so a line fits the 1080px width at this font size. */
   groupChars: number;
   uppercase: boolean;
+  /** Opaque box behind the caption text (ASS BorderStyle 3); the box is the outline colour at a dark alpha. */
+  box: boolean;
   hookSize: number;
+  /** Hook text and box colours (&HAABBGGRR). */
+  hookPrimary: string;
+  hookBack: string;
+  /** Hook distance from the top, in pixels of the 1080x1920 canvas. */
+  hookMarginV: number;
 }
 
 export const STYLES: Record<string, CaptionStyle> = {
@@ -34,7 +42,11 @@ export const STYLES: Record<string, CaptionStyle> = {
     groupSec: 2.2,
     groupChars: 14,
     uppercase: true,
+    box: false,
     hookSize: 84,
+    hookPrimary: "&H00FFFFFF",
+    hookBack: "&HB4000000",
+    hookMarginV: 300,
   },
   clean: {
     font: "Helvetica",
@@ -48,9 +60,50 @@ export const STYLES: Record<string, CaptionStyle> = {
     groupSec: 2.5,
     groupChars: 24,
     uppercase: false,
+    box: false,
     hookSize: 76,
+    hookPrimary: "&H00FFFFFF",
+    hookBack: "&HB4000000",
+    hookMarginV: 300,
   },
 };
+
+/** Alpha of the caption box (ASS: 0 opaque … 255 transparent) when `box` is on. */
+const BOX_ALPHA = 0x60;
+
+/** Replace the alpha byte of an &HAABBGGRR colour. */
+function withAlpha(assColor: string, alpha: number): string {
+  const m = /^&H([0-9A-F]{2})([0-9A-F]{6})$/i.exec(assColor);
+  return m ? `&H${alpha.toString(16).padStart(2, "0").toUpperCase()}${m[2]!.toUpperCase()}` : assColor;
+}
+
+/**
+ * A caption style for a base plus a per-video look. Without a look this is STYLES[base] itself
+ * (LOOK_DEFAULTS reproduce it); with one, the look's sizes, positions and colours are applied.
+ * The look is normalized first, so partial or out-of-range values from older jobs are fine.
+ */
+export function styleFor(base: "bold" | "clean", look?: Look | null): CaptionStyle {
+  const s = STYLES[base]!;
+  if (!look) return { ...s };
+  const l = normalizeLook(look, base);
+  return {
+    ...s,
+    size: l.size,
+    marginV: Math.round(l.bottom * 1920),
+    groupWords: l.wordsPerLine,
+    // the character budget was tuned for the base size; scale it so a line still fits the width
+    groupChars: Math.max(6, Math.round((s.groupChars * s.size) / l.size)),
+    primary: hexToAss(l.text, 0),
+    highlight: hexToAss(l.highlight, 0),
+    outline: hexToAss(l.outline, 0),
+    outlineWidth: l.outlineWidth,
+    box: l.box,
+    hookSize: l.hook.size,
+    hookPrimary: hexToAss(l.hook.text, 0),
+    hookBack: hexToAss(l.hook.box, 0xb4),
+    hookMarginV: Math.round(l.hook.top * 1920),
+  };
+}
 
 export interface HookSpec {
   text: string;
@@ -115,6 +168,7 @@ export function escapeAss(text: string): string {
  * the group stays visible; without one, one Dialogue per group.
  */
 export function buildAss(words: Word[], style: CaptionStyle, hook?: HookSpec): string {
+  const capBack = style.box ? withAlpha(style.outline, BOX_ALPHA) : "&H80000000";
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -124,8 +178,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,${style.font},${style.size},${style.primary},${style.primary},${style.outline},&H80000000,-1,0,0,0,100,100,0,0,1,${style.outlineWidth},2,2,70,70,${style.marginV},1
-Style: Hook,${style.font},${style.hookSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,-1,0,0,0,100,100,1,0,3,18,0,8,70,70,300,1
+Style: Cap,${style.font},${style.size},${style.primary},${style.primary},${style.outline},${capBack},-1,0,0,0,100,100,0,0,${style.box ? 3 : 1},${style.outlineWidth},2,2,70,70,${style.marginV},1
+Style: Hook,${style.font},${style.hookSize},${style.hookPrimary},${style.hookPrimary},&H00000000,${style.hookBack},-1,0,0,0,100,100,1,0,3,18,0,8,70,70,${style.hookMarginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

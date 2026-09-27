@@ -141,7 +141,7 @@ export async function stageRender(
   clip: Clip,
   seg: Segment,
   words: Word[],
-  o: Pick<RenderOpts, "layout" | "style" | "captions" | "onProgress"> & { hook: boolean },
+  o: Pick<RenderOpts, "layout" | "style" | "captions" | "look" | "onProgress"> & { hook: boolean },
 ): Promise<string> {
   const out = path.join(jobDir, `${pad2(n)}-${slug(clip.title)}.mp4`);
   await renderClip(
@@ -153,6 +153,7 @@ export async function stageRender(
       style: o.style,
       encoder: "auto",
       captions: o.captions,
+      look: o.look,
       hook: o.hook && clip.hook ? { text: clip.hook, seconds: Math.min(3, clip.end - clip.start) } : undefined,
       trim: { start: clip.start - seg.start, duration: clip.end - clip.start },
       onProgress: o.onProgress,
