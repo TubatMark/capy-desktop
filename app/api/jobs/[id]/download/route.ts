@@ -44,7 +44,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     zip.file(file, { name: `${folder}/video.mp4` });
     if (await exists(`${base}.jpg`)) zip.file(`${base}.jpg`, { name: `${folder}/thumbnail.jpg` });
     const p = c.publish;
-    const tags = (p?.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ");
+    // hashtags.txt is comma separated without the "#": the form YouTube Studio's tags field takes
+    const tags = (p?.hashtags ?? []).map((h) => h.replace(/^#/, "").trim()).filter(Boolean).join(", ");
     zip.append(p?.ytTitle ?? c.title, { name: `${folder}/title.txt` });
     zip.append(p?.description ?? "", { name: `${folder}/description.txt` });
     zip.append(tags, { name: `${folder}/hashtags.txt` });
