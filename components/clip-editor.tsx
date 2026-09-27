@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlignLeft, ArrowLeft, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Pause, Pencil, Play, Save, Sparkles, Trash2, Wand2, MonitorPlay } from "lucide-react";
+import { AlignLeft, ArrowLeft, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Palette, Pause, Pencil, Play, Save, Sparkles, Trash2, Wand2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { YouTubeEmbed } from "@/components/youtube-embed";
 import { CaptionOverlay } from "@/components/caption-overlay";
+import { LookPanel } from "@/components/look-panel";
 import { Timeline } from "@/components/timeline";
 import { Transcript } from "@/components/transcript";
 import { RenderStatus } from "@/components/pick-card";
@@ -18,13 +19,14 @@ import { PostTextCard } from "@/components/post-sheet";
 import { ThumbnailCard } from "@/components/thumbnail-card";
 import { api, useJob, useWords } from "@/hooks/use-job";
 import { fmtTime, fmtTimeMs, fmtRemaining } from "@/lib/utils";
-import type { ClipState } from "@/lib/types";
+import type { ClipState, JobState } from "@/lib/types";
+import { defaultLook, looksEqual, normalizeLook, vibeById, type Look } from "@/lib/look";
 
 type Draft = Pick<ClipState, "start" | "end" | "title" | "hook" | "reason" | "score">;
 
 export function ClipEditor({ id, n }: { id: string; n: number }) {
   const router = useRouter();
-  const { job } = useJob(id);
+  const { job, setJob } = useJob(id);
   const words = useWords(id, !!job && !!job.wordCount);
   const clip = job?.clips.find((c) => c.n === n);
   const idx = job?.clips.findIndex((c) => c.n === n) ?? -1;
@@ -34,6 +36,15 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // the video's look (caption/hook styling + vibe); shared by every clip, edited from here
+  const [look, setLook] = useState<Look | null>(null);
+  const [lookDirty, setLookDirty] = useState(false);
+  const [lookSaving, setLookSaving] = useState(false);
+  const [lookError, setLookError] = useState<string | null>(null);
+  // while the pointer/focus is in the Look panel the preview shows sample captions so edits show immediately
+  const [lookActive, setLookActive] = useState(false);
+  // the right column shows either the clip's details or the video's look, never both: no scrolling to reach the look
+  const [panel, setPanel] = useState<"details" | "look">("details");
   const [view, setView] = useState<"preview" | "youtube">("preview");
   const [t, setT] = useState(0); // absolute seconds
   const [playing, setPlaying] = useState(false);
@@ -48,8 +59,17 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
     if (clip && !draft) {
       setDraft({ start: clip.start, end: clip.end, title: clip.title, hook: clip.hook, reason: clip.reason, score: clip.score });
       setT(clip.start);
+      setLook(normalizeLook(job!.settings.look, job!.settings.style));
     }
-  }, [clip, draft]);
+  }, [clip, draft, job]);
+  // adopt the server's look (another tab, a reset) unless there are unsaved edits here
+  const serverLook = job?.settings.look;
+  const serverStyle = job?.settings.style;
+  useEffect(() => {
+    if (!serverStyle || lookDirty) return;
+    const next = normalizeLook(serverLook, serverStyle);
+    setLook((l) => (l && looksEqual(l, next) ? l : next));
+  }, [serverLook, serverStyle, lookDirty]);
 
   const seg = clip?.segment;
   const segReady = seg?.status === "done";
@@ -176,8 +196,35 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
     setDraft({ start: clip.start, end: clip.end, title: clip.title, hook: clip.hook, reason: clip.reason, score: clip.score });
     setDirty(false);
   }
+  function editLook(next: Look) {
+    setLook(next);
+    setLookDirty(true);
+    setLookError(null);
+  }
+  async function saveLook() {
+    if (!look || !job) return;
+    setLookSaving(true);
+    setLookError(null);
+    try {
+      const updated = await api<JobState>(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ settings: { look } }) });
+      // set the job in the same batch as clearing dirty so the adopt effect sees the saved look, not the stale one
+      setJob(updated);
+      setLook(normalizeLook(updated.settings.look, updated.settings.style));
+      setLookDirty(false);
+    } catch (e) {
+      setLookError(String((e as Error).message ?? e));
+    } finally {
+      setLookSaving(false);
+    }
+  }
+  function resetLook() {
+    if (!job) return;
+    editLook(defaultLook(job.settings.style));
+  }
 
-  if (!job || !clip || !draft) return <p className="py-24 text-center text-muted-foreground">Loading…</p>;
+  if (!job || !clip || !draft || !look) return <p className="py-24 text-center text-muted-foreground">Loading…</p>;
+  const vibe = vibeById(look.vibe);
+  const staleCount = job.clips.filter((c) => c.render.status === "done").length;
   const len = draft.end - draft.start;
   const r = clip.render;
   const outsideSeg = seg ? draft.start < seg.start - 0.01 || draft.end > seg.end + 0.01 : false;
@@ -220,8 +267,9 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               onLoadedMetadata={() => seek(draft.start)}
               playsInline
               preload="auto"
+              style={{ filter: vibe.css }}
             />
-            <CaptionOverlay words={clipWords} t={t - draft.start} style={job.settings.style} hook={draft.hook} showHook={job.settings.hook} />
+            <CaptionOverlay words={clipWords} t={t - draft.start} style={job.settings.style} look={look} hook={draft.hook} showHook={job.settings.hook} sample={lookActive} />
           </>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-center text-xs text-muted-foreground">
@@ -389,8 +437,11 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
         {/* middle: clip fields + render */}
         {!youtube && (
         <div className="space-y-4">
+          {panel === "look" ? (
+            <LookPanel look={look} style={job.settings.style} dirty={lookDirty} saving={lookSaving} staleCount={staleCount} error={lookError} onChange={editLook} onSave={saveLook} onReset={resetLook} onActive={setLookActive} onBack={() => setPanel("details")} />
+          ) : (
           <div className="space-y-4 rounded-xl border bg-card p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-semibold">Clip details</h2>
               <Badge variant="secondary" title="Projected virality score">
                 Projected virality score {draft.score}/10
@@ -424,12 +475,16 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                 {rewriting ? <Loader2 className="animate-spin" /> : <Sparkles />} Rewrite title & hook
               </Button>
             </div>
+            <Button variant="outline" className="w-full" onClick={() => setPanel("look")} title="Captions, hook and colour vibe for every clip of this video">
+              <Palette /> Customize look
+            </Button>
           </div>
+          )}
 
           <div className="space-y-3 rounded-xl border bg-card p-5">
             <h2 className="font-semibold">Render</h2>
             <p className="text-sm text-muted-foreground">
-              1080×1920 · {job.settings.layout === "blur" ? "blur bars" : "center crop"} · {job.settings.style} captions · est. {fmtRemaining(len * 0.3)}
+              1080×1920 · {job.settings.layout === "blur" ? "blur bars" : "center crop"} · {job.settings.style} captions{vibe.id !== "original" ? ` · ${vibe.label}` : ""} · est. {fmtRemaining(len * 0.3)}
             </p>
             {r.status === "rendering" && (
               <div className="space-y-1 text-sm">

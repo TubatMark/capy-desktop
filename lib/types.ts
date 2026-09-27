@@ -1,3 +1,4 @@
+import type { Look } from "./look";
 /** Shared between server and browser. No node imports here. */
 
 export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
@@ -68,6 +69,8 @@ export interface JobSettings {
   style: "bold" | "clean";
   captions: boolean;
   hook: boolean;
+  /** Caption/hook styling and colour vibe for every clip of this video; unset = the style's defaults (see lib/look.ts). */
+  look?: Look;
   model?: string;
   maxRes: number;
   browser?: string;
