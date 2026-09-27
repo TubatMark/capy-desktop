@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlignLeft, ArrowLeft, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Pause, Pencil, Play, Save, Sparkles, Trash2, Wand2, MonitorPlay } from "lucide-react";
+import { AlignLeft, ArrowLeft, ChevronLeft, ChevronRight, Download, ExternalLink, Loader2, Palette, Pause, Pencil, Play, Save, Sparkles, Trash2, Wand2, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +41,10 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
   const [lookDirty, setLookDirty] = useState(false);
   const [lookSaving, setLookSaving] = useState(false);
   const [lookError, setLookError] = useState<string | null>(null);
+  // while the pointer/focus is in the Look panel the preview shows sample captions so edits show immediately
+  const [lookActive, setLookActive] = useState(false);
+  // the right column shows either the clip's details or the video's look, never both: no scrolling to reach the look
+  const [panel, setPanel] = useState<"details" | "look">("details");
   const [view, setView] = useState<"preview" | "youtube">("preview");
   const [t, setT] = useState(0); // absolute seconds
   const [playing, setPlaying] = useState(false);
@@ -265,7 +269,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               preload="auto"
               style={{ filter: vibe.css }}
             />
-            <CaptionOverlay words={clipWords} t={t - draft.start} style={job.settings.style} look={look} hook={draft.hook} showHook={job.settings.hook} />
+            <CaptionOverlay words={clipWords} t={t - draft.start} style={job.settings.style} look={look} hook={draft.hook} showHook={job.settings.hook} sample={lookActive} />
           </>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-center text-xs text-muted-foreground">
@@ -433,8 +437,11 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
         {/* middle: clip fields + render */}
         {!youtube && (
         <div className="space-y-4">
+          {panel === "look" ? (
+            <LookPanel look={look} style={job.settings.style} dirty={lookDirty} saving={lookSaving} staleCount={staleCount} error={lookError} onChange={editLook} onSave={saveLook} onReset={resetLook} onActive={setLookActive} onBack={() => setPanel("details")} />
+          ) : (
           <div className="space-y-4 rounded-xl border bg-card p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="font-semibold">Clip details</h2>
               <Badge variant="secondary" title="Projected virality score">
                 Projected virality score {draft.score}/10
@@ -468,9 +475,11 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
                 {rewriting ? <Loader2 className="animate-spin" /> : <Sparkles />} Rewrite title & hook
               </Button>
             </div>
+            <Button variant="outline" className="w-full" onClick={() => setPanel("look")} title="Captions, hook and colour vibe for every clip of this video">
+              <Palette /> Customize look
+            </Button>
           </div>
-
-          <LookPanel look={look} style={job.settings.style} dirty={lookDirty} saving={lookSaving} staleCount={staleCount} error={lookError} onChange={editLook} onSave={saveLook} onReset={resetLook} />
+          )}
 
           <div className="space-y-3 rounded-xl border bg-card p-5">
             <h2 className="font-semibold">Render</h2>

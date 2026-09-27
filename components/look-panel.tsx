@@ -1,5 +1,5 @@
 "use client";
-import { Loader2, Wand2 } from "lucide-react";
+import { ArrowLeft, Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { LOOK_LIMITS, VIBES, defaultLook, looksEqual, type Look } from "@/lib/look";
@@ -18,6 +18,8 @@ export function LookPanel({
   onChange,
   onSave,
   onReset,
+  onActive,
+  onBack,
 }: {
   look: Look;
   style: "bold" | "clean";
@@ -29,13 +31,32 @@ export function LookPanel({
   onChange: (look: Look) => void;
   onSave: () => void;
   onReset: () => void;
+  /** Pointer or focus is inside the panel: the preview shows sample captions so edits are visible at once. */
+  onActive?: (active: boolean) => void;
+  /** Shown as a back button in the header: the panel replaces the clip details card. */
+  onBack?: () => void;
 }) {
   const hook = (p: Partial<Look["hook"]>) => onChange({ ...look, hook: { ...look.hook, ...p } });
   const atDefaults = looksEqual(look, defaultLook(style));
 
   return (
-    <div className="space-y-4 rounded-xl border bg-card p-5">
-      <h2 className="font-semibold">Look</h2>
+    <div
+      className="space-y-4 rounded-xl border bg-card p-5"
+      onPointerEnter={() => onActive?.(true)}
+      onPointerLeave={() => onActive?.(false)}
+      onFocusCapture={() => onActive?.(true)}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onActive?.(false);
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-semibold">Look</h2>
+        {onBack && (
+          <Button size="sm" variant="ghost" onClick={onBack}>
+            <ArrowLeft /> Clip details
+          </Button>
+        )}
+      </div>
 
       <section className="space-y-2">
         <Label>Vibe</Label>

@@ -18,7 +18,7 @@ function rgba(hex: string, a: number): string {
  * with container query units, so the phone frame must be a `container-type: inline-size`.
  * `words` are relative to the clip start; `t` is the playhead in clip seconds.
  */
-export function CaptionOverlay({ words, t, style, look, hook, showHook }: { words: Word[]; t: number; style: "bold" | "clean"; look: Look; hook?: string; showHook: boolean }) {
+export function CaptionOverlay({ words, t, style, look, hook, showHook, sample = false }: { words: Word[]; t: number; style: "bold" | "clean"; look: Look; hook?: string; showHook: boolean; sample?: boolean }) {
   const st = STYLES[style]!;
   // a bigger font fits fewer characters on the 1080px line; scale the style's budget by the size ratio
   const chars = Math.max(6, Math.round((st.groupChars * st.size) / look.size));
@@ -28,14 +28,18 @@ export function CaptionOverlay({ words, t, style, look, hook, showHook }: { word
     const end = next ? Math.min(g[g.length - 1]!.end + 0.3, next.start) : g[g.length - 1]!.end + 0.4;
     return t >= g[0]!.start && t < end;
   });
-  const g = gi >= 0 ? groups[gi]! : null;
+  // sample mode (the Look panel is being used): always show the hook and a caption group, so every
+  // knob has something to change on screen — the live group if there is one, else the next one up
+  const si = sample && gi < 0 ? Math.max(0, groups.findIndex((g) => g[0]!.start >= t)) : gi;
+  const g = si >= 0 ? groups[si]! : null;
+  const live = gi >= 0;
   const bold = style === "bold";
   const highlights = look.highlight !== look.text;
   const fontFamily = bold ? "'Arial Black', Arial, sans-serif" : "Helvetica, Arial, sans-serif";
 
   return (
     <>
-      {showHook && hook && t < 3 && (
+      {showHook && hook && (t < 3 || sample) && (
         <div className="absolute inset-x-[6%] text-center" style={{ top: `${look.hook.top * 100}%` }}>
           <span
             className="inline-block rounded-[0.2em] px-[0.4em] py-[0.15em] font-black uppercase leading-tight tracking-wide"
@@ -59,7 +63,7 @@ export function CaptionOverlay({ words, t, style, look, hook, showHook }: { word
             }}
           >
             {g.map((w, i) => {
-              const cur = highlights && t >= w.start && (i === g.length - 1 || t < g[i + 1]!.start);
+              const cur = highlights && (live ? t >= w.start && (i === g.length - 1 || t < g[i + 1]!.start) : i === 0);
               return (
                 <span key={i} style={cur ? { color: look.highlight } : undefined}>
                   {w.text}{" "}
