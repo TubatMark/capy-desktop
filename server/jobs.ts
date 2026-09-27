@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stageMeta, stageWords, stagePick, stageSegment, stageRender, segmentFor, exists, writePublishFiles, thumbCandidates } from "../src/pipeline";
@@ -57,11 +58,21 @@ class JobManager extends EventEmitter {
           job.status = job.clips.length ? "ready" : "error";
           if (job.status === "error") job.error = "Interrupted. Run it again.";
         }
+        let repaired = false;
         for (const c of job.clips) {
           if (c.render.status === "rendering" || c.render.status === "queued") c.render = { status: "none" };
           if (c.segment && c.segment.status !== "done") c.segment = undefined;
+          // rendered files are stored as absolute paths; if the output folder moved (project renamed, drive
+          // changed) find the file next to job.json, and if it is gone for good the clip is not rendered
+          if (c.render.status === "done" && c.render.file && !existsSync(c.render.file)) {
+            const local = renderedFile(job, c);
+            if (local) c.render.file = local;
+            else c.render = { status: "none" };
+            repaired = true;
+          }
         }
         this.jobs.set(job.id, job);
+        if (repaired) await this.save(job);
       } catch {
         // no job.json: maybe an older CLI run (meta.json + clips.json). Import it.
         const imported = await this.importCliRun(d).catch(() => null);
@@ -711,6 +722,19 @@ function fmt(sec: number) {
 declare global {
   // eslint-disable-next-line no-var
   var __capyJobs: JobManager | undefined;
+}
+
+/**
+ * Where a rendered clip's mp4 actually is: the stored path if it still exists, else the same file
+ * name inside the job's folder under the current OUTPUT_ROOT (the folder is portable, the stored
+ * absolute path is not). Undefined when neither exists.
+ */
+export function renderedFile(job: JobState, c: ClipState): string | undefined {
+  const stored = c.render.file;
+  if (!stored) return undefined;
+  if (existsSync(stored)) return stored;
+  const local = path.join(OUTPUT_ROOT, job.dir, path.basename(stored));
+  return existsSync(local) ? local : undefined;
 }
 
 export function jobs(): JobManager {
