@@ -27,7 +27,7 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
     <div className="@container min-w-0 rounded-xl border bg-card p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 basis-48">
-          <p className="font-medium">
+          <p className="truncate font-medium">
             {cancelled ? "Cancelled" : job.status === "error" ? STAGES[current]?.failed ?? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
             {running && job.startedAt ? <span className="ml-2 font-mono text-xs font-normal text-muted-foreground"><Elapsed since={job.startedAt} /></span> : null}
           </p>
@@ -39,8 +39,8 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
         {running && (
           <div className="flex shrink-0 items-center gap-3">
             <div className="text-right">
-              <p className="font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
-              <p className="text-xs text-muted-foreground">until picks are ready</p>
+              <p className="whitespace-nowrap font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
+              <p className="whitespace-nowrap text-xs text-muted-foreground">until picks are ready</p>
             </div>
             {onCancel && (
               <Button size="sm" variant="outline" onClick={onCancel} title="Stop picking and downloading. You can change the clip count and run it again.">
@@ -73,7 +73,7 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
                 {state === "done" ? <Check className="size-3" strokeWidth={3} /> : state === "active" ? <Loader2 className="size-3 animate-spin" /> : state === "error" ? <AlertCircle className="size-3" /> : i + 1}
               </span>
               <span className={"truncate " + (state === "todo" ? "text-muted-foreground" : "")}>{s.label}</span>
-              {state === "active" && job.estimate.stageRemaining > 0 && <span className="ml-auto font-mono text-xs text-muted-foreground">{fmtRemaining(job.estimate.stageRemaining)}</span>}
+              {state === "active" && job.estimate.stageRemaining > 0 && <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{fmtRemaining(job.estimate.stageRemaining)}</span>}
             </li>
           );
         })}
