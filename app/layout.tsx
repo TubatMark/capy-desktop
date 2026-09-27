@@ -5,6 +5,7 @@ import Link from "next/link";
 import "./globals.css";
 import { Wordmark } from "@/components/logo";
 import { Backdrop } from "@/components/backdrop";
+import { Settings } from "lucide-react";
 import { NavLink } from "@/components/nav-link";
 
 export const metadata: Metadata = {
@@ -25,9 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <img src="/capy-mark.png" alt="" className="size-8" />
               <Wordmark className="h-7" />
             </Link>
-            <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-              <NavLink href="/">Library</NavLink>
-              <NavLink href="/settings">Settings</NavLink>
+            {/* the logo is the library link; settings sits alone on the right as an icon */}
+            <nav className="ml-auto flex items-center text-muted-foreground">
+              <NavLink href="/settings" label="Settings" className="rounded-md p-2 hover:bg-accent">
+                <Settings className="size-5" />
+              </NavLink>
             </nav>
           </div>
         </header>
