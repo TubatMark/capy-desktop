@@ -22,10 +22,11 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
   const lastLog = job.log[job.log.length - 1];
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="@container rounded-xl border bg-card p-5">
+      {/* min-w-0 lets the status text shrink and truncate instead of pushing the countdown and Cancel out of the card */}
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="font-medium">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">
             {cancelled ? "Cancelled" : job.status === "error" ? STAGES[current]?.failed ?? "Something went wrong" : running ? STAGES[current]?.label ?? "Finishing" : "Ready to review"}
             {running && job.startedAt ? <span className="ml-2 font-mono text-xs font-normal text-muted-foreground"><Elapsed since={job.startedAt} /></span> : null}
           </p>
@@ -37,8 +38,8 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
         {running && (
           <div className="flex shrink-0 items-center gap-3">
             <div className="text-right">
-              <p className="font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
-              <p className="text-xs text-muted-foreground">until picks are ready</p>
+              <p className="whitespace-nowrap font-mono text-2xl tabular-nums">{fmtRemaining(job.estimate.totalRemaining)}</p>
+              <p className="whitespace-nowrap text-xs text-muted-foreground">until picks are ready</p>
             </div>
             {onCancel && (
               <Button size="sm" variant="outline" onClick={onCancel} title="Stop picking and downloading. You can change the clip count and run it again.">
@@ -49,12 +50,13 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
         )}
       </div>
       <Progress value={job.status === "error" ? 0 : running ? job.estimate.progress : 1} className="mt-4" />
-      <ol className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* four columns only when the card itself is wide enough for the labels (container query, not viewport) */}
+      <ol className="mt-4 grid grid-cols-2 gap-2 @lg:grid-cols-4">
         {STAGES.map((s, i) => {
           // after an error or cancel, the stages that never ran stay "todo" instead of pretending they finished
           const state = job.status === "error" ? (i < current ? "done" : i === current ? "error" : "todo") : i < current || !running ? "done" : i === current ? "active" : "todo";
           return (
-            <li key={s.key} className="flex items-center gap-2 text-sm">
+            <li key={s.key} className="flex min-w-0 items-center gap-2 text-sm">
               <span
                 className={
                   "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] " +
@@ -69,8 +71,8 @@ export function StageProgress({ job, onCancel }: { job: JobState; onCancel?: () 
               >
                 {state === "done" ? <Check className="size-3" strokeWidth={3} /> : state === "active" ? <Loader2 className="size-3 animate-spin" /> : state === "error" ? <AlertCircle className="size-3" /> : i + 1}
               </span>
-              <span className={state === "todo" ? "text-muted-foreground" : ""}>{s.label}</span>
-              {state === "active" && job.estimate.stageRemaining > 0 && <span className="ml-auto font-mono text-xs text-muted-foreground">{fmtRemaining(job.estimate.stageRemaining)}</span>}
+              <span className={"truncate " + (state === "todo" ? "text-muted-foreground" : "")}>{s.label}</span>
+              {state === "active" && job.estimate.stageRemaining > 0 && <span className="ml-auto shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{fmtRemaining(job.estimate.stageRemaining)}</span>}
             </li>
           );
         })}
