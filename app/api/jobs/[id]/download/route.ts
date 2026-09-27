@@ -2,7 +2,7 @@ import path from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { access } from "node:fs/promises";
 import { ZipArchive } from "archiver";
-import { jobs } from "@/server/jobs";
+import { jobs, renderedFile } from "@/server/jobs";
 import { slug } from "@/src/util";
 
 export const dynamic = "force-dynamic";
@@ -21,17 +21,27 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const ns = nsParam ? new Set(nsParam.split(",").map(Number)) : null;
   const clips = job.clips.filter((c) => c.render.status === "done" && c.render.file && (!ns || ns.has(c.n)));
   if (clips.length === 0) return new Response("No rendered clips to download", { status: 400 });
+  // resolve every file before streaming: a zip that quietly lacks the videos is worse than an error
+  const files = new Map<number, string>();
+  for (const c of clips) {
+    const f = renderedFile(job, c);
+    if (!f) return new Response(`Clip ${c.n} (${c.title}) has no rendered file on disk any more. Re-render it, then download again.`, { status: 409 });
+    files.set(c.n, f);
+  }
 
   const zip = new ZipArchive({ zlib: { level: 1 } }); // video is already compressed; keep it fast
   const out = new PassThrough();
   zip.pipe(out);
   zip.on("error", (e: Error) => out.destroy(e));
+  // archiver reports a missing entry as a warning and carries on; treat it as the failure it is
+  zip.on("warning", (e: Error) => out.destroy(e));
 
   const lines: string[] = [`${job.title ?? job.url}`, job.url, "", "Clips:"];
   for (const c of clips) {
     const folder = `${String(c.n).padStart(2, "0")}-${slug(c.publish?.ytTitle ?? c.title, 60)}`;
-    const base = c.render.file!.replace(/\.mp4$/, "");
-    zip.file(c.render.file!, { name: `${folder}/video.mp4` });
+    const file = files.get(c.n)!;
+    const base = file.replace(/\.mp4$/, "");
+    zip.file(file, { name: `${folder}/video.mp4` });
     if (await exists(`${base}.jpg`)) zip.file(`${base}.jpg`, { name: `${folder}/thumbnail.jpg` });
     const p = c.publish;
     const tags = (p?.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ");
