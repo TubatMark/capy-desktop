@@ -113,4 +113,17 @@ describe("tick", () => {
     expect(d.posted).toEqual([]);
     expect(get("J:1:tiktok")).toMatchObject({ status: "needs_action", authBlocked: true });
   });
+  it("a token the platform refuses flags the account for reconnecting", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const flagged: string[] = [];
+    const d = deps({
+      post: async () => {
+        throw new PlatformError("Invalid credentials", false, true);
+      },
+      flagReconnect: (p) => void flagged.push(p),
+    });
+    await tick(d);
+    expect(flagged).toEqual(["youtube"]);
+    expect(get("J:1:youtube")).toMatchObject({ status: "needs_action", authBlocked: true });
+  });
 });

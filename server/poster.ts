@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { audienceTz as tzOf } from "../lib/post-time";
 import type { ClipState, JobState, Platform, QueueEntry } from "../lib/types";
-import { AuthError, loadAccounts, publicAccounts } from "./accounts";
+import { AuthError, loadAccounts, publicAccounts, saveAccount } from "./accounts";
 import { postInstagram } from "./platforms/instagram";
 import { postTikTok } from "./platforms/tiktok";
 import { PlatformError, type PostJob, type PostOutcome } from "./platforms/types";
@@ -21,6 +21,8 @@ export interface PosterDeps {
   fileFor(e: QueueEntry): { file: string; thumbFile?: string } | undefined;
   paused(): boolean;
   audienceTz(): string;
+  /** The platform refused the token: mark the account so Settings asks to reconnect. */
+  flagReconnect?(p: Platform): void;
 }
 
 declare global {
@@ -36,6 +38,7 @@ function defaultDeps(): PosterDeps {
     now: () => new Date(),
     paused: () => effective().postingPaused,
     audienceTz: () => tzOf(effective().postingAudience),
+    flagReconnect: (p) => void saveAccount(p, { needsReconnect: true }),
     token: async (p) => (await import("./accounts")).getAccessToken(p),
     fileFor: (e) => {
       // the job manager is loaded lazily: it imports this module for onRendered
@@ -96,7 +99,10 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (err instanceof AuthError) r = { error: { message, retryable: false, auth: true } };
-          else if (err instanceof PlatformError) r = { error: { message, retryable: err.retryable, auth: err.auth } };
+          else if (err instanceof PlatformError) {
+            r = { error: { message, retryable: err.retryable, auth: err.auth } };
+            if (err.auth) d.flagReconnect?.(e.platform);
+          }
           else r = { error: { message, retryable: true, auth: false } };
         }
         queue().mutate((all) => markResult(all, e.key, r, d.now()));
