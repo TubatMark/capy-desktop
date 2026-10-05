@@ -185,6 +185,20 @@ describe("automation jobs", () => {
     expect(job.clips[0]!.render.status).toBe("none");
     expect(watch().get().channels[0]!.history[0]).toMatchObject({ status: "error", error: expect.stringMatching(/no clip/i) });
   });
+  it("the reviewer reads the captions viewers see (no >> speaker marks or [tags])", async () => {
+    const job = await seedJob([clip(1, 100, 140)], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    const dir = path.join(OUT, job.dir);
+    const marked = words.map((w, k) => (k === 41 ? { ...w, text: ">>" } : k === 43 ? { ...w, text: "[risadas]" } : w));
+    writeFileSync(path.join(dir, "words.json"), JSON.stringify(marked));
+    jobs().words.delete(job.id);
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(reviewContent).toHaveBeenCalled(), { timeout: 5000 });
+    const t = reviewContent.mock.calls[0]![0].transcript as string;
+    expect(t).toContain("Olha");
+    expect(t).not.toContain(">>");
+    expect(t).not.toContain("[risadas]");
+  });
   it("a manual render with no posting account connected skips the content review", async () => {
     const job = await seedJob([clip(1, 100, 140)], { settings: original });
     await jobs().render(job.id, [1]);

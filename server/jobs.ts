@@ -20,6 +20,7 @@ import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
 import { startWatcher } from "./watcher";
 import { reviewContent } from "../src/content-review";
+import { cleanCaptionWords } from "../src/ass";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
 import { loadTimings, learn, type Timings } from "./estimates";
@@ -943,7 +944,8 @@ class JobManager extends EventEmitter {
 
   /** The AI content reviewer on a finished clip: what viewers read, what it's posted with, and the original words. */
   private async contentReview(job: JobState, c: ClipState, captionWords: Word[]): Promise<ContentReview> {
-    const text = (ws: Word[]) => wordsInRange(ws, c.start, c.end).map((w) => w.text).join(" ");
+    // the same cleanup the caption renderer applies, so the reviewer judges what viewers actually read
+    const text = (ws: Word[]) => cleanCaptionWords(wordsInRange(ws, c.start, c.end)).map((w) => w.text).join(" ");
     const translated = c.captionsTranslated === true && this.needsTranslation(job);
     const { agent, model } = await this.ai(job);
     return reviewContent(
