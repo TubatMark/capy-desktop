@@ -65,6 +65,8 @@ export interface ClipState {
   review?: ClipReview;
   /** Highest "Most replayed" value overlapping the clip, 0..1. */
   replayPeak?: number;
+  /** English captions ready (true), or the translation failed ("error"); unset when not needed. */
+  captionsTranslated?: boolean | "error";
 }
 
 export type ReviewVerdict = "pass" | "fix_hook" | "fail";

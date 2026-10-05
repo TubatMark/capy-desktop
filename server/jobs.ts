@@ -4,12 +4,16 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stageMeta, stageWords, stagePick, stageSegment, stageRender, segmentFor, exists, writePublishFiles, thumbCandidates } from "../src/pipeline";
 import { thumbnail } from "../src/render";
-import { videoIdFromUrl } from "../src/youtube";
+import { pickCaptionLang, videoIdFromUrl } from "../src/youtube";
 import { snapToWords } from "../src/captions";
-import { generatePublish, rewriteTitleHook } from "../src/pick";
+import { generatePublish, pickClips, rewriteTitleHook } from "../src/pick";
+import { peakFor, replayPeaks } from "../src/heatmap";
+import { applyReview, reviewPicks } from "../src/review";
+import { mergeWords, translateRange } from "../src/translate";
+import { isEnglish } from "../src/lang";
 import { pool } from "../src/util";
 import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../src/exec";
-import type { Word } from "../src/types";
+import type { VideoMeta, Word } from "../src/types";
 import { boot } from "./boot";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
@@ -37,6 +41,22 @@ class JobManager extends EventEmitter {
   private _analyzing?: Map<string, AbortController>;
   private get analyzing() {
     return (this._analyzing ??= new Map<string, AbortController>());
+  }
+  /** Video metadata per job (heatmap for replace), and translated caption words; lazy for the same reason. */
+  private _metas?: Map<string, VideoMeta>;
+  private get metas() {
+    return (this._metas ??= new Map<string, VideoMeta>());
+  }
+  private _enWrites?: Promise<void>;
+  private get enWrites() {
+    return (this._enWrites ??= Promise.resolve());
+  }
+  private set enWrites(p: Promise<void>) {
+    this._enWrites = p;
+  }
+  private _captionWords?: Map<string, Word[]>;
+  private get captionWords() {
+    return (this._captionWords ??= new Map<string, Word[]>());
   }
 
   /** Load every job from disk once. Concurrent callers (the SSE route and the first fetch land together) wait for the same load. */
@@ -157,6 +177,25 @@ class JobManager extends EventEmitter {
       this.words.set(job.id, w!);
     }
     return w!;
+  }
+
+  /** English caption words (words.en.json); [] when nothing is translated. */
+  async getCaptionWords(job: JobState): Promise<Word[]> {
+    let w = this.captionWords.get(job.id);
+    if (!w) {
+      w = JSON.parse(await readFile(path.join(OUTPUT_ROOT, job.dir, "words.en.json"), "utf8").catch(() => "[]")) as Word[];
+      this.captionWords.set(job.id, w);
+    }
+    return w;
+  }
+
+  private async getMeta(job: JobState): Promise<VideoMeta> {
+    let m = this.metas.get(job.id);
+    if (!m) {
+      m = JSON.parse(await readFile(path.join(OUTPUT_ROOT, job.dir, "meta.json"), "utf8")) as VideoMeta;
+      this.metas.set(job.id, m);
+    }
+    return m;
   }
 
   private async save(job: JobState) {
@@ -350,6 +389,7 @@ class JobManager extends EventEmitter {
       job.channel = meta.channel;
       job.duration = meta.duration;
       job.language = meta.language;
+      this.metas.set(job.id, meta);
       this.log(job, "meta", `${meta.title} · ${Math.round(meta.duration / 60)} min${cached ? " (cached)" : ""}`);
 
       // 2. words
@@ -361,6 +401,7 @@ class JobManager extends EventEmitter {
       });
       this.words.set(job.id, words);
       job.wordCount = words.length;
+      job.sourceLang = meta.language ?? pickCaptionLang(meta, job.settings.lang)?.lang;
       job.transcriptSource = source;
       const took = (Date.now() - t1) / 1000;
       if (source === "captions") {
@@ -376,8 +417,13 @@ class JobManager extends EventEmitter {
         const { agent, model } = await this.ai(job);
         this.log(job, "pick", `asking ${agentSpec(agent).name}${model ? ` (${model})` : ""} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s)`);
         const t2 = Date.now();
+        const peaks = replayPeaks(meta.heatmap);
+        if (peaks.length) this.log(job, "pick", `${peaks.length} "Most replayed" peaks sent to the picker`);
         const res = await stagePick(words, meta, {
-          count: job.settings.count,
+          // two extra candidates so the reviewer can flag weak ones and still leave `count`
+          count: job.settings.count + 2,
+          peaks,
+          audience: job.settings.audience,
           minSec: job.settings.minSec,
           maxSec: job.settings.maxSec,
           agent,
@@ -393,7 +439,21 @@ class JobManager extends EventEmitter {
           selected: true,
           render: { status: "none" },
           publish: c.ytTitle ? { ytTitle: c.ytTitle, description: c.description ?? "", hashtags: c.hashtags ?? [] } : undefined,
+          replayPeak: peakFor(peaks, c.start, c.end),
         }));
+        try {
+          const items = await reviewPicks(words, { title: meta.title, channel: meta.channel }, job.clips, { audience: job.settings.audience, agent, model });
+          job.clips = applyReview(job.clips, items, job.settings.count);
+          const fails = job.clips.filter((c) => c.review?.verdict === "fail").length;
+          const fixed = job.clips.filter((c) => c.review?.verdict === "fix_hook").length;
+          this.log(job, "pick", `reviewer: ${job.clips.length - fails - fixed} passed, ${fixed} hook${fixed === 1 ? "" : "s"} rewritten, ${fails} flagged`);
+        } catch (e) {
+          if (isCancelled(e)) throw e;
+          // picking never fails because of the reviewer: keep the top `count` by score ticked
+          const top = [...job.clips].sort((a, b) => b.score - a.score).slice(0, job.settings.count).map((c) => c.n);
+          for (const c of job.clips) c.selected = top.includes(c.n);
+          this.log(job, "pick", `review skipped: ${e instanceof Error ? e.message : String(e)}`);
+        }
         await writeFile(path.join(jobDir, "clips.json"), JSON.stringify({ video: job.url, agent, model, clips: res.clips, raw: res.raw }, null, 2));
         this.log(job, "pick", `${job.clips.length} clips picked in ${((Date.now() - t2) / 1000).toFixed(1)}s`);
       }
@@ -442,6 +502,7 @@ class JobManager extends EventEmitter {
         c.segment = { start: seg.start, end: seg.end, url: toMediaUrl(seg.file), status: "done" };
         c.thumbUrl = toMediaUrl(seg.thumb) + `?v=${Date.now()}`;
         await learn("segmentSecPerSec", (Date.now() - t0) / 1000 / Math.max(1, seg.end - seg.start));
+        await this.translateFor(job, c);
       } catch (e) {
         if (isCancelled(e)) throw new CancelledError();
         c.segment = { ...c.segment!, status: "error", error: e instanceof Error ? e.message.split("\n").pop() : String(e) };
@@ -556,10 +617,104 @@ class JobManager extends EventEmitter {
       const seg = await stageSegment(job.url, jobDir, c.n, c, job.duration ?? 0, this.yt(job), job.settings.maxRes);
       c.segment = { start: seg.start, end: seg.end, url: toMediaUrl(seg.file), status: "done" };
       c.thumbUrl = toMediaUrl(seg.thumb) + `?v=${Date.now()}`;
+      await this.update(job);
+      await this.translateFor(job, c);
     } catch (e) {
       c.segment = { ...c.segment!, status: "error", error: e instanceof Error ? e.message.split("\n").pop() : String(e) };
     }
     await this.update(job);
+  }
+
+  private needsTranslation(job: JobState) {
+    return job.settings.audience === "en-us" && !isEnglish(job.sourceLang);
+  }
+
+  /** Translate the clip's padded segment range into <jobDir>/words.en.json (only the parts not translated yet). */
+  private async translateFor(job: JobState, c: ClipState) {
+    if (!this.needsTranslation(job) || !c.segment) return;
+    const range = { start: c.segment.start, end: c.segment.end };
+    if ((job.translated ?? []).some((r) => r.start <= range.start + 0.01 && r.end >= range.end - 0.01)) {
+      c.captionsTranslated = true;
+      return;
+    }
+    const { agent, model } = await this.ai(job);
+    try {
+      const add = await translateRange(await this.getWords(job), range, job.sourceLang, { agent, model });
+      // two segments translate in parallel: merge into the in-memory copy with no await in between, then
+      // queue the file write so a slower earlier write can't land last with stale content
+      const merged = mergeWords(await this.getCaptionWords(job), add, range);
+      this.captionWords.set(job.id, merged);
+      job.translated = [...(job.translated ?? []), range];
+      const file = path.join(OUTPUT_ROOT, job.dir, "words.en.json");
+      this.enWrites = this.enWrites.then(() => writeFile(file, JSON.stringify(this.captionWords.get(job.id) ?? []))).catch(() => {});
+      await this.enWrites;
+      c.captionsTranslated = true;
+      this.log(job, "segments", `clip ${c.n} captions translated to English`);
+    } catch (e) {
+      if (isCancelled(e)) throw e;
+      c.captionsTranslated = "error";
+      this.log(job, "segments", `clip ${c.n} captions not translated: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Retry the caption translation for one clip. */
+  async translateClip(id: string, n: number) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    const c = job.clips.find((x) => x.n === n);
+    if (!c) throw new Error("No such clip");
+    if (c.segment?.status !== "done") throw new Error("Footage is still downloading. Try again in a moment.");
+    await this.translateFor(job, c);
+    await this.update(job);
+    return c;
+  }
+
+  /** Swap one pick for a new moment, steering the picker away from `reason`. */
+  async replaceClip(id: string, n: number, reason?: string) {
+    const job = this.jobs.get(id);
+    if (!job) throw new Error("No such job");
+    const c = job.clips.find((x) => x.n === n);
+    if (!c) throw new Error("No such clip");
+    if (c.render.status === "rendering" || c.render.status === "done") throw Object.assign(new Error("This clip is rendered. Remove it instead."), { status: 409 });
+    if (job.status === "analyzing" || job.status === "preparing") throw Object.assign(new Error("Wait for the picks to finish"), { status: 409 });
+    const words = await this.getWords(job);
+    const meta = await this.getMeta(job);
+    const { agent, model } = await this.ai(job);
+    const why = reason?.trim() || c.review?.problem || "the editor wants a different moment";
+    const peaks = replayPeaks(meta.heatmap);
+    this.log(job, "pick", `replacing clip ${n}: ${why}`);
+    const res = await pickClips(words, meta, {
+      count: 1,
+      minSec: job.settings.minSec,
+      maxSec: job.settings.maxSec,
+      agent,
+      model,
+      focus: job.settings.focus,
+      audience: job.settings.audience,
+      peaks,
+      replace: { start: c.start, end: c.end, reason: why, avoid: job.clips.filter((x) => x.n !== n).map((x) => ({ start: x.start, end: x.end })) },
+    });
+    const fresh = res.clips.find((x) => !job.clips.some((t) => x.start < t.end - 1 && x.end > t.start + 1));
+    if (!fresh) throw new Error("No other good moment found. Try a different reason or a longer max length.");
+    let next: ClipState = {
+      ...fresh,
+      n,
+      selected: true,
+      render: { status: "none" },
+      publish: fresh.ytTitle ? { ytTitle: fresh.ytTitle, description: fresh.description ?? "", hashtags: fresh.hashtags ?? [] } : undefined,
+      replayPeak: peakFor(peaks, fresh.start, fresh.end),
+    };
+    try {
+      const items = await reviewPicks(words, { title: meta.title, channel: meta.channel }, [next], { audience: job.settings.audience, agent, model });
+      next = applyReview([next], items, 1)[0]!;
+    } catch (e) {
+      this.log(job, "pick", `review skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    job.clips = job.clips.map((x) => (x.n === n ? next : x));
+    this.log(job, "pick", `clip ${n} replaced: ${next.title}`);
+    await this.update(job);
+    void this.refetchSegment(job, next);
+    return next;
   }
 
   /** Ask Claude for YouTube title/description/hashtags for one clip (fills in old picks, or regenerates). */
@@ -570,7 +725,7 @@ class JobManager extends EventEmitter {
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
     const { agent, model } = await this.ai(job);
-    c.publish = await generatePublish(words, { title: job.title ?? "", channel: job.channel }, c, model, agent);
+    c.publish = await generatePublish(words, { title: job.title ?? "", channel: job.channel }, c, model, agent, job.settings.audience);
     const rendered = renderFile(c);
     if (rendered) {
       const { thumb, text } = await writePublishFiles(rendered, { ...c, ...c.publish });
@@ -634,7 +789,7 @@ class JobManager extends EventEmitter {
     if (!c) throw new Error("No such clip");
     const words = await this.getWords(job);
     const { agent, model } = await this.ai(job);
-    return rewriteTitleHook(words, { title: job.title ?? "", channel: job.channel }, c, model, agent);
+    return rewriteTitleHook(words, { title: job.title ?? "", channel: job.channel }, c, model, agent, job.settings.audience);
   }
 
   // ---------- rendering ----------
@@ -654,7 +809,7 @@ class JobManager extends EventEmitter {
   private async renderOne(job: JobState, c: ClipState) {
     if (c.render.status !== "queued") return;
     const jobDir = path.join(OUTPUT_ROOT, job.dir);
-    const words = await this.getWords(job);
+    const words = c.captionsTranslated === true ? await this.getCaptionWords(job) : await this.getWords(job);
     const t = await loadTimings();
     const len = c.end - c.start;
     c.render = { status: "rendering", progress: 0, startedAt: Date.now(), remaining: Math.round(len * t.renderSecPerSec) };
