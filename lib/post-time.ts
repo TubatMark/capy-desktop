@@ -7,6 +7,8 @@
  * this is the sensible default until the channel has that data.
  */
 
+import type { Platform } from "./types";
+
 export interface Audience {
   id: string;
   label: string;
@@ -106,3 +108,52 @@ function reasonFor(wd: number, h: number) {
 export function audienceTz(id?: string) {
   return AUDIENCES.find((a) => a.id === (id ?? "us-east"))?.tz ?? "America/New_York";
 }
+
+/** Candidate posting hours per weekday (audience local); each day has two at least 4h apart. 0 = Sunday. */
+export const CANDIDATE_HOURS: Record<number, number[]> = {
+  5: [17, 15, 19, 12],
+  4: [17, 15, 19, 12],
+  6: [16, 11, 19, 20],
+  3: [16, 12, 20, 15],
+  0: [12, 16, 19, 20],
+  2: [15, 11, 19, 18],
+  1: [15, 11, 19, 18],
+};
+const GAP_MS = 4 * 3_600_000;
+const PER_DAY = 2;
+
+/**
+ * Earliest good slot (at least 30 min away) where every platform has fewer than 2 posts that
+ * audience-local day and none within 4h. `taken` holds scheduled, posting and recently posted entries.
+ */
+export function allocateSlot(taken: { platform: Platform; at: number }[], platforms: Platform[], audienceTz: string, now = new Date(), horizonDays = 14): Date | null {
+  const dayKey = (t: number) => {
+    const p = partsIn(new Date(t), audienceTz);
+    return `${p.y}-${p.m}-${p.d}`;
+  };
+  const start = partsIn(now, audienceTz);
+  for (let off = 0; off < horizonDays; off++) {
+    const p = partsIn(new Date(Date.UTC(start.y, start.m - 1, start.d + off, 12)), audienceTz);
+    const cands = (CANDIDATE_HOURS[p.wd] ?? [17])
+      .map((h) => ({ h, at: fromZoned(p.y, p.m, p.d, h, audienceTz) }))
+      .filter(({ h, at }) => partsIn(at, audienceTz).h === h) // an hour skipped by DST doesn't exist
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    for (const { at } of cands) {
+      const t = at.getTime();
+      if (t < now.getTime() + 30 * 60_000) continue;
+      const free = platforms.every((pl) => {
+        const mine = taken.filter((x) => x.platform === pl);
+        return mine.filter((x) => dayKey(x.at) === dayKey(t)).length < PER_DAY && mine.every((x) => Math.abs(x.at - t) >= GAP_MS);
+      });
+      if (free) return at;
+    }
+  }
+  return null;
+}
+
+/** UTC instant of a wall-clock time in `tz` (for the queue's "Move" picker). */
+export function zonedToUtc(y: number, m: number, d: number, h: number, min: number, tz: string): Date {
+  return new Date(fromZoned(y, m, d, h, tz).getTime() + min * 60_000);
+}
+
+export { fmt as fmtIn };
