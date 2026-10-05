@@ -14,6 +14,8 @@ export interface VideoMeta {
   language?: string;
   subtitles: string[];
   autoCaptions: string[];
+  /** "Most replayed" buckets from yt-dlp, value 0..1. Absent when YouTube has no data. */
+  heatmap?: { start: number; end: number; value: number }[];
 }
 
 /** A clip as picked by Claude, then snapped to word boundaries. Times in seconds. */

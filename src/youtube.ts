@@ -47,6 +47,9 @@ export async function fetchMeta(url: string, o: YtOpts = {}): Promise<VideoMeta>
     language: j.language ?? undefined,
     subtitles: Object.keys(j.subtitles ?? {}),
     autoCaptions: Object.keys(j.automatic_captions ?? {}),
+    heatmap: Array.isArray(j.heatmap)
+      ? j.heatmap.map((p: { start_time: number; end_time: number; value: number }) => ({ start: p.start_time, end: p.end_time, value: p.value }))
+      : undefined,
   };
 }
 

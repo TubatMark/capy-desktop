@@ -12,3 +12,4 @@ shots/
 *.tgz
 dist/
 dist-electron/
+.superpowers/
