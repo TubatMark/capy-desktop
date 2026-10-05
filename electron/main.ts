@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from "electron";
 import { buildMenu } from "./menu";
 import { ServerError, startServer, type RunningServer } from "./server";
 import { loadWindowState, trackWindowState } from "./window-state";
+import { createTray } from "./tray";
 
 /** Matches --background in app/globals.css (light theme), so the window does not flash white. */
 const BACKGROUND = "#fef9f1";
@@ -13,6 +14,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   let win: BrowserWindow | undefined;
   let server: RunningServer | undefined;
+  let tray: ReturnType<typeof createTray> | undefined;
   let quitting = false;
 
   const userData = app.getPath("userData");
@@ -57,10 +59,11 @@ if (!app.requestSingleInstanceLock()) {
     return w;
   }
 
-  function showWindow() {
+  function showWindow(page?: string) {
+    app.dock?.show();
     const fresh = !win;
     const w = win ?? createWindow();
-    if (fresh && server) void w.loadURL(server.url);
+    if (server && (fresh || page)) void w.loadURL(server.url + (page ?? ""));
     if (w.isMinimized()) w.restore();
     w.focus();
   }
@@ -93,6 +96,14 @@ if (!app.requestSingleInstanceLock()) {
 
     if (!w.isDestroyed()) await w.loadURL(server.url);
     else showWindow();
+
+    // menu-bar icon: next scheduled post, and posting keeps going while the window is closed
+    tray = createTray({ serverUrl: () => server?.url, show: (page) => showWindow(page), quit: () => app.quit() });
+    // a sleeping computer misses its slots: check for due posts as soon as it wakes
+    powerMonitor.on("resume", () => {
+      if (server) void fetch(`${server.url}/api/queue/tick`, { method: "POST" }).catch(() => {});
+      void tray?.refresh();
+    });
   });
 
   app.on("activate", () => {
@@ -100,7 +111,15 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    void (async () => {
+      await tray?.refresh();
+      if (tray?.hasActive()) {
+        // posts are scheduled: keep running in the menu bar only, so they still go out
+        app.dock?.hide();
+        return;
+      }
+      if (process.platform !== "darwin") app.quit();
+    })();
   });
 
   app.on("before-quit", (event) => {
@@ -109,6 +128,7 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     quitting = true;
+    tray?.destroy();
     event.preventDefault();
     void server.stop().finally(() => app.quit());
   });
