@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { SettingsView } from "@/components/settings-view";
 import { SettingsForm } from "@/components/settings-form";
 import { SetupCheck } from "@/components/setup-check";
+import { AccountsPanel } from "@/components/accounts-panel";
 import { detectAgents } from "@/src/agents";
 import { OUTPUT_ROOT } from "@/server/paths";
 import { loadSettings, redact, settingsFile } from "@/server/settings";
@@ -16,6 +17,7 @@ export default async function SettingsPage() {
     <div className="mx-auto w-full max-w-3xl space-y-8">
       <SettingsView initialSettings={initial} initialAgents={agents} />
       <SettingsForm initial={initial} meta={{ file: settingsFile(), outputRoot: OUTPUT_ROOT }} />
+      <AccountsPanel initial={initial} />
       <SetupCheck lastCheckedAt={initial.checkedAt} />
     </div>
   );
