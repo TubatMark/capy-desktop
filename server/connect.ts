@@ -25,13 +25,20 @@ declare global {
 }
 const pending = () => (globalThis.__capyConnect ??= new Map());
 
+/** The sign-in waiting for this platform, if any (tests, and the paste-back path). */
+export const pendingConnect = (p: Platform): Pending | undefined => pending().get(p);
+
 const NAMES: Record<Platform, string> = { youtube: "YouTube", instagram: "Instagram", tiktok: "TikTok" };
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function startConnect(p: Platform, o: { listen?: boolean } = {}): Promise<{ url: string; redirectUri: string }> {
   const a = loadAccounts()[p];
   if (!a.clientId || !a.clientSecret) throw new Error(`Add your ${NAMES[p]} app's client ID and client secret first`);
-  pending().get(p)?.abort.abort(); // a second click replaces the first attempt
+  // every platform shares the loopback port: a new sign-in replaces any abandoned one
+  for (const [q, old] of pending()) {
+    old.abort.abort();
+    pending().delete(q);
+  }
   const { verifier, challenge, challengeHex } = pkce();
   const state = randomBytes(16).toString("hex");
   const abort = new AbortController();
@@ -58,8 +65,9 @@ export async function finishConnect(p: Platform, pastedUrl: string, f: typeof fe
   const code = u.searchParams.get("code");
   const state = u.searchParams.get("state");
   if (!code || !state) throw new Error("The address has no sign-in code in it. Copy the whole address from the page you landed on.");
+  const pend = pending().get(p);
   await complete(p, state, code, f);
-  pending().get(p)?.abort.abort();
+  pend?.abort.abort(); // stop the loopback listener that was still waiting
 }
 
 async function complete(p: Platform, state: string, code: string, f: typeof fetch = fetch) {

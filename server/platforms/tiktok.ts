@@ -25,6 +25,13 @@ export function chunking(size: number) {
 
 /** Send a clip to the TikTok inbox (works before the app audit) or post it directly. */
 export async function postTikTok(job: PostJob, ctx: ClientCtx & { mode: "inbox" | "direct"; username?: string }): Promise<PostOutcome> {
+  // an earlier attempt already sent the file: only follow its status (never send it twice)
+  const resumed = job.resume?.publishId;
+  const { publishId, privacy } = resumed ? { publishId: resumed, privacy: job.resume?.privacy ?? "" } : await send(job, ctx);
+  return follow(publishId, privacy, ctx);
+}
+
+async function send(job: PostJob, ctx: ClientCtx & { mode: "inbox" | "direct" }): Promise<{ publishId: string; privacy: string }> {
   const size = statSync(job.file).size;
   const c = chunking(size);
   const source_info = { source: "FILE_UPLOAD", video_size: size, ...c };
@@ -62,7 +69,12 @@ export async function postTikTok(job: PostJob, ctx: ClientCtx & { mode: "inbox" 
     });
     if (!r.ok) throw new PlatformError(`TikTok upload failed (HTTP ${r.status})`, r.status === 429 || r.status >= 500);
   }
+  ctx.checkpoint?.({ publishId, privacy });
   ctx.log(`uploaded ${publishId}`);
+  return { publishId, privacy };
+}
+
+async function follow(publishId: string, privacy: string, ctx: ClientCtx & { username?: string }): Promise<PostOutcome> {
 
   for (let i = 0; i < 120; i++) {
     const s = await api(ctx, "/post/publish/status/fetch/", { publish_id: publishId });
@@ -86,10 +98,11 @@ export async function postTikTok(job: PostJob, ctx: ClientCtx & { mode: "inbox" 
   throw new PlatformError("TikTok is taking too long to process the video", true);
 }
 
-export async function tiktokAccount(ctx: ClientCtx): Promise<{ id: string; name: string; avatar?: string; username?: string }> {
-  const r = await call(ctx.fetch, `${T}/user/info/?fields=open_id,display_name,avatar_url,username`, { headers: { Authorization: `Bearer ${ctx.token}` } });
+/** Who signed in (user.info.basic fields only; username would need user.info.profile). */
+export async function tiktokAccount(ctx: ClientCtx): Promise<{ id: string; name: string; avatar?: string }> {
+  const r = await call(ctx.fetch, `${T}/user/info/?fields=open_id,display_name,avatar_url`, { headers: { Authorization: `Bearer ${ctx.token}` } });
   const b = await readJson(r);
   const u = ((b.data as { user?: Record<string, string> } | undefined)?.user ?? {}) as Record<string, string>;
   if (!r.ok || !u.open_id) throw new PlatformError(`TikTok: ${(b.error as { message?: string } | undefined)?.message ?? `HTTP ${r.status}`}`, false, r.status === 401);
-  return { id: u.open_id, name: u.display_name ?? u.username ?? "TikTok", avatar: u.avatar_url, username: u.username };
+  return { id: u.open_id, name: u.display_name ?? "TikTok", avatar: u.avatar_url };
 }

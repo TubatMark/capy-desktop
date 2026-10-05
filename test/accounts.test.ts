@@ -54,4 +54,13 @@ describe("getAccessToken", () => {
   it("throws AuthError when not connected", async () => {
     await expect(getAccessToken("tiktok", reply({}))).rejects.toBeInstanceOf(AuthError);
   });
+  it("refreshes 30 minutes ahead so a long upload and processing wait don't outlive the token", async () => {
+    saveAccount("youtube", { ...creds, tokens: { accessToken: "OLD", refreshToken: "RT", expiresAt: Date.now() + 20 * 60_000 } });
+    expect(await getAccessToken("youtube", reply({ access_token: "NEW", expires_in: 3600 }))).toBe("NEW");
+  });
+  it("a failed renewal keeps using a token that still works, without asking to reconnect", async () => {
+    saveAccount("instagram", { ...creds, tokens: { accessToken: "LONG", expiresAt: Date.now() + 3 * 86_400_000 } });
+    expect(await getAccessToken("instagram", reply({ error: { message: "Temporary hiccup", code: 2 } }, 400))).toBe("LONG");
+    expect(loadAccounts().instagram.needsReconnect).toBeUndefined();
+  });
 });

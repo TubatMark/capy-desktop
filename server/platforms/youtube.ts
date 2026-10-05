@@ -5,8 +5,14 @@ const API = "https://www.googleapis.com";
 
 /** Upload a Short with the YouTube Data API (resumable), try the custom thumbnail, wait for processing. */
 export async function postYouTube(job: PostJob, ctx: ClientCtx): Promise<PostOutcome> {
-  const size = statSync(job.file).size;
   const auth = { Authorization: `Bearer ${ctx.token}` };
+  // an earlier attempt already uploaded it: only wait for processing (never upload twice)
+  const id = job.resume?.videoId ?? (await upload(job, ctx, auth));
+  return waitProcessed(id, ctx, auth);
+}
+
+async function upload(job: PostJob, ctx: ClientCtx, auth: Record<string, string>): Promise<string> {
+  const size = statSync(job.file).size;
   const init = await call(ctx.fetch, `${API}/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status`, {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": String(size) },
@@ -23,6 +29,7 @@ export async function postYouTube(job: PostJob, ctx: ClientCtx): Promise<PostOut
   const video = await readJson(up);
   if (!up.ok) throw httpError(up, video);
   const id = String(video.id);
+  ctx.checkpoint?.({ videoId: id });
   ctx.log(`uploaded video ${id}`);
 
   if (job.thumbFile) {
@@ -30,6 +37,10 @@ export async function postYouTube(job: PostJob, ctx: ClientCtx): Promise<PostOut
     const t = await call(ctx.fetch, `${API}/upload/youtube/v3/thumbnails/set?videoId=${id}`, { method: "POST", headers: { ...auth, "Content-Type": "image/jpeg" }, body: await openAsBlob(job.thumbFile) }).catch(() => null);
     if (t && !t.ok) ctx.log(`thumbnail not set (HTTP ${t.status}); custom thumbnails need a verified channel`);
   }
+  return id;
+}
+
+async function waitProcessed(id: string, ctx: ClientCtx, auth: Record<string, string>): Promise<PostOutcome> {
 
   for (let i = 0; i < 60; i++) {
     const r = await call(ctx.fetch, `${API}/youtube/v3/videos?part=status,processingDetails&id=${id}`, { headers: auth });

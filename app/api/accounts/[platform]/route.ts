@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { loadAccounts, publicAccounts, saveAccount } from "@/server/accounts";
+import { queue, reconnected } from "@/server/queue";
+import { effective } from "@/server/settings";
+import { audienceTz } from "@/lib/post-time";
 import { PLATFORMS, type Platform } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +33,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ platform: strin
     patch.account = choice;
   }
   saveAccount(platform, patch);
+  // posts that waited for an Instagram account to be picked can go now
+  if (patch.igUserId) queue().mutate((e) => reconnected(e, platform, audienceTz(effective().postingAudience), new Date()));
   return NextResponse.json(publicAccounts().find((a) => a.platform === platform));
 }
 

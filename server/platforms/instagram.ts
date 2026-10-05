@@ -10,37 +10,42 @@ const form = (params: Record<string, string | undefined>) => ({
   body: new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => e[1] !== undefined)).toString(),
 });
 
-/** Post a Reel from a local file: resumable container → upload → wait → publish. */
+/** Post a Reel from a local file: resumable container → upload → wait → publish. Resumes from job.resume. */
 export async function postInstagram(job: PostJob, ctx: ClientCtx & { igUserId: string }): Promise<PostOutcome> {
-  const size = statSync(job.file).size;
-  const c = await call(
-    ctx.fetch,
-    `${G}/${ctx.igUserId}/media`,
-    form({
-      media_type: "REELS",
-      upload_type: "resumable",
-      caption: job.text.caption ?? "",
-      share_to_feed: "true",
-      thumb_offset: job.thumbAt !== undefined ? String(Math.round(job.thumbAt * 1000)) : undefined,
-      access_token: ctx.token,
-    }),
-  );
-  const cb = await readJson(c);
-  if (!c.ok) throw httpError(c, cb);
-  const container = String(cb.id);
-
-  const up = await call(ctx.fetch, (cb.uri as string | undefined) ?? `https://rupload.facebook.com/ig-api-upload/${GRAPH}/${container}`, {
-    method: "POST",
-    headers: { Authorization: `OAuth ${ctx.token}`, offset: "0", file_size: String(size) },
-    body: await openAsBlob(job.file),
-  });
-  if (!up.ok) throw httpError(up, await readJson(up));
-  ctx.log(`uploaded to container ${container}`);
+  const r = job.resume ?? {};
+  if (r.mediaId) return finish(r.mediaId, ctx);
+  let container = r.uploaded ? r.container : undefined;
+  if (!container) {
+    const size = statSync(job.file).size;
+    const c = await call(
+      ctx.fetch,
+      `${G}/${ctx.igUserId}/media`,
+      form({
+        media_type: "REELS",
+        upload_type: "resumable",
+        caption: job.text.caption ?? "",
+        share_to_feed: "true",
+        thumb_offset: job.thumbAt !== undefined ? String(Math.round(job.thumbAt * 1000)) : undefined,
+        access_token: ctx.token,
+      }),
+    );
+    const cb = await readJson(c);
+    if (!c.ok) throw httpError(c, cb);
+    container = String(cb.id);
+    const up = await call(ctx.fetch, (cb.uri as string | undefined) ?? `https://rupload.facebook.com/ig-api-upload/${GRAPH}/${container}`, {
+      method: "POST",
+      headers: { Authorization: `OAuth ${ctx.token}`, offset: "0", file_size: String(size) },
+      body: await openAsBlob(job.file),
+    });
+    if (!up.ok) throw httpError(up, await readJson(up));
+    ctx.checkpoint?.({ container, uploaded: "1" });
+    ctx.log(`uploaded to container ${container}`);
+  }
 
   for (let i = 0; ; i++) {
-    const r = await call(ctx.fetch, `${G}/${container}?fields=status_code,status&access_token=${encodeURIComponent(ctx.token)}`);
-    const b = await readJson(r);
-    if (!r.ok) throw httpError(r, b);
+    const s = await call(ctx.fetch, `${G}/${container}?fields=status_code,status&access_token=${encodeURIComponent(ctx.token)}`);
+    const b = await readJson(s);
+    if (!s.ok) throw httpError(s, b);
     if (b.status_code === "FINISHED") break;
     if (b.status_code === "ERROR" || b.status_code === "EXPIRED") throw new PlatformError(`Instagram couldn't process the video: ${b.status ?? b.status_code}`, false);
     if (i >= 120) throw new PlatformError("Instagram is taking too long to process the video", true);
@@ -51,9 +56,19 @@ export async function postInstagram(job: PostJob, ctx: ClientCtx & { igUserId: s
   const pb = await readJson(p);
   if (!p.ok) throw httpError(p, pb);
   const id = String(pb.id);
-  const l = await call(ctx.fetch, `${G}/${id}?fields=permalink&access_token=${encodeURIComponent(ctx.token)}`);
-  const lb = l.ok ? await readJson(l) : {};
-  return { kind: "posted", id, url: lb.permalink as string | undefined };
+  ctx.checkpoint?.({ mediaId: id });
+  return finish(id, ctx);
+}
+
+/** Published: look up the link; failing that it is still posted. */
+async function finish(id: string, ctx: ClientCtx): Promise<PostOutcome> {
+  try {
+    const l = await ctx.fetch(`${G}/${id}?fields=permalink&access_token=${encodeURIComponent(ctx.token)}`);
+    const lb = l.ok ? await readJson(l) : {};
+    return { kind: "posted", id, url: lb.permalink as string | undefined };
+  } catch {
+    return { kind: "posted", id };
+  }
 }
 
 /** Instagram business accounts linked to the user's Facebook Pages. */

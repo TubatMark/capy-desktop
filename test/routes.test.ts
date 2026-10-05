@@ -9,8 +9,9 @@ import { POST as entryAction } from "../app/api/queue/[key]/[action]/route";
 import { GET as getAccounts } from "../app/api/accounts/route";
 import { PUT as putAccount } from "../app/api/accounts/[platform]/route";
 import { queue, resetQueueCache, upsertForRender } from "../server/queue";
+import { saveAccount } from "../server/accounts";
 import { loadAccounts, resetAccountsCache } from "../server/accounts";
-import { finishConnect, startConnect } from "../server/connect";
+import { finishConnect, pendingConnect, startConnect } from "../server/connect";
 import { resetSettingsCache } from "../server/settings";
 
 let root: string;
@@ -26,7 +27,7 @@ beforeEach(() => {
 
 const req = (url: string, method = "GET", body?: unknown) => new Request(`http://x${url}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { "content-type": "application/json" } });
 const params = <T>(p: T) => ({ params: Promise.resolve(p) });
-const seed = () => queue().mutate((e) => upsertForRender(e, { jobId: "J", n: 1, clipTitle: "c", publish: { ytTitle: "t", description: "d", hashtags: [] } }, ["youtube", "tiktok"], new Date()));
+const seed = () => queue().mutate((e) => upsertForRender(e, { jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c", publish: { ytTitle: "t", description: "d", hashtags: [] } }, ["youtube", "tiktok"], new Date()));
 
 describe("queue routes", () => {
   it("lists an empty queue", async () => {
@@ -83,5 +84,37 @@ describe("connect", () => {
     await finishConnect("youtube", `http://127.0.0.1:53682/callback?state=${state}&code=C`, f);
     expect(loadAccounts().youtube).toMatchObject({ account: { id: "UC1", name: "My Channel" }, tokens: { accessToken: "AT" } });
     await expect(finishConnect("youtube", `http://127.0.0.1:53682/callback?state=${state}&code=C`, f)).rejects.toThrow(/expired|again/i);
+  });
+});
+
+describe("connect: one sign-in at a time on the shared port", () => {
+  it("starting another platform's sign-in cancels the abandoned one", async () => {
+    await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "a", clientSecret: "b" }), params({ platform: "youtube" }));
+    await putAccount(req("/api/accounts/tiktok", "PUT", { clientId: "c", clientSecret: "d" }), params({ platform: "tiktok" }));
+    await startConnect("youtube", { listen: false });
+    const yt = pendingConnect("youtube")!.abort.signal;
+    await startConnect("tiktok", { listen: false });
+    expect(yt.aborted).toBe(true);
+    expect(pendingConnect("youtube")).toBeUndefined();
+  });
+  it("finishing from a pasted address stops the waiting listener", async () => {
+    await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "cid", clientSecret: "sec" }), params({ platform: "youtube" }));
+    const { url } = await startConnect("youtube", { listen: false });
+    const signal = pendingConnect("youtube")!.abort.signal;
+    const answers = [new Response(JSON.stringify({ access_token: "AT", expires_in: 3600 })), new Response(JSON.stringify({ items: [{ id: "UC1", snippet: { title: "C" } }] }))];
+    await finishConnect("youtube", `http://127.0.0.1:53682/callback?state=${new URL(url).searchParams.get("state")}&code=C`, (async () => answers.shift()!) as unknown as typeof fetch);
+    expect(signal.aborted).toBe(true);
+  });
+});
+
+describe("choosing the Instagram account", () => {
+  it("puts posts that waited for the choice back on the schedule", async () => {
+    saveAccount("instagram", { clientId: "a", clientSecret: "b", tokens: { accessToken: "T", expiresAt: Date.now() + 86_400_000 * 30 }, choices: [{ id: "1", name: "one" }, { id: "2", name: "two" }] });
+    queue().mutate((e) =>
+      upsertForRender(e, { jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c" }, ["instagram"], new Date()).map((x) => ({ ...x, status: "needs_action" as const, authBlocked: true, slotAt: Date.now() + 3600_000 })),
+    );
+    const r = await putAccount(req("/api/accounts/instagram", "PUT", { igUserId: "2" }), params({ platform: "instagram" }));
+    expect(r.status).toBe(200);
+    expect(queue().list()[0]).toMatchObject({ status: "scheduled", authBlocked: false });
   });
 });

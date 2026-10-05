@@ -27,6 +27,10 @@ export interface QueueEntry {
   platform: Platform;
   status: QueueStatus;
   clipTitle: string;
+  /** Which cut of clip n this is ("start-end" in tenths of a second): a re-cut clip needs a fresh review. */
+  fp?: string;
+  /** Upload progress kept across retries so a retry never uploads twice. */
+  progress?: Record<string, string>;
   videoTitle?: string;
   videoUrl?: string;
   thumbUrl?: string;

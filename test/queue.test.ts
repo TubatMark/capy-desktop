@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { approve, markResult, queue, reconcileMissed, reconnected, recoverInterrupted, reject, resetQueueCache, summary, upsertForRender, type ClipInfo } from "../server/queue";
+import { approve, markResult, queue, reconcileMissed, reconnected, recoverInterrupted, reject, resetQueueCache, summary, taken, upsertForRender, type ClipInfo } from "../server/queue";
 import type { QueueEntry } from "../lib/types";
 
 const now = new Date("2026-09-23T10:00:00Z"); // Wed 6:00 ET
@@ -12,6 +12,8 @@ const clip = (n: number, extra: Partial<ClipInfo> = {}): ClipInfo => ({
   jobId: "J",
   n,
   clipTitle: `Clip ${n}`,
+  start: n * 100,
+  end: n * 100 + 40,
   videoUrl: `/api/media/${n}.mp4?v=1`,
   publish: { ytTitle: `T${n} #shorts`, description: "D\nCredit: X\n#shorts", hashtags: ["shorts"] },
   hook: `Hook ${n}`,
@@ -141,9 +143,44 @@ describe("store", () => {
     process.env.CAPY_DATA_DIR = path.join(root, String(++n));
     resetQueueCache();
   });
-  it("persists mutations and recovers interrupted posts on load", () => {
+  it("persists mutations; loading never touches in-flight posts (the poster that owns the lock recovers them)", () => {
     queue().mutate((e) => upsertForRender(e, clip(1), ["youtube"], now).map((x) => ({ ...x, status: "posting" as const })));
     resetQueueCache();
-    expect(queue().list()[0]!.status).toBe("scheduled");
+    expect(queue().list()[0]!.status).toBe("posting");
+  });
+});
+
+describe("clip identity (a re-cut clip at the same number)", () => {
+  it("a different cut of clip n archives the old entry and starts a fresh review with new text", () => {
+    let e = upsertForRender([], clip(1), ["youtube"], now);
+    e = approve(e, "J", 1, { audienceTz: tz, now }).entries;
+    e = upsertForRender(e, clip(1, { start: 500, end: 540, publish: { ytTitle: "Other moment", description: "", hashtags: [] } }), ["youtube"], now);
+    const live = e.filter((x) => x.key === "J:1:youtube");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ status: "review", text: { title: "Other moment" } });
+    expect(live[0]!.slotAt).toBeUndefined();
+    const old = e.find((x) => x.key !== "J:1:youtube")!;
+    expect(old.status).toBe("rejected");
+    expect(old.history.at(-1)!.msg).toContain("different");
+  });
+  it("a posted clip stays posted; the new cut at the same number still gets reviewed", () => {
+    let e: QueueEntry[] = upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...x, status: "posted" as const, result: { id: "v1" } }));
+    e = upsertForRender(e, clip(1, { start: 500, end: 540 }), ["youtube"], now);
+    expect(e.find((x) => x.status === "posted")!.result!.id).toBe("v1");
+    expect(e.find((x) => x.key === "J:1:youtube")!.status).toBe("review");
+  });
+  it("re-rendering the same cut after a 'file missing' puts it back on the schedule", () => {
+    let e: QueueEntry[] = upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...x, status: "needs_action" as const, slotAt: 123, error: "Clip file missing, re-render it" }));
+    e = upsertForRender(e, clip(1), ["youtube"], now);
+    expect(e[0]).toMatchObject({ status: "scheduled", slotAt: 123, error: undefined });
+  });
+});
+
+describe("taken", () => {
+  it("counts posts that ended in needs_action (TikTok inbox, YouTube private) like posted ones", () => {
+    const base = upsertForRender([], clip(1), ["tiktok"], now)[0]!;
+    const sent = { ...base, status: "needs_action" as const, slotAt: now.getTime() - 3600_000, result: { id: "p1", note: "inbox" } };
+    const missing = { ...base, key: "x", status: "needs_action" as const, slotAt: now.getTime() - 3600_000, error: "Clip file missing" };
+    expect(taken([sent, missing], now)).toEqual([{ platform: "tiktok", at: sent.slotAt }]);
   });
 });

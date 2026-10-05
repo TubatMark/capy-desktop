@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { postYouTube } from "../server/platforms/youtube";
 import { postInstagram } from "../server/platforms/instagram";
-import { postTikTok } from "../server/platforms/tiktok";
+import { postTikTok, tiktokAccount } from "../server/platforms/tiktok";
 import { httpError, PlatformError } from "../server/platforms/types";
 
 const dir = mkdtempSync(path.join(tmpdir(), "capy-plat-"));
@@ -145,5 +145,56 @@ describe("httpError", () => {
     expect(bad.retryable).toBe(false);
     expect(bad.auth).toBe(false);
     expect(bad.message).toContain("nope");
+  });
+});
+
+describe("resume after a failure (never upload twice)", () => {
+  it("youtube: saves the video id once uploaded, and a resumed attempt only checks status", async () => {
+    const saved: Record<string, string>[] = [];
+    const { f } = stub([json({}, 200, { location: "https://upload.example/s" }), json({ id: "abc" }), json({}), () => new Response("boom", { status: 503 })]);
+    await expect(postYouTube(job, { ...ctx(f), checkpoint: (p) => void saved.push(p) })).rejects.toMatchObject({ retryable: true });
+    expect(saved).toContainEqual({ videoId: "abc" });
+    const again = stub([json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
+    expect(await postYouTube({ ...job, resume: { videoId: "abc" } }, ctx(again.f))).toMatchObject({ kind: "posted", id: "abc" });
+    expect(again.calls).toHaveLength(1);
+    expect(again.calls[0]!.url).toContain("videos?part=status");
+  });
+  it("instagram: a published media id resumes to the permalink; a failed permalink fetch still counts as posted", async () => {
+    const { f, calls } = stub([() => { throw new Error("socket hang up"); }]);
+    expect(await postInstagram({ ...job, resume: { mediaId: "m1" } }, { ...ctx(f), igUserId: "IG1" })).toMatchObject({ kind: "posted", id: "m1" });
+    expect(calls).toHaveLength(1);
+  });
+  it("instagram: an uploaded container resumes at the status check", async () => {
+    const { f, calls } = stub([json({ status_code: "FINISHED" }), json({ id: "m2" }), json({ permalink: "https://ig/x" })]);
+    expect(await postInstagram({ ...job, resume: { container: "c1", uploaded: "1" } }, { ...ctx(f), igUserId: "IG1" })).toMatchObject({ kind: "posted", id: "m2" });
+    expect(calls[0]!.url).toContain("/c1?fields=status_code");
+  });
+  it("tiktok: a publish id resumes at the status check", async () => {
+    const { f, calls } = stub([json({ data: { status: "SEND_TO_USER_INBOX" }, error: { code: "ok" } })]);
+    expect((await postTikTok({ ...job, resume: { publishId: "p9" } }, { ...ctx(f), mode: "inbox" })).kind).toBe("needs_action");
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]!.body))).toEqual({ publish_id: "p9" });
+  });
+});
+
+describe("error buckets", () => {
+  const graph = (code: number, status = 400) => httpError(new Response(null, { status }), { error: { message: "x", code } });
+  it("Meta: code 190 (bad token) means reconnect; rate limits back off", () => {
+    expect(graph(190)).toMatchObject({ auth: true, retryable: false });
+    for (const c of [4, 17, 32, 613]) expect(graph(c)).toMatchObject({ auth: false, retryable: true });
+  });
+  it("YouTube: quota and rate limits back off instead of asking to reconnect", () => {
+    const yt = (reason: string) => httpError(new Response(null, { status: 403 }), { error: { message: "x", errors: [{ reason }] } });
+    expect(yt("quotaExceeded")).toMatchObject({ auth: false, retryable: true });
+    expect(yt("rateLimitExceeded")).toMatchObject({ auth: false, retryable: true });
+    expect(yt("forbidden")).toMatchObject({ auth: true });
+  });
+});
+
+describe("tiktokAccount", () => {
+  it("asks only for fields user.info.basic allows", async () => {
+    const { f, calls } = stub([json({ data: { user: { open_id: "o1", display_name: "Mia", avatar_url: "a" } }, error: { code: "ok" } })]);
+    expect(await tiktokAccount(ctx(f))).toMatchObject({ id: "o1", name: "Mia" });
+    expect(calls[0]!.url).not.toContain("username");
   });
 });

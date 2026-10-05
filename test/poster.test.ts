@@ -21,7 +21,7 @@ const now = new Date("2026-09-23T20:00:00Z");
 function seed(entries: { n: number; platform: Platform; slotAt: number; status?: QueueEntry["status"] }[]) {
   queue().mutate(() =>
     entries.flatMap((s) =>
-      upsertForRender([], { jobId: "J", n: s.n, clipTitle: `c${s.n}`, videoUrl: "/v.mp4" }, [s.platform], now).map((e) => ({ ...e, status: s.status ?? ("scheduled" as const), slotAt: s.slotAt })),
+      upsertForRender([], { jobId: "J", n: s.n, start: 0, end: 30, clipTitle: `c${s.n}`, videoUrl: "/v.mp4" }, [s.platform], now).map((e) => ({ ...e, status: s.status ?? ("scheduled" as const), slotAt: s.slotAt })),
     ),
   );
 }
@@ -35,7 +35,8 @@ function deps(over: Partial<PosterDeps> = {}): PosterDeps & { posted: string[] }
       return { kind: "posted", id: "x", url: "u" } as PostOutcome;
     },
     token: async () => "T",
-    fileFor: () => ({ file: "/tmp/clip.mp4" }),
+    fileFor: async () => ({ file: "/tmp/clip.mp4" }),
+    lock: () => "held",
     paused: () => false,
     audienceTz: () => "America/New_York",
     ...over,
@@ -60,7 +61,7 @@ describe("tick", () => {
   });
   it("a missing clip file needs action instead of a post", async () => {
     seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
-    const d = deps({ fileFor: () => undefined });
+    const d = deps({ fileFor: async () => "missing" });
     await tick(d);
     expect(d.posted).toEqual([]);
     expect(get("J:1:youtube")).toMatchObject({ status: "needs_action", error: "Clip file missing, re-render it" });
@@ -125,5 +126,52 @@ describe("tick", () => {
     await tick(d);
     expect(flagged).toEqual(["youtube"]);
     expect(get("J:1:youtube")).toMatchObject({ status: "needs_action", authBlocked: true });
+  });
+  it("a clip that is rendering right now waits for the next tick instead of failing", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const d = deps({ fileFor: async () => "rendering" });
+    await tick(d);
+    expect(d.posted).toEqual([]);
+    expect(get("J:1:youtube")).toMatchObject({ status: "scheduled", slotAt: now.getTime() });
+  });
+  it("a clip whose footage changed after approval is not posted", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const d = deps({ fileFor: async () => "changed" });
+    await tick(d);
+    expect(d.posted).toEqual([]);
+    expect(get("J:1:youtube").status).toBe("needs_action");
+    expect(get("J:1:youtube").error).toContain("changed");
+  });
+  it("a retry resumes from the saved upload checkpoint instead of uploading again", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const seen: (Record<string, string> | undefined)[] = [];
+    let first = true;
+    const d = deps({
+      post: async (_e, job, _t, checkpoint) => {
+        seen.push(job.resume);
+        if (first) {
+          first = false;
+          checkpoint({ videoId: "v1" });
+          throw new PlatformError("network", true);
+        }
+        return { kind: "posted", id: "v1" };
+      },
+    });
+    await tick(d);
+    expect(get("J:1:youtube").progress).toEqual({ videoId: "v1" });
+    await tick({ ...d, now: () => new Date(now.getTime() + 3 * 60_000) });
+    expect(seen).toEqual([undefined, { videoId: "v1" }]);
+    expect(get("J:1:youtube").status).toBe("posted");
+  });
+  it("only the process holding the poster lock posts, and taking the lock recovers interrupted uploads", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() - 1000, status: "posting" }]);
+    const other = deps({ lock: () => "busy" });
+    await tick(other);
+    expect(other.posted).toEqual([]);
+    expect(get("J:1:youtube").status).toBe("posting");
+    const mine = deps({ lock: () => "acquired" });
+    await tick(mine);
+    expect(mine.posted).toEqual(["J:1:youtube"]);
+    expect(get("J:1:youtube").history.map((h) => h.msg)).toContain("Interrupted, retrying");
   });
 });

@@ -106,8 +106,11 @@ export function publicAccounts(): AccountPublic[] {
   });
 }
 
-/** How long before expiry a token gets refreshed: Meta's 60-day tokens a week ahead, others 5 minutes. */
-const refreshAhead = (p: Platform) => (p === "instagram" ? 7 * 86_400_000 : 5 * 60_000);
+/**
+ * How long before expiry a token gets refreshed: Meta's 60-day tokens a week ahead; Google and TikTok 30 minutes,
+ * so an upload plus a long processing wait never runs past the token.
+ */
+const refreshAhead = (p: Platform) => (p === "instagram" ? 7 * 86_400_000 : 30 * 60_000);
 
 /** A usable access token, refreshed when it's about to expire. Auth failures flag the account for reconnect. */
 export async function getAccessToken(p: Platform, f: typeof fetch = fetch): Promise<string> {
@@ -120,12 +123,12 @@ export async function getAccessToken(p: Platform, f: typeof fetch = fetch): Prom
     saveAccount(p, { tokens });
     return tokens.accessToken;
   } catch (e) {
+    // the current token still works (a hiccup while renewing early): keep using it; try again next time
+    if (a.tokens.expiresAt > Date.now() + 60_000) return a.tokens.accessToken;
     if (e instanceof OAuthError && e.isAuth) {
       saveAccount(p, { needsReconnect: true });
       throw new AuthError(`Reconnect ${NAMES[p]} in Settings → Accounts (${e.message})`);
     }
-    // a Meta token still valid for a few days keeps working while the network is down
-    if (a.tokens.expiresAt > Date.now() + 60_000) return a.tokens.accessToken;
     throw e;
   }
 }

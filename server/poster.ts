@@ -6,19 +6,26 @@ import { postInstagram } from "./platforms/instagram";
 import { postTikTok } from "./platforms/tiktok";
 import { PlatformError, type PostJob, type PostOutcome } from "./platforms/types";
 import { postYouTube } from "./platforms/youtube";
-import { markResult, note, patch, queue, reconcileMissed, upsertForRender } from "./queue";
-import { effective } from "./settings";
+import { fingerprint, markResult, note, patch, queue, reconcileMissed, recoverInterrupted, upsertForRender } from "./queue";
+import { dataDir, effective } from "./settings";
+import { takePosterLock } from "./poster-lock";
+import path from "node:path";
 
 /**
  * Posts due queue entries. Runs inside the app's server (started from instrumentation.ts), so it posts while
  * capy is open or sitting in the menu bar. One upload at a time per platform.
  */
 
+/** Where the entry's clip stands right now. */
+export type ClipFile = { file: string; thumbFile?: string } | "missing" | "changed" | "rendering";
+
 export interface PosterDeps {
   now(): Date;
-  post(e: QueueEntry, job: PostJob, token: string): Promise<PostOutcome>;
+  post(e: QueueEntry, job: PostJob, token: string, checkpoint: (p: Record<string, string>) => void): Promise<PostOutcome>;
   token(p: Platform): Promise<string>;
-  fileFor(e: QueueEntry): { file: string; thumbFile?: string } | undefined;
+  fileFor(e: QueueEntry): Promise<ClipFile>;
+  /** One poster per data folder (see poster-lock.ts). */
+  lock(): "acquired" | "held" | "busy";
   paused(): boolean;
   audienceTz(): string;
   /** The platform refused the token: mark the account so Settings asks to reconnect. */
@@ -40,18 +47,23 @@ function defaultDeps(): PosterDeps {
     audienceTz: () => tzOf(effective().postingAudience),
     flagReconnect: (p) => void saveAccount(p, { needsReconnect: true }),
     token: async (p) => (await import("./accounts")).getAccessToken(p),
-    fileFor: (e) => {
-      // the job manager is loaded lazily: it imports this module for onRendered
-      const { jobs, renderedFile } = require("./jobs") as typeof import("./jobs");
+    lock: () => takePosterLock(path.join(dataDir(), "poster.lock"), Date.now()),
+    fileFor: async (e) => {
+      // the job manager is loaded lazily (it imports this module for onRendered), and must have read the jobs from disk
+      const { jobs, renderedFile } = await import("./jobs");
+      await jobs().init();
       const job = jobs().get(e.jobId);
       const c = job?.clips.find((x) => x.n === e.n);
-      const file = job && c ? renderedFile(job, c) : undefined;
-      if (!file) return undefined;
+      if (!job || !c) return "missing";
+      if (e.fp && fingerprint(c.start, c.end) !== e.fp) return "changed";
+      if (c.render.status === "queued" || c.render.status === "rendering") return "rendering";
+      const file = renderedFile(job, c);
+      if (!file) return "missing";
       const thumb = file.replace(/\.mp4$/, ".jpg");
       return { file, thumbFile: existsSync(thumb) ? thumb : undefined };
     },
-    post: async (e, job, token) => {
-      const ctx = { token, fetch, sleep, log: (m: string) => console.log(`[poster] ${e.platform} ${e.key}: ${m}`) };
+    post: async (e, job, token, checkpoint) => {
+      const ctx = { token, fetch, sleep, checkpoint, log: (m: string) => console.log(`[poster] ${e.platform} ${e.key}: ${m}`) };
       const a = loadAccounts()[e.platform];
       if (e.platform === "youtube") return postYouTube(job, ctx);
       if (e.platform === "instagram") {
@@ -69,7 +81,11 @@ const isDue = (e: QueueEntry, now: number) =>
 /** One pass: reschedule missed slots, then post every due entry (one per platform). */
 export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
   if (d.paused()) return;
+  const lock = d.lock();
+  if (lock === "busy") return; // another capy process posts for this data folder
   const now = d.now();
+  // newly the poster for this folder: whatever was "posting" was cut off when the previous poster stopped
+  if (lock === "acquired") queue().mutate((all) => recoverInterrupted(all, now));
   const { busy } = state();
   const due: QueueEntry[] = [];
   queue().mutate((entries) => {
@@ -87,15 +103,20 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
   await Promise.all(
     due.map(async (e) => {
       try {
-        const f = d.fileFor(e);
-        if (!f) {
-          queue().mutate((all) => patch(all, e.key, (x) => note({ ...x, status: "needs_action", error: "Clip file missing, re-render it" }, "Clip file missing, re-render it", d.now())));
+        const f = await d.fileFor(e);
+        const stop = (msg: string) => queue().mutate((all) => patch(all, e.key, (x) => note({ ...x, status: "needs_action", error: msg }, msg, d.now())));
+        if (f === "rendering") {
+          // it's being re-rendered: post the new file on a later tick
+          queue().mutate((all) => patch(all, e.key, (x) => ({ ...x, status: "scheduled" })));
           return;
         }
+        if (f === "missing") return void stop("Clip file missing, re-render it");
+        if (f === "changed") return void stop("This clip changed after you approved it. Render it again to review the new cut.");
+        const checkpoint = (p: Record<string, string>) => void queue().mutate((all) => patch(all, e.key, (x) => ({ ...x, progress: { ...x.progress, ...p } })));
         let r: Parameters<typeof markResult>[2];
         try {
           const token = await d.token(e.platform);
-          r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text }, token) };
+          r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text, resume: e.progress }, token, checkpoint) };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (err instanceof AuthError) r = { error: { message, retryable: false, auth: true } };
@@ -135,6 +156,8 @@ export function onRendered(job: JobState, c: ClipState, toMediaUrl: (abs: string
       {
         jobId: job.id,
         n: c.n,
+        start: c.start,
+        end: c.end,
         clipTitle: c.title,
         videoTitle: job.title,
         videoUrl: c.render.url,

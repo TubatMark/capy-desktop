@@ -15,6 +15,8 @@ import { dataDir } from "./settings";
 export interface ClipInfo {
   jobId: string;
   n: number;
+  start: number;
+  end: number;
   clipTitle: string;
   videoTitle?: string;
   videoUrl?: string;
@@ -30,6 +32,9 @@ const BACKOFF_MIN = [2, 10, 30];
 
 export const keyOf = (jobId: string, n: number, p: Platform) => `${jobId}:${n}:${p}`;
 
+/** Identifies one cut of a clip; the same number can later hold different footage (re-pick, replace, trim). */
+export const fingerprint = (start: number, end: number) => `${Math.round(start * 10)}-${Math.round(end * 10)}`;
+
 export function note(e: QueueEntry, msg: string, now: Date): QueueEntry {
   return { ...e, history: [...e.history, { t: now.getTime(), msg }].slice(-50), updatedAt: now.getTime() };
 }
@@ -42,27 +47,43 @@ export function patch(entries: QueueEntry[], key: string, fn: (e: QueueEntry) =>
 export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: Platform[], now: Date): QueueEntry[] {
   const out = [...entries];
   const publish = c.publish ?? { ytTitle: c.clipTitle, description: "", hashtags: [] };
+  const fp = fingerprint(c.start, c.end);
+  const fresh = (key: string, p: Platform): QueueEntry =>
+    note({ key, jobId: c.jobId, n: c.n, platform: p, fp, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now);
+  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle };
   for (const p of platforms) {
     const key = keyOf(c.jobId, c.n, p);
     const i = out.findIndex((e) => e.key === key);
-    const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle };
     if (i < 0) {
-      out.push(note({ key, jobId: c.jobId, n: c.n, platform: p, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now));
+      out.push(fresh(key, p));
       continue;
     }
     const e = out[i]!;
-    // already out, on its way out, or turned down: a re-render doesn't touch it
-    if (e.status === "posted" || e.status === "posting" || e.status === "rejected") continue;
-    out[i] = note({ ...e, ...media }, "Re-rendered, will post the new version", now);
+    if (e.status === "posting") continue; // mid-upload: leave it be
+    if (e.fp && e.fp !== fp) {
+      // different footage under the same clip number: it was never approved, so it gets its own review
+      const archived: QueueEntry = e.status === "posted" ? e : { ...e, status: "rejected", slotAt: undefined };
+      out[i] = note({ ...archived, key: `${key}~${e.fp}` }, "Replaced by a different cut of this clip", now);
+      out.push(fresh(key, p));
+      continue;
+    }
+    if (e.status === "posted" || e.status === "rejected") continue;
+    // same cut re-rendered: post the new file; a post that failed for want of a file goes back on the schedule
+    const back = e.status === "needs_action" && !e.result?.id && !e.authBlocked;
+    out[i] = note({ ...e, ...media, fp, ...(back ? { status: "scheduled" as const, error: undefined } : {}) }, back ? "Re-rendered, back on the schedule" : "Re-rendered, will post the new version", now);
   }
   return out;
 }
 
-/** Scheduled/posting entries, plus posts from the last 24h, as slot-allocator input. */
-function taken(entries: QueueEntry[], now: Date, except?: (e: QueueEntry) => boolean) {
+/**
+ * Slot-allocator input: scheduled/posting entries, plus anything that reached the platform in the last 24h
+ * (posted, or needs_action with an id: TikTok inbox, YouTube forced private).
+ */
+export function taken(entries: QueueEntry[], now: Date, except?: (e: QueueEntry) => boolean) {
+  const out = (e: QueueEntry) => e.status === "posted" || (e.status === "needs_action" && !!e.result?.id);
   return entries
     .filter((e) => !except?.(e))
-    .filter((e) => ((e.status === "scheduled" || e.status === "posting") && e.slotAt !== undefined) || (e.status === "posted" && now.getTime() - (e.slotAt ?? e.updatedAt) < 24 * 60 * MIN))
+    .filter((e) => ((e.status === "scheduled" || e.status === "posting") && e.slotAt !== undefined) || (out(e) && now.getTime() - (e.slotAt ?? e.updatedAt) < 24 * 60 * MIN))
     .map((e) => ({ platform: e.platform, at: e.slotAt ?? e.updatedAt }));
 }
 
@@ -201,8 +222,6 @@ function load(): QueueEntry[] {
   } catch {
     /* empty queue */
   }
-  // first load in this process: nothing can be uploading yet
-  if (!c || c.file !== file) entries = recoverInterrupted(entries, new Date());
   globalThis.__capyQueue = { file, mtime: mtimeOf(file), entries };
   return entries;
 }
