@@ -78,6 +78,21 @@ to YouTube Studio to flip them public), TikTok clips go to your **TikTok inbox**
 publicly but need a Business/Creator account linked to a Facebook Page. Tokens live in `<CAPY_DATA_DIR>/accounts.json`
 (mode 0600) and the queue in `queue.json`.
 
+## Automation: watch creators
+
+**Automation** (radar icon in the header) watches YouTube creators. Add one by @handle, channel link or any of their
+videos. When they upload, capy runs the whole pipeline on its own: picks, the pick reviewer, footage, English captions,
+render. Then an **AI content reviewer** checks every finished clip for platform policy, misleading titles, translation
+problems, missing credit and personal data. The clips wait in **Queue → Waiting for your OK** with the AI verdict on
+each card; you decide what gets scheduled. Nothing posts on its own.
+
+- New uploads only (adding a channel doesn't backfill; tick "clip their latest upload now" to try it on the newest).
+- Skips uploads under 4 minutes and live streams. At most 2 videos per creator and 6 overall per day, one at a time.
+- Checks every hour while capy runs (window or menu bar), or on **Check now**. A desktop notification says when new
+  clips are waiting. The watch list lives in `<CAPY_DATA_DIR>/watch.json`.
+
+A plan for original kids' story videos is in `docs/superpowers/specs/2026-10-06-kids-story-videos-plan.md` (not built yet).
+
 ## Settings
 
 Open **Settings** in the header (or **⌘,** in the app). Everything you set there is stored in one
