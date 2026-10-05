@@ -61,6 +61,16 @@ export interface ClipState {
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
   publish?: { ytTitle: string; description: string; hashtags: string[] };
+  /** The independent reviewer's verdict on this pick. */
+  review?: ClipReview;
+  /** Highest "Most replayed" value overlapping the clip, 0..1. */
+  replayPeak?: number;
+}
+
+export type ReviewVerdict = "pass" | "fix_hook" | "fail";
+export interface ClipReview {
+  verdict: ReviewVerdict;
+  problem?: string;
 }
 
 export interface JobSettings {
