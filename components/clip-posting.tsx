@@ -5,9 +5,10 @@ import { CalendarClock, Check, ExternalLink, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PostTime } from "@/components/post-time";
 import { PLATFORM_NAME } from "@/components/accounts-panel";
+import { AiReview } from "@/components/ai-review";
 import { api } from "@/hooks/use-job";
 import { fmtSlot, useQueue } from "@/hooks/use-queue";
-import type { QueueEntry } from "@/lib/types";
+import type { ContentReview, QueueEntry } from "@/lib/types";
 
 const LABEL: Record<QueueEntry["status"], string> = {
   review: "waiting for your OK",
@@ -20,20 +21,28 @@ const LABEL: Record<QueueEntry["status"], string> = {
 };
 
 /** This clip's posting: its own slot and status per platform, or Approve/Reject while it waits for review. */
-export function ClipPosting({ jobId, n }: { jobId: string; n: number }) {
+export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; review?: ContentReview }) {
   const { data, refresh } = useQueue();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const mine = data?.entries.filter((e) => e.jobId === jobId && e.n === n && e.status !== "rejected") ?? [];
-  if (!data || mine.length === 0) return <PostTime />;
+  if (!data || mine.length === 0)
+    return (
+      <>
+        {review && <AiReview review={review} />}
+        <PostTime />
+      </>
+    );
   const tz = data.audienceTz;
   const waiting = mine.filter((e) => e.status === "review");
   const slot = mine.find((e) => e.slotAt && e.status !== "review")?.slotAt;
+  const aiReview = mine.find((e) => e.aiReview)?.aiReview ?? review;
 
   return (
     <div className="space-y-3 rounded-xl border bg-card p-4 sm:p-5">
       <h2 className="flex items-center gap-2 font-semibold">
         <CalendarClock className="size-4 text-primary" /> Posting
       </h2>
+      {aiReview && <AiReview review={aiReview} />}
       {waiting.length > 0 ? (
         <>
           <p className="text-sm text-muted-foreground">

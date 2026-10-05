@@ -5,7 +5,7 @@ import Link from "next/link";
 import "./globals.css";
 import { Wordmark } from "@/components/logo";
 import { Backdrop } from "@/components/backdrop";
-import { Settings } from "lucide-react";
+import { Radar, Settings } from "lucide-react";
 import { NavLink } from "@/components/nav-link";
 import { QueueBadge } from "@/components/queue-badge";
 
@@ -34,6 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             {/* the logo is the library link; queue and settings sit on the right as icons */}
             <nav className="no-drag ml-auto flex items-center gap-1 text-muted-foreground">
+              <NavLink href="/automation" label="Automation" className="rounded-md p-2 hover:bg-accent">
+                <Radar className="size-5" />
+              </NavLink>
               <QueueBadge />
               <NavLink href="/settings" label="Settings" className="rounded-md p-2 hover:bg-accent">
                 <Settings className="size-5" />

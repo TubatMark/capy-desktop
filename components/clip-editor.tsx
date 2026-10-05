@@ -372,7 +372,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
             {/* column 2: thumbnail + best time */}
             <div className="min-w-0 space-y-4">
               <ThumbnailCard jobId={id} clip={clip} />
-              <ClipPosting jobId={id} n={clip.n} />
+              <ClipPosting jobId={id} n={clip.n} review={clip.contentReview} />
             </div>
           </div>
         </div>

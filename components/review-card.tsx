@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PLATFORM_NAME } from "@/components/accounts-panel";
+import { AiReview } from "@/components/ai-review";
 import { api } from "@/hooks/use-job";
 import { fmtSlot } from "@/hooks/use-queue";
 import type { Platform, PostText, QueueEntry } from "@/lib/types";
@@ -19,7 +20,11 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
   const [err, setErr] = useState<string | null>(null);
   const chosen = entries.filter((e) => on[e.platform]).map((e) => e.platform);
 
+  const aiReview = entries.find((e) => e.aiReview)?.aiReview;
+  const youtube = entries.find((e) => e.platform === "youtube");
+
   async function approve() {
+    if (aiReview?.verdict === "block" && !window.confirm("The AI reviewer flagged this clip as not safe to post as is. Post it anyway?")) return;
     setBusy("approve");
     setErr(null);
     try {
@@ -51,13 +56,26 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
             {first.clipTitle}
           </Link>
         </div>
+        {aiReview && (
+          <AiReview
+            review={aiReview}
+            onUseTitle={
+              youtube
+                ? async (title) => {
+                    await api(`/api/queue/${encodeURIComponent(youtube.key)}`, { method: "PATCH", body: JSON.stringify({ text: { title } }) });
+                    onDone(`Title updated: ${title}`);
+                  }
+                : undefined
+            }
+          />
+        )}
         {entries.map((e) => (
           <PlatformText key={e.key} entry={e} enabled={on[e.platform] ?? false} onToggle={(v) => setOn((s) => ({ ...s, [e.platform]: v }))} />
         ))}
         {err && <p className="text-sm text-red-600">{err}</p>}
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={approve} disabled={busy !== null || chosen.length === 0}>
-            {busy === "approve" ? <Loader2 className="animate-spin" /> : <Check />} Approve
+            {busy === "approve" ? <Loader2 className="animate-spin" /> : <Check />} {aiReview?.verdict === "block" ? "Post anyway…" : "Approve"}
           </Button>
           <Button size="sm" variant="outline" onClick={reject} disabled={busy !== null}>
             {busy === "reject" ? <Loader2 className="animate-spin" /> : <X />} Reject

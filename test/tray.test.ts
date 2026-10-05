@@ -17,3 +17,19 @@ describe("trayMenuModel", () => {
     expect(m.find((x) => x.id === "quit")!.label).toBe("Quit capy");
   });
 });
+
+import { newReviewNotice } from "../electron/tray-model";
+describe("tray: automation", () => {
+  it("shows how many creators are watched", () => {
+    const m = trayMenuModel({ activeCount: 0, review: 0, watching: 2 }, false, "America/New_York");
+    expect(m.some((x) => x.label === "Watching 2 creators")).toBe(true);
+    expect(trayMenuModel({ activeCount: 0, review: 0 }, false, "America/New_York").some((x) => x.label.startsWith("Watching"))).toBe(false);
+  });
+  it("notifies only when more clips are waiting than before", () => {
+    expect(newReviewNotice(undefined, 3)).toBeUndefined(); // first look after start-up: no burst of old news
+    expect(newReviewNotice(1, 3)).toBe("2 new clips are waiting for your OK");
+    expect(newReviewNotice(0, 1)).toBe("1 new clip is waiting for your OK");
+    expect(newReviewNotice(3, 3)).toBeUndefined();
+    expect(newReviewNotice(3, 1)).toBeUndefined();
+  });
+});
