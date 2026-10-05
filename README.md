@@ -58,6 +58,26 @@ pnpm dev          # then open http://localhost:3000
 
 Each pick downloads a padded segment (±15 s) so trimming in the editor doesn't re-download; going past the padding fetches a new segment automatically.
 
+## Picks for a US audience
+
+- **Most replayed.** capy reads YouTube's "Most replayed" graph and tells the picker where viewers rewind; picks that overlap a peak get a badge.
+- **A second opinion.** The picker asks for 2 spare candidates, then a separate AI pass reviews every pick (hook in 2 s, self-contained, real payoff, honest hook). Weak hooks are rewritten; weak picks are unticked with the reason on the card. **Replace** on any unrendered card finds a different moment that avoids that problem.
+- **Audience: English (US)** (Settings default, per-video override, `--audience` in the CLI). Titles, hooks and upload text are written for American viewers, and when the video isn't in English the burned-in captions are translated phrase by phrase (`words.en.json` next to `words.json`).
+
+## Posting to YouTube, Instagram and TikTok
+
+Free, with your own developer app on each platform (no posting service in between). Set them up under
+**Settings → Posting accounts**; the in-app guide (`/settings/posting-setup`) walks through each one.
+
+1. Every rendered clip lands in **Queue → Waiting for your OK**. Watch it, edit the text per platform, untick platforms, then **Approve** (or Reject).
+2. Approved clips get the next free slot in the audience's time zone: at most 2 a day per platform, 4 hours apart, the same time on every platform. Move, post now or remove any of them.
+3. capy posts at the slot time while it runs. Closing the window with posts scheduled keeps it in the menu bar; slots missed while the computer slept post on wake (up to 2 h late) or move to the next free slot.
+
+What the free tiers allow until you pass each platform's (free) review: YouTube uploads stay **private** (capy links you
+to YouTube Studio to flip them public), TikTok clips go to your **TikTok inbox** (you tap Post), Instagram Reels post
+publicly but need a Business/Creator account linked to a Facebook Page. Tokens live in `<CAPY_DATA_DIR>/accounts.json`
+(mode 0600) and the queue in `queue.json`.
+
 ## Settings
 
 Open **Settings** in the header (or **⌘,** in the app). Everything you set there is stored in one
