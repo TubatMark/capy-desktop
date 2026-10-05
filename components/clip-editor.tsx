@@ -14,7 +14,7 @@ import { LookPanel } from "@/components/look-panel";
 import { Timeline } from "@/components/timeline";
 import { Transcript } from "@/components/transcript";
 import { RenderStatus } from "@/components/pick-card";
-import { PostTime } from "@/components/post-time";
+import { ClipPosting } from "@/components/clip-posting";
 import { PostTextCard } from "@/components/post-sheet";
 import { ThumbnailCard } from "@/components/thumbnail-card";
 import { api, useCaptionWords, useJob, useWords } from "@/hooks/use-job";
@@ -372,7 +372,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
             {/* column 2: thumbnail + best time */}
             <div className="min-w-0 space-y-4">
               <ThumbnailCard jobId={id} clip={clip} />
-              <PostTime />
+              <ClipPosting jobId={id} n={clip.n} />
             </div>
           </div>
         </div>
