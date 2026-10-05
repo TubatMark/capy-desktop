@@ -21,12 +21,21 @@ vi.mock("../src/pick", async (orig) => ({ ...(await orig<typeof import("../src/p
 vi.mock("../src/review", async (orig) => ({ ...(await orig<typeof import("../src/review")>()), reviewPicks: async () => [] }));
 const translatePhrases = vi.fn();
 vi.mock("../src/translate", async (orig) => ({ ...(await orig<typeof import("../src/translate")>()), translatePhrases: (...a: unknown[]) => translatePhrases(...a) }));
+const reviewContent = vi.fn();
+vi.mock("../src/content-review", async (orig) => ({ ...(await orig<typeof import("../src/content-review")>()), reviewContent: (...a: unknown[]) => reviewContent(...a) }));
 vi.mock("../src/pipeline", async (orig) => ({
   ...(await orig<typeof import("../src/pipeline")>()),
+  stageRender: async (jobDir: string, n: number) => {
+    const f = path.join(jobDir, `0${n}-clip.mp4`);
+    writeFileSync(f, "mp4");
+    return f;
+  },
+  thumbCandidates: async () => [],
   stageSegment: async (_u: string, jobDir: string, n: number, c: { start: number; end: number }) => ({ start: c.start - 15, end: c.end + 15, file: path.join(jobDir, `seg${n}.mp4`), thumb: path.join(jobDir, `seg${n}.jpg`) }),
 }));
 
 import { jobs } from "../server/jobs";
+import { watch } from "../server/watch";
 import type { ClipState, JobState } from "../lib/types";
 
 const OUT = process.env.CAPY_OUTPUT!;
@@ -62,6 +71,8 @@ async function seedJob(clips: ClipState[], extra: Partial<JobState> = {}): Promi
 const enFor = (phrases: { i: number; start: number; end: number }[]) => phrases.map((p) => ({ text: `EN${p.i}`, start: p.start, end: p.end }));
 
 beforeEach(() => {
+  reviewContent.mockReset();
+  reviewContent.mockResolvedValue({ verdict: "ok", summary: "Fine", issues: [], at: 1 });
   pickClips.mockReset();
   translatePhrases.mockReset();
   translatePhrases.mockImplementation(async (ph: { i: number; start: number; end: number }[]) => enFor(ph));
@@ -132,3 +143,43 @@ describe("parallel translations", () => {
 void env;
 void mkdtempSync;
 void tmpdir;
+
+describe("automation jobs", () => {
+  const original = { count: 3, minSec: 20, maxSec: 60, layout: "center" as const, style: "bold" as const, captions: true, hook: true, maxRes: 1080, audience: "original" as const };
+  const watching = (jobId: string) =>
+    watch().mutate((f) => ({
+      ...f,
+      channels: [
+        {
+          id: "UC1", name: "Creator", url: "u", enabled: true, addedAt: 0, seen: [], pending: [],
+          history: [{ videoId: jobId, title: "v", at: Date.now(), jobId, status: "processing" as const }],
+          settings: { clips: 3, minVideoSec: 240, perDay: 2 },
+        },
+      ],
+    }));
+
+  it("render their selected picks once ready, get an AI content review, and mark the watch history rendered", async () => {
+    const job = await seedJob([clip(1, 100, 140), clip(2, 200, 240, { selected: false })], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    expect(job.clips[1]!.render.status).toBe("none");
+    await vi.waitFor(() => expect(watch().get().channels[0]!.history[0]!.status).toBe("rendered"), { timeout: 5000 });
+    expect(reviewContent).toHaveBeenCalledTimes(1);
+    expect(reviewContent.mock.calls[0]![0]).toMatchObject({ clipTitle: "t1", transcript: expect.stringContaining("Olha") });
+    expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "ok" });
+  });
+  it("an automation job whose picks all failed review is recorded as an error, nothing rendered", async () => {
+    const job = await seedJob([clip(1, 100, 140, { selected: false })], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    expect(job.clips[0]!.render.status).toBe("none");
+    expect(watch().get().channels[0]!.history[0]).toMatchObject({ status: "error", error: expect.stringMatching(/no clip/i) });
+  });
+  it("a manual render with no posting account connected skips the content review", async () => {
+    const job = await seedJob([clip(1, 100, 140)], { settings: original });
+    await jobs().render(job.id, [1]);
+    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    expect(reviewContent).not.toHaveBeenCalled();
+  });
+});

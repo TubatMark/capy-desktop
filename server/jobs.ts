@@ -5,7 +5,7 @@ import path from "node:path";
 import { stageMeta, stageWords, stagePick, stageSegment, stageRender, segmentFor, exists, writePublishFiles, thumbCandidates } from "../src/pipeline";
 import { thumbnail } from "../src/render";
 import { pickCaptionLang, videoIdFromUrl } from "../src/youtube";
-import { snapToWords } from "../src/captions";
+import { snapToWords, wordsInRange } from "../src/captions";
 import { generatePublish, pickClips, rewriteTitleHook } from "../src/pick";
 import { peakFor, replayPeaks } from "../src/heatmap";
 import { applyReview, reviewPicks } from "../src/review";
@@ -16,10 +16,13 @@ import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../sr
 import type { VideoMeta, Word } from "../src/types";
 import { boot } from "./boot";
 import { onRendered, startPoster } from "./poster";
+import { publicAccounts } from "./accounts";
+import { markHistory, watch } from "./watch";
+import { reviewContent } from "../src/content-review";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
 import { loadTimings, learn, type Timings } from "./estimates";
-import type { ClipState, JobSettings, JobState, Stage } from "../lib/types";
+import type { ClipState, ContentReview, JobSettings, JobState, Stage } from "../lib/types";
 import { DEFAULT_SETTINGS } from "../lib/types";
 import { looksEqual, normalizeLook } from "../lib/look";
 import { agentSpec } from "../src/agents";
@@ -324,7 +327,7 @@ class JobManager extends EventEmitter {
 
   // ---------- create / analyze ----------
 
-  async create(url: string, settingsIn: Partial<JobSettings> = {}): Promise<JobState> {
+  async create(url: string, settingsIn: Partial<JobSettings> = {}, extra: { automation?: JobState["automation"] } = {}): Promise<JobState> {
     await this.init();
     const videoId = videoIdFromUrl(url.trim());
     if (!videoId) throw new Error("That doesn't look like a YouTube link.");
@@ -332,8 +335,11 @@ class JobManager extends EventEmitter {
     const settings: JobSettings = { ...DEFAULT_SETTINGS, ...(existing?.settings ?? {}), ...settingsIn };
     settings.audience ??= effective().audience;
     if (existing) {
+      if (extra.automation) existing.automation = extra.automation;
       if (existing.status === "analyzing" || existing.status === "preparing") return existing;
       existing.settings = settings;
+      // automation found a video that was already clipped here: render what's ready
+      if (extra.automation && existing.status === "ready" && existing.clips.length) void this.onReady(existing);
       if (existing.status === "error" || existing.clips.length === 0) {
         void this.runAnalyze(existing, { repick: true });
       }
@@ -491,6 +497,7 @@ class JobManager extends EventEmitter {
       job.tookMs = Date.now() - job.startedAt!;
       this.log(job, "done", `ready in ${fmtDur(job.tookMs)} — ${job.clips.length} picks, footage downloaded`);
       await this.update(job);
+      void this.onReady(job);
     } catch (e) {
       if (isCancelled(e)) {
         // footage that never finished is marked so the clip page says so instead of spinning forever
@@ -502,6 +509,7 @@ class JobManager extends EventEmitter {
         job.status = "error";
         job.error = e instanceof Error ? e.message : String(e);
         this.log(job, "error", job.error);
+        if (job.automation) this.automationStatus(job, "error", job.error);
       }
       await this.update(job);
     } finally {
@@ -880,6 +888,12 @@ class JobManager extends EventEmitter {
         tookMs,
       };
       this.log(job, "render", `clip ${c.n} done in ${(tookMs / 1000).toFixed(1)}s`);
+      // the AI content reviewer looks at every clip that is about to be posted (and everything automation makes)
+      const queueing = job.settings.autoPost !== false && publicAccounts().some((a) => a.connected && a.autoPost);
+      if (job.automation || queueing) {
+        c.contentReview = await this.contentReview(job, c, words);
+        this.log(job, "render", `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`);
+      }
       try {
         onRendered(job, c, toMediaUrl);
       } catch (e) {
@@ -892,8 +906,58 @@ class JobManager extends EventEmitter {
       this.log(job, "render", `clip ${c.n} failed: ${c.render.error!.split("\n")[0]}`);
     } finally {
       if (!job.clips.some((x) => x.render.status === "rendering") && job.status === "ready") this.stopTicker(job);
+      // automation: once nothing of this job is waiting to render, record how it went
+      if (job.automation && !job.clips.some((x) => x.render.status === "queued" || x.render.status === "rendering")) {
+        const done = job.clips.filter((x) => x.render.status === "done").length;
+        this.automationStatus(job, done ? "rendered" : "error", done ? undefined : "Every render failed");
+      }
       await this.update(job);
     }
+  }
+
+  // ---------- automation ----------
+
+  /** The picks are ready: automation jobs render the ones the reviewer passed (the selected ones). */
+  async onReady(job: JobState) {
+    if (!job.automation) return;
+    const ready = job.clips.filter((c) => c.selected && c.segment?.status === "done");
+    if (!ready.length) {
+      this.log(job, "render", "automation: no clip passed review, nothing to render");
+      this.automationStatus(job, "error", "No clip passed review");
+      return;
+    }
+    this.log(job, "render", `automation: rendering ${ready.length} clip${ready.length === 1 ? "" : "s"}`);
+    await this.render(job.id, ready.map((c) => c.n));
+  }
+
+  private automationStatus(job: JobState, status: "processing" | "rendered" | "error", error?: string) {
+    try {
+      watch().mutate((f) => markHistory(f, job.id, status, error));
+    } catch (e) {
+      this.log(job, "render", `automation history: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** The AI content reviewer on a finished clip: what viewers read, what it's posted with, and the original words. */
+  private async contentReview(job: JobState, c: ClipState, captionWords: Word[]): Promise<ContentReview> {
+    const text = (ws: Word[]) => wordsInRange(ws, c.start, c.end).map((w) => w.text).join(" ");
+    const translated = c.captionsTranslated === true && this.needsTranslation(job);
+    const { agent, model } = await this.ai(job);
+    return reviewContent(
+      {
+        videoTitle: job.title ?? "",
+        channel: job.channel,
+        clipTitle: c.title,
+        hook: c.hook,
+        transcript: text(captionWords),
+        original: translated ? text(await this.getWords(job)) : undefined,
+        sourceLang: translated ? job.sourceLang : undefined,
+        ytTitle: c.publish?.ytTitle,
+        caption: c.publish?.description,
+        hashtags: c.publish?.hashtags,
+      },
+      { agent, model },
+    );
   }
 }
 
