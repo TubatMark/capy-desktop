@@ -1,0 +1,161 @@
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import type { WatchedChannel, WatchFile } from "../lib/types";
+import type { ChannelInfo, Upload } from "../src/youtube";
+import { dataDir } from "./settings";
+
+/**
+ * Creators capy watches, in <CAPY_DATA_DIR>/watch.json. Every change is a pure function over the file
+ * (tested directly); watch().mutate applies one and saves.
+ */
+
+const DAY = 86_400_000;
+const SEEN_MAX = 500;
+const HISTORY_MAX = 50;
+
+export const DEFAULT_CHANNEL_SETTINGS: WatchedChannel["settings"] = { clips: 3, minVideoSec: 240, perDay: 2 };
+
+export const emptyWatch = (): WatchFile => ({ channels: [], maxPerDay: 6, intervalMin: 60 });
+
+const clippable = (u: Upload, minSec: number) => !u.live && u.duration !== undefined && u.duration >= minSec;
+
+/** Start watching: what's on the channel now counts as seen; with clipLatest the newest clippable upload is queued. */
+export function addChannel(file: WatchFile, info: ChannelInfo, uploads: Upload[], o: { now: Date; clipLatest?: boolean }): WatchFile {
+  if (file.channels.some((c) => c.id === info.id)) throw Object.assign(new Error(`${info.name} is already watched`), { status: 409 });
+  const settings = { ...DEFAULT_CHANNEL_SETTINGS };
+  const latest = o.clipLatest ? uploads.find((u) => clippable(u, settings.minVideoSec)) : undefined;
+  const channel: WatchedChannel = {
+    ...info,
+    enabled: true,
+    addedAt: o.now.getTime(),
+    seen: uploads.filter((u) => u.id !== latest?.id).map((u) => u.id),
+    pending: latest ? [{ id: latest.id, title: latest.title, duration: latest.duration, foundAt: o.now.getTime() }] : [],
+    history: [],
+    settings,
+  };
+  return { ...file, channels: [...file.channels, channel] };
+}
+
+/** Sort a channel's latest uploads into new clippable ones, ones to skip for good, and ones to look at again later. */
+export function diffUploads(ch: WatchedChannel, uploads: Upload[]): { fresh: Upload[]; skipped: Upload[]; unknown: Upload[] } {
+  const known = new Set([...ch.seen, ...ch.pending.map((p) => p.id)]);
+  const fresh: Upload[] = [];
+  const skipped: Upload[] = [];
+  const unknown: Upload[] = [];
+  for (const u of uploads) {
+    if (known.has(u.id)) continue;
+    if (u.live || u.duration === undefined) unknown.push(u); // live, upcoming, or a premiere without a length yet
+    else if (u.duration < ch.settings.minVideoSec) skipped.push(u);
+    else fresh.push(u);
+  }
+  return { fresh, skipped, unknown };
+}
+
+/** Record one check of a channel: new uploads join pending (oldest first), short ones are marked seen. */
+export function applyCheck(file: WatchFile, channelId: string, uploads: Upload[], now: Date): WatchFile {
+  return mapChannel(file, channelId, (ch) => {
+    const { fresh, skipped } = diffUploads(ch, uploads);
+    return {
+      ...ch,
+      lastCheckedAt: now.getTime(),
+      lastError: undefined,
+      seen: [...ch.seen, ...skipped.map((u) => u.id)].slice(-SEEN_MAX),
+      pending: [...ch.pending, ...[...fresh].reverse().map((u) => ({ id: u.id, title: u.title, duration: u.duration, foundAt: now.getTime() }))],
+    };
+  });
+}
+
+export function checkFailed(file: WatchFile, channelId: string, error: string, now: Date): WatchFile {
+  return mapChannel(file, channelId, (ch) => ({ ...ch, lastCheckedAt: now.getTime(), lastError: error }));
+}
+
+const startedWithin = (ch: WatchedChannel, now: Date) => ch.history.filter((h) => now.getTime() - h.at < DAY).length;
+
+/**
+ * The next video automation may start, if any: the oldest pending upload of an enabled channel that is under its own
+ * daily cap, while the total for the day is under maxPerDay. The returned file has it moved to history.
+ */
+export function takeDue(file: WatchFile, now: Date): { file: WatchFile; due?: { channelId: string; channelName: string; videoId: string; title: string } } {
+  const total = file.channels.reduce((n, c) => n + startedWithin(c, now), 0);
+  if (total >= file.maxPerDay) return { file };
+  const candidates = file.channels
+    .filter((c) => c.enabled && c.pending.length > 0 && startedWithin(c, now) < c.settings.perDay)
+    .sort((a, b) => a.pending[0]!.foundAt - b.pending[0]!.foundAt);
+  const ch = candidates[0];
+  if (!ch) return { file };
+  const next = ch.pending[0]!;
+  const updated = mapChannel(file, ch.id, (c) => ({
+    ...c,
+    pending: c.pending.slice(1),
+    seen: [...c.seen, next.id].slice(-SEEN_MAX),
+    history: [{ videoId: next.id, title: next.title, at: now.getTime(), jobId: next.id, status: "processing" as const }, ...c.history].slice(0, HISTORY_MAX),
+  }));
+  return { file: updated, due: { channelId: ch.id, channelName: ch.name, videoId: next.id, title: next.title } };
+}
+
+/** Update the history entry of an automation job (jobs use the video id as their id). */
+export function markHistory(file: WatchFile, jobId: string, status: "processing" | "rendered" | "error", error?: string): WatchFile {
+  return {
+    ...file,
+    channels: file.channels.map((c) => (c.history.some((h) => h.jobId === jobId) ? { ...c, history: c.history.map((h) => (h.jobId === jobId ? { ...h, status, error } : h)) } : c)),
+  };
+}
+
+export function mapChannel(file: WatchFile, channelId: string, fn: (c: WatchedChannel) => WatchedChannel): WatchFile {
+  return { ...file, channels: file.channels.map((c) => (c.id === channelId ? fn(c) : c)) };
+}
+
+// ---------- store ----------
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __capyWatch: { file: string; mtime: number; data: WatchFile } | null | undefined;
+}
+
+export function resetWatchCache() {
+  globalThis.__capyWatch = null;
+}
+
+const watchFile = () => path.join(dataDir(), "watch.json");
+const mtimeOf = (f: string) => {
+  try {
+    return statSync(f).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
+function load(): WatchFile {
+  const file = watchFile();
+  const c = globalThis.__capyWatch;
+  if (c && c.file === file && c.mtime === mtimeOf(file)) return c.data;
+  let data = emptyWatch();
+  try {
+    data = { ...emptyWatch(), ...(JSON.parse(readFileSync(file, "utf8")) as Partial<WatchFile>) };
+  } catch {
+    /* nothing watched yet */
+  }
+  globalThis.__capyWatch = { file, mtime: mtimeOf(file), data };
+  return data;
+}
+
+function save(data: WatchFile) {
+  const file = watchFile();
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+  renameSync(tmp, file);
+  globalThis.__capyWatch = { file, mtime: mtimeOf(file), data };
+}
+
+/** The watch list. `mutate` is synchronous, so two callers can never interleave a read-modify-write. */
+export function watch() {
+  return {
+    get: () => load(),
+    mutate(fn: (f: WatchFile) => WatchFile): WatchFile {
+      const next = fn(load());
+      save(next);
+      return next;
+    },
+  };
+}

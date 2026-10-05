@@ -74,6 +74,45 @@ export interface QueueSummary {
   activeCount: number;
 }
 
+/** A YouTube creator capy watches for new uploads (server/watch.ts owns these). */
+export interface WatchedChannel {
+  id: string;
+  name: string;
+  handle?: string;
+  /** The uploads tab. */
+  url: string;
+  enabled: boolean;
+  addedAt: number;
+  lastCheckedAt?: number;
+  lastError?: string;
+  /** Upload ids already handled or deliberately skipped (newest kept). */
+  seen: string[];
+  /** New uploads waiting for room under the daily caps, oldest first. */
+  pending: { id: string; title: string; duration?: number; foundAt: number }[];
+  /** Videos sent through the pipeline, newest first. */
+  history: { videoId: string; title: string; at: number; jobId: string; status: "processing" | "rendered" | "error"; error?: string }[];
+  settings: { clips: number; minVideoSec: number; perDay: number; audience?: Audience };
+}
+
+export interface WatchFile {
+  channels: WatchedChannel[];
+  /** Most new videos processed per day across all channels. */
+  maxPerDay: number;
+  /** Minutes between checks. */
+  intervalMin: number;
+  lastCheckAt?: number;
+}
+
+/** The AI content reviewer's verdict on a rendered clip, before the user's own review. */
+export interface ContentReview {
+  verdict: "ok" | "caution" | "block";
+  summary: string;
+  issues: { kind: string; note: string }[];
+  /** A better YouTube title, when the reviewer has one. */
+  title?: string;
+  at: number;
+}
+
 export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
 export type Stage = "meta" | "captions" | "pick" | "segments" | "done";
 
