@@ -9,7 +9,7 @@ import { snapToWords } from "../src/captions";
 import { generatePublish, pickClips, rewriteTitleHook } from "../src/pick";
 import { peakFor, replayPeaks } from "../src/heatmap";
 import { applyReview, reviewPicks } from "../src/review";
-import { mergeWords, translateRange } from "../src/translate";
+import { coalesce, covers, mergeWords, phrasesToTranslate, translatePhrases } from "../src/translate";
 import { isEnglish } from "../src/lang";
 import { pool } from "../src/util";
 import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../src/exec";
@@ -53,6 +53,10 @@ class JobManager extends EventEmitter {
   }
   private set enWrites(p: Promise<void>) {
     this._enWrites = p;
+  }
+  private _captionLoads?: Map<string, Promise<void>>;
+  private get captionLoads() {
+    return (this._captionLoads ??= new Map<string, Promise<void>>());
   }
   private _captionWords?: Map<string, Word[]>;
   private get captionWords() {
@@ -181,12 +185,29 @@ class JobManager extends EventEmitter {
 
   /** English caption words (words.en.json); [] when nothing is translated. */
   async getCaptionWords(job: JobState): Promise<Word[]> {
-    let w = this.captionWords.get(job.id);
-    if (!w) {
-      w = JSON.parse(await readFile(path.join(OUTPUT_ROOT, job.dir, "words.en.json"), "utf8").catch(() => "[]")) as Word[];
-      this.captionWords.set(job.id, w);
+    const cached = this.captionWords.get(job.id);
+    if (cached) return cached;
+    // one disk read per job, shared by concurrent callers; a merge that lands meanwhile is never overwritten
+    let load = this.captionLoads.get(job.id);
+    if (!load) {
+      load = readFile(path.join(OUTPUT_ROOT, job.dir, "words.en.json"), "utf8")
+        .catch(() => "[]")
+        .then((raw) => {
+          if (!this.captionWords.has(job.id)) this.captionWords.set(job.id, JSON.parse(raw) as Word[]);
+        });
+      this.captionLoads.set(job.id, load);
     }
-    return w;
+    await load;
+    return this.captionWords.get(job.id) ?? [];
+  }
+
+  /** The words to burn in for this clip: English (translating what's missing first) when the job needs it. */
+  async captionWordsFor(job: JobState, c: ClipState): Promise<Word[]> {
+    if (!this.needsTranslation(job)) return this.getWords(job);
+    const range = { start: c.start, end: c.end };
+    if (!covers(job.translated ?? [], range)) await this.translateFor(job, c);
+    // a failed translation keeps the original captions (the card says so) rather than half-English ones
+    return covers(job.translated ?? [], range) ? this.getCaptionWords(job) : this.getWords(job);
   }
 
   private async getMeta(job: JobState): Promise<VideoMeta> {
@@ -550,6 +571,7 @@ class JobManager extends EventEmitter {
     if (timingChanged && !this.segmentCovers(c)) {
       // edit went outside the padded segment: fetch a new one in the background
       c.render = { status: "none" };
+      c.captionsTranslated = undefined;
       void this.refetchSegment(job, c);
     }
     await this.update(job);
@@ -629,22 +651,28 @@ class JobManager extends EventEmitter {
     return job.settings.audience === "en-us" && !isEnglish(job.sourceLang);
   }
 
-  /** Translate the clip's padded segment range into <jobDir>/words.en.json (only the parts not translated yet). */
+  /**
+   * Translate what isn't translated yet of the clip's padded segment (or the clip itself when it reaches past the
+   * segment) into <jobDir>/words.en.json. Whole transcript phrases only, so neighbouring clips share lines.
+   */
   private async translateFor(job: JobState, c: ClipState) {
-    if (!this.needsTranslation(job) || !c.segment) return;
-    const range = { start: c.segment.start, end: c.segment.end };
-    if ((job.translated ?? []).some((r) => r.start <= range.start + 0.01 && r.end >= range.end - 0.01)) {
+    if (!this.needsTranslation(job)) return;
+    const seg = c.segment?.status === "done" ? c.segment : undefined;
+    const range = { start: Math.min(seg?.start ?? c.start, c.start), end: Math.max(seg?.end ?? c.end, c.end) };
+    if (covers(job.translated ?? [], range)) {
       c.captionsTranslated = true;
       return;
     }
     const { agent, model } = await this.ai(job);
     try {
-      const add = await translateRange(await this.getWords(job), range, job.sourceLang, { agent, model });
-      // two segments translate in parallel: merge into the in-memory copy with no await in between, then
-      // queue the file write so a slower earlier write can't land last with stale content
-      const merged = mergeWords(await this.getCaptionWords(job), add, range);
+      const { todo, nextStart } = phrasesToTranslate(await this.getWords(job), range, job.translated ?? []);
+      const add = await translatePhrases(todo, nextStart, job.sourceLang, { agent, model });
+      const spans = todo.map((p) => ({ start: p.start, end: p.end }));
+      // merge into the in-memory copy with no await in between, then queue the file write
+      await this.getCaptionWords(job); // loaded once; read the live copy below, not a snapshot from before an await
+      const merged = mergeWords(this.captionWords.get(job.id) ?? [], add, spans);
       this.captionWords.set(job.id, merged);
-      job.translated = [...(job.translated ?? []), range];
+      job.translated = coalesce([...(job.translated ?? []), range, ...spans]);
       const file = path.join(OUTPUT_ROOT, job.dir, "words.en.json");
       this.enWrites = this.enWrites.then(() => writeFile(file, JSON.stringify(this.captionWords.get(job.id) ?? []))).catch(() => {});
       await this.enWrites;
@@ -669,14 +697,22 @@ class JobManager extends EventEmitter {
     return c;
   }
 
+  /** Replace only works on a pick with no render (none, or a failed one) while the job isn't re-picking. */
+  private assertReplaceable(job: JobState, n: number) {
+    const c = job.clips.find((x) => x.n === n);
+    const no = (msg: string) => Object.assign(new Error(msg), { status: 409 });
+    if (!c) throw no("This clip was removed.");
+    if (job.status === "analyzing" || job.status === "preparing") throw no("Wait for the picks to finish");
+    if (c.render.status !== "none" && c.render.status !== "error") throw no("This clip is rendered or queued to render. Remove it instead.");
+  }
+
   /** Swap one pick for a new moment, steering the picker away from `reason`. */
   async replaceClip(id: string, n: number, reason?: string) {
     const job = this.jobs.get(id);
     if (!job) throw new Error("No such job");
     const c = job.clips.find((x) => x.n === n);
     if (!c) throw new Error("No such clip");
-    if (c.render.status === "rendering" || c.render.status === "done") throw Object.assign(new Error("This clip is rendered. Remove it instead."), { status: 409 });
-    if (job.status === "analyzing" || job.status === "preparing") throw Object.assign(new Error("Wait for the picks to finish"), { status: 409 });
+    this.assertReplaceable(job, n);
     const words = await this.getWords(job);
     const meta = await this.getMeta(job);
     const { agent, model } = await this.ai(job);
@@ -710,6 +746,8 @@ class JobManager extends EventEmitter {
     } catch (e) {
       this.log(job, "pick", `review skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // the AI took a while: the clip may have been queued to render, removed, or re-picked meanwhile
+    this.assertReplaceable(job, n);
     job.clips = job.clips.map((x) => (x.n === n ? next : x));
     this.log(job, "pick", `clip ${n} replaced: ${next.title}`);
     await this.update(job);
@@ -809,7 +847,7 @@ class JobManager extends EventEmitter {
   private async renderOne(job: JobState, c: ClipState) {
     if (c.render.status !== "queued") return;
     const jobDir = path.join(OUTPUT_ROOT, job.dir);
-    const words = c.captionsTranslated === true ? await this.getCaptionWords(job) : await this.getWords(job);
+    const words = await this.captionWordsFor(job, c);
     const t = await loadTimings();
     const len = c.end - c.start;
     c.render = { status: "rendering", progress: 0, startedAt: Date.now(), remaining: Math.round(len * t.renderSecPerSec) };

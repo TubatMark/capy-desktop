@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyTranslations, mergeWords, splitPhrases, spreadWords } from "../src/translate";
+import { applyTranslations, coalesce, covers, mergeWords, phrasesToTranslate, splitPhrases, spreadWords } from "../src/translate";
 
 const w = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -50,7 +50,41 @@ describe("applyTranslations", () => {
 
 describe("mergeWords", () => {
   it("replaces words inside the range and keeps the rest sorted", () => {
-    const out = mergeWords([w("a", 0, 1), w("b", 5, 6), w("c", 20, 21)], [w("B", 5, 5.5), w("B2", 5.5, 6)], { start: 4, end: 10 });
+    const out = mergeWords([w("a", 0, 1), w("b", 5, 6), w("c", 20, 21)], [w("B", 5, 5.5), w("B2", 5.5, 6)], [{ start: 4, end: 10 }]);
     expect(out.map((x) => x.text)).toEqual(["a", "B", "B2", "c"]);
+  });
+});
+
+describe("phrase-aligned ranges", () => {
+  // "Eu pulei do trem." runs 147–150.4 and straddles the start of the range [150, 210]
+  const words = [w("Ela", 140, 140.5), w("riu.", 140.5, 141), w("Eu", 147, 147.5), w("pulei", 147.5, 148), w("do", 148, 149), w("trem.", 149.2, 150.4), w("Doeu.", 153, 153.5)];
+  it("translates whole phrases that overlap the range, never a fragment", () => {
+    const { todo } = phrasesToTranslate(words, { start: 150, end: 210 }, []);
+    expect(todo.map((p) => p.text)).toEqual(["Eu pulei do trem.", "Doeu."]);
+    expect(todo[0]!.start).toBe(147);
+  });
+  it("skips phrases already translated", () => {
+    const { todo } = phrasesToTranslate(words, { start: 140, end: 160 }, [{ start: 140, end: 150.4 }]);
+    expect(todo.map((p) => p.text)).toEqual(["Doeu."]);
+  });
+  it("caps a stretched last phrase at the next phrase in the whole transcript", () => {
+    const tight = [w("Oi.", 159.9, 160), w("Tchau.", 160.2, 160.6)];
+    const { todo, nextStart } = phrasesToTranslate(tight, { start: 150, end: 160 }, []);
+    expect(todo.map((p) => p.text)).toEqual(["Oi."]);
+    const out = applyTranslations(todo, [{ i: todo[0]!.i, en: "Hi there my friend" }], nextStart);
+    expect(out.at(-1)!.end).toBeLessThanOrEqual(160.2);
+  });
+});
+
+describe("coalesce / covers", () => {
+  it("merges overlapping and touching ranges", () => {
+    expect(coalesce([{ start: 5, end: 9 }, { start: 0, end: 3 }, { start: 3, end: 6 }, { start: 20, end: 21 }])).toEqual([
+      { start: 0, end: 9 },
+      { start: 20, end: 21 },
+    ]);
+  });
+  it("covers needs one merged range to contain the span", () => {
+    expect(covers([{ start: 0, end: 5 }, { start: 5, end: 10 }], { start: 2, end: 8 })).toBe(true);
+    expect(covers([{ start: 0, end: 5 }], { start: 2, end: 8 })).toBe(false);
   });
 });

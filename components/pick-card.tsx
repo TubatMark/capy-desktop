@@ -75,7 +75,7 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
         </div>
       </Link>
 
-      {clip.render.status !== "done" && clip.render.status !== "rendering" && (
+      {(clip.render.status === "none" || clip.render.status === "error") && (
         <div className="absolute right-2 top-10 z-10 flex flex-col items-end gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
           <ReplacePopover jobId={jobId} clip={clip} />
           {clip.captionsTranslated === "error" && <RetryTranslation jobId={jobId} n={clip.n} />}
