@@ -31,6 +31,9 @@ vi.mock("../src/pipeline", async (orig) => ({
     return f;
   },
   thumbCandidates: async () => [],
+  stageMeta: async () => {
+    throw new Error("offline in tests");
+  },
   stageSegment: async (_u: string, jobDir: string, n: number, c: { start: number; end: number }) => ({ start: c.start - 15, end: c.end + 15, file: path.join(jobDir, `seg${n}.mp4`), thumb: path.join(jobDir, `seg${n}.jpg`) }),
 }));
 
@@ -168,6 +171,12 @@ describe("automation jobs", () => {
     expect(reviewContent).toHaveBeenCalledTimes(1);
     expect(reviewContent.mock.calls[0]![0]).toMatchObject({ clipTitle: "t1", transcript: expect.stringContaining("Olha") });
     expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "ok" });
+  });
+  it("a new video created by automation carries the marker (and a failed analyze is recorded)", async () => {
+    watching("newvideo001");
+    const job = await jobs().create("https://www.youtube.com/watch?v=newvideo001", {}, { automation: { channelId: "UC1", channelName: "Creator" } });
+    expect(job.automation).toEqual({ channelId: "UC1", channelName: "Creator" });
+    await vi.waitFor(() => expect(watch().get().channels[0]!.history[0]).toMatchObject({ status: "error", error: "offline in tests" }), { timeout: 5000 });
   });
   it("an automation job whose picks all failed review is recorded as an error, nothing rendered", async () => {
     const job = await seedJob([clip(1, 100, 140, { selected: false })], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });

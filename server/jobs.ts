@@ -360,6 +360,7 @@ class JobManager extends EventEmitter {
       clips: [],
       log: [],
       dir: videoId, // replaced with the slug folder once we know the title
+      ...(extra.automation ? { automation: extra.automation } : {}),
     };
     this.jobs.set(job.id, job);
     void this.runAnalyze(job, { repick: false });
