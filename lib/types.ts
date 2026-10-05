@@ -8,6 +8,68 @@ export type Audience = "original" | "en-us";
 export type Platform = "youtube" | "instagram" | "tiktok";
 export const PLATFORMS: Platform[] = ["youtube", "instagram", "tiktok"];
 
+export type QueueStatus = "review" | "scheduled" | "posting" | "posted" | "needs_action" | "failed" | "rejected";
+
+/** Text sent with a post; YouTube uses title/description/tags, Instagram and TikTok use caption. */
+export interface PostText {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  caption?: string;
+}
+
+/** One clip going to one platform (server/queue.ts owns these). */
+export interface QueueEntry {
+  /** `${jobId}:${n}:${platform}` */
+  key: string;
+  jobId: string;
+  n: number;
+  platform: Platform;
+  status: QueueStatus;
+  clipTitle: string;
+  videoTitle?: string;
+  videoUrl?: string;
+  thumbUrl?: string;
+  thumbAt?: number;
+  /** Unix ms. */
+  slotAt?: number;
+  text: PostText;
+  attempts: number;
+  nextTryAt?: number;
+  /** Waiting on a reconnect of this platform's account. */
+  authBlocked?: boolean;
+  result?: { id?: string; url?: string; note?: string };
+  error?: string;
+  history: { t: number; msg: string }[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A platform account as the browser sees it (no tokens, secret redacted). */
+export interface AccountPublic {
+  platform: Platform;
+  configured: boolean;
+  connected: boolean;
+  needsReconnect?: boolean;
+  account?: { id: string; name: string; avatar?: string };
+  autoPost: boolean;
+  /** TikTok: send to inbox (works before the audit) or post directly. */
+  mode?: "inbox" | "direct";
+  clientId?: string;
+  /** "••••abcd" */
+  clientSecret?: string;
+  /** Instagram: business accounts to pick from when more than one Page has one. */
+  choices?: { id: string; name: string }[];
+  igUserId?: string;
+}
+
+export interface QueueSummary {
+  review: number;
+  nextPost?: { at: number; platforms: Platform[] };
+  /** scheduled + posting */
+  activeCount: number;
+}
+
 export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
 export type Stage = "meta" | "captions" | "pick" | "segments" | "done";
 
@@ -95,7 +157,8 @@ export interface JobSettings {
   browser?: string;
   lang?: string;
   /** Who the clips are for; unset at create time = the app default (Settings). */
-  audience?: Audience;
+  audience?: Audience;  /** Queue rendered clips for review before posting (default true). */
+  autoPost?: boolean;
 }
 
 export interface LogLine {
@@ -196,7 +259,10 @@ export interface AppSettings {
   /** Unix ms of the last completed setup check. */
   checkedAt?: number;
   /** Default audience for new videos (en-us unless set). */
-  audience?: Audience;
+  audience?: Audience;  /** Audience time zone for posting slots (an AUDIENCES id from lib/post-time.ts, default us-east). */
+  postingAudience?: string;
+  /** Stop the poster without touching the queue. */
+  postingPaused?: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = { agent: "claude", models: {}, claudeAuth: "subscription" };
