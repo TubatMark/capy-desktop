@@ -10,6 +10,9 @@ describe("channelVideosUrl", () => {
     ["https://www.youtube.com/c/SomeName/featured", "https://www.youtube.com/c/SomeName/videos"],
     ["https://www.youtube.com/user/oldname", "https://www.youtube.com/user/oldname/videos"],
     ["UC0f866RMRdL5mSVnipiOHxg", "https://www.youtube.com/channel/UC0f866RMRdL5mSVnipiOHxg/videos"],
+    ["youtube.com/@canalgnt", "https://www.youtube.com/@canalgnt/videos"],
+    ["www.youtube.com/@canalgnt/videos", "https://www.youtube.com/@canalgnt/videos"],
+    ["m.youtube.com/@canalgnt", "https://www.youtube.com/@canalgnt/videos"],
   ])("%s", (input, want) => expect(channelVideosUrl(input)).toBe(want));
   it("returns null for video links and junk (those are resolved through the video's channel)", () => {
     expect(channelVideosUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBeNull();

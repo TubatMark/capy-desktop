@@ -206,3 +206,69 @@ describe("automation jobs", () => {
     expect(reviewContent).not.toHaveBeenCalled();
   });
 });
+
+describe("automation fixes", () => {
+  const original = { count: 3, minSec: 20, maxSec: 60, layout: "center" as const, style: "bold" as const, captions: true, hook: true, maxRes: 1080, audience: "original" as const };
+  const auto = { channelId: "UC1", channelName: "Creator" };
+  const watching = (jobId: string) =>
+    watch().mutate((f) => ({
+      ...f,
+      channels: [{ id: "UC1", name: "Creator", url: "u", enabled: true, addedAt: 0, seen: [], pending: [], history: [{ videoId: jobId, title: "v", at: Date.now(), jobId, status: "processing" as const }], settings: { clips: 3, minVideoSec: 240, perDay: 2 } }],
+    }));
+  const history = () => watch().get().channels[0]!.history[0]!;
+
+  it("after its renders finish, the job is no longer an automation job (a later re-pick by the user doesn't auto-render)", async () => {
+    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
+    expect(job.automation).toBeUndefined();
+  });
+  it("with no posting account connected, the history says the clips are not in Queue", async () => {
+    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
+    expect(history().note).toMatch(/no posting account/i);
+  });
+  it("automation reaching a video the user already clipped keeps its settings and only renders what isn't rendered", async () => {
+    const job = await seedJob([clip(1, 100, 140, { render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" } }), clip(2, 200, 240)], { settings: { ...original, count: 6 } });
+    watching(job.id);
+    await jobs().create(job.url, { count: 3, audience: "en-us" }, { automation: auto });
+    await vi.waitFor(() => expect(job.clips[1]!.render.status).toBe("done"), { timeout: 5000 });
+    expect(job.settings).toMatchObject({ count: 6, audience: "original" });
+    expect(job.clips[0]!.render.file).toBe("/x.mp4"); // the approved render is untouched
+    expect(reviewContent).toHaveBeenCalledTimes(1);
+  });
+  it("...and when everything is already rendered it just records that", async () => {
+    const job = await seedJob([clip(1, 100, 140, { render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" } })], { settings: original });
+    watching(job.id);
+    await jobs().create(job.url, {}, { automation: auto });
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
+    expect(reviewContent).not.toHaveBeenCalled();
+  });
+  it("picks without footage are reported as such, not as failed review", async () => {
+    const job = await seedJob([clip(1, 100, 140, { segment: undefined })], { automation: auto, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    expect(history()).toMatchObject({ status: "error", error: expect.stringMatching(/footage/i) });
+  });
+  it("after a restart, an automation video that was mid-way is resumed (or recorded) instead of blocking the line", async () => {
+    const ready = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    watching(ready.id);
+    await jobs().resumeAutomation();
+    await vi.waitFor(() => expect(ready.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    const broken = await seedJob([], { automation: auto, settings: original, status: "error", error: "Interrupted. Run it again." });
+    watching(broken.id);
+    await jobs().resumeAutomation();
+    expect(history()).toMatchObject({ status: "error", error: expect.stringMatching(/interrupted/i) });
+  });
+  it("a content review that throws doesn't fail the render", async () => {
+    reviewContent.mockRejectedValue(new Error("boom"));
+    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "caution" });
+  });
+});

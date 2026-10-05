@@ -24,6 +24,7 @@ const LABEL: Record<QueueEntry["status"], string> = {
 export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; review?: ContentReview }) {
   const { data, refresh } = useQueue();
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const mine = data?.entries.filter((e) => e.jobId === jobId && e.n === n && e.status !== "rejected") ?? [];
   if (!data || mine.length === 0)
     return (
@@ -57,13 +58,20 @@ export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; re
               size="sm"
               disabled={busy !== null}
               onClick={async () => {
+                const blocked = aiReview?.verdict === "block";
+                if (blocked && !window.confirm("The AI reviewer flagged this clip as not safe to post as is. Post it anyway?")) return;
                 setBusy("approve");
-                await api("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId, n }) }).catch(() => {});
+                setErr(null);
+                try {
+                  await api("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId, n, force: blocked }) });
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : String(e));
+                }
                 setBusy(null);
                 void refresh();
               }}
             >
-              {busy === "approve" ? <Loader2 className="animate-spin" /> : <Check />} Approve
+              {busy === "approve" ? <Loader2 className="animate-spin" /> : <Check />} {aiReview?.verdict === "block" ? "Post anyway…" : "Approve"}
             </Button>
             <Button
               size="sm"
@@ -83,6 +91,7 @@ export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; re
       ) : (
         slot && <p className="font-mono text-lg tabular-nums">{fmtSlot(slot, tz)}</p>
       )}
+      {err && <p className="text-sm text-red-600">{err}</p>}
       <ul className="space-y-1 text-sm">
         {mine.map((e) => (
           <li key={e.key} className="flex flex-wrap items-center gap-2">

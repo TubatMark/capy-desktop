@@ -9,7 +9,7 @@ import { Select } from "@/components/ui/select";
 import { api } from "@/hooks/use-job";
 import type { WatchedChannel, WatchFile } from "@/lib/types";
 
-type Data = WatchFile & { checking: boolean };
+type Data = WatchFile & { checking: boolean; postingReady: boolean };
 
 const ago = (t?: number) => {
   if (!t) return "never";
@@ -84,11 +84,20 @@ export function AutomationView() {
         {err && <p className="text-sm text-red-600">{err}</p>}
       </form>
 
+      {data && !data.postingReady && (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900">
+          No posting account is connected, so automation&apos;s clips stay on each video&apos;s page instead of waiting in Queue.{" "}
+          <Link href="/settings#accounts" className="underline underline-offset-2">
+            Connect an account
+          </Link>
+        </p>
+      )}
+
       {data && (
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">
-              Watching {data.channels.length} creator{data.channels.length === 1 ? "" : "s"}
+              Watching {data.channels.filter((c) => c.enabled).length} creator{data.channels.filter((c) => c.enabled).length === 1 ? "" : "s"}
             </h2>
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span>Check every</span>
@@ -152,8 +161,15 @@ export function AutomationView() {
 
 function ChannelCard({ c, onChange }: { c: WatchedChannel; onChange: () => Promise<void> }) {
   const [s, setS] = useState(c.settings);
+  const [err, setErr] = useState<string | null>(null);
   const patch = async (body: Record<string, unknown>) => {
-    await api(`/api/automation/channels/${c.id}`, { method: "PATCH", body: JSON.stringify(body) }).catch(() => {});
+    setErr(null);
+    try {
+      await api(`/api/automation/channels/${c.id}`, { method: "PATCH", body: JSON.stringify(body) });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setS(c.settings); // show what is actually stored
+    }
     await onChange();
   };
   const setting = (k: keyof WatchedChannel["settings"], v: number | string | undefined) => {
@@ -191,6 +207,7 @@ function ChannelCard({ c, onChange }: { c: WatchedChannel; onChange: () => Promi
           <Trash2 />
         </Button>
       </div>
+      {err && <p className="text-xs text-red-700">{err}</p>}
       {c.lastError && (
         <p className="flex items-center gap-1.5 text-xs text-red-700">
           <AlertTriangle className="size-3.5" /> {c.lastError}
@@ -247,7 +264,7 @@ function ChannelCard({ c, onChange }: { c: WatchedChannel; onChange: () => Promi
                 {h.title}
               </Link>
               <span className="text-xs text-muted-foreground">
-                {h.status === "processing" ? "clipping…" : h.status === "rendered" ? "clips in Queue" : h.error}
+                {h.status === "processing" ? "clipping…" : h.status === "rendered" ? (h.note ?? "clips in Queue") : h.error}
               </span>
             </li>
           ))}

@@ -28,7 +28,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
     setBusy("approve");
     setErr(null);
     try {
-      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId: first.jobId, n: first.n, platforms: chosen }) });
+      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId: first.jobId, n: first.n, platforms: chosen, force: aiReview?.verdict === "block" }) });
       const at = r.scheduled[0]?.slotAt;
       onDone(at ? `"${first.clipTitle}" scheduled for ${fmtSlot(at, tz)}` : "No free slot in the next 14 days");
     } catch (e) {
@@ -70,7 +70,8 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
           />
         )}
         {entries.map((e) => (
-          <PlatformText key={e.key} entry={e} enabled={on[e.platform] ?? false} onToggle={(v) => setOn((s) => ({ ...s, [e.platform]: v }))} />
+          // remount when the entry changes on the server (e.g. "Use it" on the AI title) so the fields show it
+          <PlatformText key={`${e.key}:${e.updatedAt}`} entry={e} enabled={on[e.platform] ?? false} onToggle={(v) => setOn((s) => ({ ...s, [e.platform]: v }))} />
         ))}
         {err && <p className="text-sm text-red-600">{err}</p>}
         <div className="flex flex-wrap items-center gap-2">

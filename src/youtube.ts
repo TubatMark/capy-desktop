@@ -183,7 +183,8 @@ export interface Upload {
 
 /** The uploads tab for a channel URL, @handle or channel id; null for anything else (video links included). */
 export function channelVideosUrl(input: string): string | null {
-  const s = input.trim();
+  let s = input.trim();
+  if (/^(www\.|m\.)?youtube\.com\//i.test(s)) s = `https://${s}`; // pasted without the scheme
   if (/^@[\w.-]+$/.test(s)) return `https://www.youtube.com/${s}/videos`;
   if (/^UC[\w-]{22}$/.test(s)) return `https://www.youtube.com/channel/${s}/videos`;
   let u: URL;
@@ -224,8 +225,10 @@ export async function resolveChannel(input: string, o: YtOpts = {}): Promise<Cha
   let url = channelVideosUrl(input);
   if (!url) {
     // a video link: find its channel
-    if (!videoIdFromUrl(input.trim())) throw new Error("Paste a YouTube channel link, an @handle, or a video from that channel.");
-    const meta = JSON.parse((await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", input.trim()])).stdout);
+    const vid = videoIdFromUrl(input.trim());
+    if (!vid) throw new Error("Paste a YouTube channel link, an @handle, or a video from that channel.");
+    // a canonical URL, never the raw input (an id starting with "-" would read as an option)
+    const meta = JSON.parse((await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", `https://www.youtube.com/watch?v=${vid}`])).stdout);
     if (!meta.channel_id) throw new Error("Couldn't find the channel of that video.");
     url = `https://www.youtube.com/channel/${meta.channel_id}/videos`;
   }

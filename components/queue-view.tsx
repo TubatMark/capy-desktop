@@ -74,8 +74,15 @@ export function QueueView() {
                   size="sm"
                   variant="outline"
                   onClick={async () => {
-                    const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId }) });
-                    done(`${new Set(r.scheduled.map((e) => e.n)).size} clips scheduled`);
+                    const all = data.entries.filter((e) => e.jobId === jobId && e.status === "review");
+                    const blocked = new Set(all.filter((e) => e.aiReview?.verdict === "block").map((e) => e.n)).size;
+                    if (blocked && !window.confirm(`The AI reviewer blocked ${blocked} of these clips. Approve all of them anyway?`)) return;
+                    try {
+                      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId, force: blocked > 0 }) });
+                      done(`${new Set(r.scheduled.map((e) => e.n)).size} clips scheduled`);
+                    } catch (e) {
+                      done(e instanceof Error ? e.message : String(e));
+                    }
                   }}
                 >
                   Approve all {firsts.length} from this video

@@ -118,3 +118,13 @@ describe("choosing the Instagram account", () => {
     expect(queue().list()[0]).toMatchObject({ status: "scheduled", authBlocked: false });
   });
 });
+
+describe("approving a clip the AI reviewer blocked", () => {
+  it("needs force", async () => {
+    queue().mutate((e) => upsertForRender(e, { jobId: "B", n: 1, start: 0, end: 30, clipTitle: "c", aiReview: { verdict: "block", summary: "policy", issues: [], at: 1 } }, ["youtube"], new Date()));
+    const r = await approveRoute(req("/api/queue/approve", "POST", { jobId: "B" }));
+    expect(r.status).toBe(409);
+    expect((await r.json()).blocked).toBe(true);
+    expect((await approveRoute(req("/api/queue/approve", "POST", { jobId: "B", force: true }))).status).toBe(200);
+  });
+});

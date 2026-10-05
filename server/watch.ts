@@ -94,10 +94,10 @@ export function takeDue(file: WatchFile, now: Date): { file: WatchFile; due?: { 
 }
 
 /** Update the history entry of an automation job (jobs use the video id as their id). */
-export function markHistory(file: WatchFile, jobId: string, status: "processing" | "rendered" | "error", error?: string): WatchFile {
+export function markHistory(file: WatchFile, jobId: string, status: "processing" | "rendered" | "error", error?: string, note?: string): WatchFile {
   return {
     ...file,
-    channels: file.channels.map((c) => (c.history.some((h) => h.jobId === jobId) ? { ...c, history: c.history.map((h) => (h.jobId === jobId ? { ...h, status, error } : h)) } : c)),
+    channels: file.channels.map((c) => (c.history.some((h) => h.jobId === jobId) ? { ...c, history: c.history.map((h) => (h.jobId === jobId ? { ...h, status, error, note } : h)) } : c)),
   };
 }
 

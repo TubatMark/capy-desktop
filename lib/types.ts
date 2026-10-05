@@ -92,7 +92,7 @@ export interface WatchedChannel {
   /** New uploads waiting for room under the daily caps, oldest first. */
   pending: { id: string; title: string; duration?: number; foundAt: number }[];
   /** Videos sent through the pipeline, newest first. */
-  history: { videoId: string; title: string; at: number; jobId: string; status: "processing" | "rendered" | "error"; error?: string }[];
+  history: { videoId: string; title: string; at: number; jobId: string; status: "processing" | "rendered" | "error"; error?: string; note?: string }[];
   settings: { clips: number; minVideoSec: number; perDay: number; audience?: Audience };
 }
 

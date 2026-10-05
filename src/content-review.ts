@@ -80,6 +80,8 @@ export async function reviewContent(i: ContentInput, o: { agent: AgentId; model?
       model: o.model,
       maxTurns: 2,
       effort: "low",
+      // a hung call must not hold up the render line
+      timeoutMs: 120_000,
       system: "You review short-form video posts for platform policy and honesty before a human editor approves them. Answer only with the requested JSON.",
       schema,
     });

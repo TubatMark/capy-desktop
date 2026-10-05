@@ -19,7 +19,7 @@ import { onRendered, startPoster } from "./poster";
 import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
 import { startWatcher } from "./watcher";
-import { reviewContent } from "../src/content-review";
+import { reviewContent, reviewUnavailable } from "../src/content-review";
 import { cleanCaptionWords } from "../src/ass";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
@@ -76,6 +76,7 @@ class JobManager extends EventEmitter {
       this.loaded = true;
       startPoster();
       startWatcher();
+      void this.resumeAutomation().catch((e) => console.error("[automation]", e));
     }));
   }
 
@@ -338,11 +339,18 @@ class JobManager extends EventEmitter {
     const settings: JobSettings = { ...DEFAULT_SETTINGS, ...(existing?.settings ?? {}), ...settingsIn };
     settings.audience ??= effective().audience;
     if (existing) {
-      if (extra.automation) existing.automation = extra.automation;
+      if (extra.automation) {
+        // automation reached a video that is already here: keep the user's settings and picks, render only what isn't
+        existing.automation = extra.automation;
+        if (existing.status === "analyzing" || existing.status === "preparing") return existing; // onReady runs when it's done
+        if (existing.clips.length) {
+          await this.update(existing);
+          void this.onReady(existing).catch((e) => this.log(existing, "render", `automation: ${e instanceof Error ? e.message : String(e)}`));
+          return existing;
+        }
+      }
       if (existing.status === "analyzing" || existing.status === "preparing") return existing;
       existing.settings = settings;
-      // automation found a video that was already clipped here: render what's ready
-      if (extra.automation && existing.status === "ready" && existing.clips.length) void this.onReady(existing);
       if (existing.status === "error" || existing.clips.length === 0) {
         void this.runAnalyze(existing, { repick: true });
       }
@@ -501,7 +509,7 @@ class JobManager extends EventEmitter {
       job.tookMs = Date.now() - job.startedAt!;
       this.log(job, "done", `ready in ${fmtDur(job.tookMs)} — ${job.clips.length} picks, footage downloaded`);
       await this.update(job);
-      void this.onReady(job);
+      void this.onReady(job).catch((e) => this.log(job, "render", `automation: ${e instanceof Error ? e.message : String(e)}`));
     } catch (e) {
       if (isCancelled(e)) {
         // footage that never finished is marked so the clip page says so instead of spinning forever
@@ -509,11 +517,12 @@ class JobManager extends EventEmitter {
         job.status = job.clips.length ? "ready" : "error";
         job.error = job.clips.length ? undefined : "Cancelled";
         this.log(job, "error", `cancelled during ${job.stage}`);
+        if (job.automation) this.finishAutomation(job, "error", "Cancelled");
       } else {
         job.status = "error";
         job.error = e instanceof Error ? e.message : String(e);
         this.log(job, "error", job.error);
-        if (job.automation) this.automationStatus(job, "error", job.error);
+        if (job.automation) this.finishAutomation(job, "error", job.error);
       }
       await this.update(job);
     } finally {
@@ -895,7 +904,7 @@ class JobManager extends EventEmitter {
       // the AI content reviewer looks at every clip that is about to be posted (and everything automation makes)
       const queueing = job.settings.autoPost !== false && publicAccounts().some((a) => a.connected && a.autoPost);
       if (job.automation || queueing) {
-        c.contentReview = await this.contentReview(job, c, words);
+        c.contentReview = await this.contentReview(job, c, words).catch((e) => reviewUnavailable(e instanceof Error ? e.message : String(e), Date.now()));
         this.log(job, "render", `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`);
       }
       try {
@@ -913,7 +922,7 @@ class JobManager extends EventEmitter {
       // automation: once nothing of this job is waiting to render, record how it went
       if (job.automation && !job.clips.some((x) => x.render.status === "queued" || x.render.status === "rendering")) {
         const done = job.clips.filter((x) => x.render.status === "done").length;
-        this.automationStatus(job, done ? "rendered" : "error", done ? undefined : "Every render failed");
+        this.finishAutomation(job, done ? "rendered" : "error", done ? undefined : "Every render failed");
       }
       await this.update(job);
     }
@@ -921,25 +930,50 @@ class JobManager extends EventEmitter {
 
   // ---------- automation ----------
 
-  /** The picks are ready: automation jobs render the ones the reviewer passed (the selected ones). */
+  /** The picks are ready: automation jobs render the ones the reviewer passed (the selected ones) not yet rendered. */
   async onReady(job: JobState) {
     if (!job.automation) return;
-    const ready = job.clips.filter((c) => c.selected && c.segment?.status === "done");
-    if (!ready.length) {
+    const picked = job.clips.filter((c) => c.selected);
+    if (!picked.length) {
       this.log(job, "render", "automation: no clip passed review, nothing to render");
-      this.automationStatus(job, "error", "No clip passed review");
-      return;
+      return this.finishAutomation(job, "error", "No clip passed review");
     }
-    this.log(job, "render", `automation: rendering ${ready.length} clip${ready.length === 1 ? "" : "s"}`);
-    await this.render(job.id, ready.map((c) => c.n));
+    const busy = (c: ClipState) => c.render.status === "queued" || c.render.status === "rendering";
+    const todo = picked.filter((c) => c.segment?.status === "done" && c.render.status !== "done" && !busy(c));
+    if (!todo.length) {
+      if (picked.some(busy)) return; // renders under way finish the job's automation
+      if (picked.some((c) => c.render.status === "done")) return this.finishAutomation(job, "rendered");
+      return this.finishAutomation(job, "error", "The picked clips have no footage (download failed or was cancelled)");
+    }
+    this.log(job, "render", `automation: rendering ${todo.length} clip${todo.length === 1 ? "" : "s"}`);
+    await this.render(job.id, todo.map((c) => c.n));
   }
 
-  private automationStatus(job: JobState, status: "processing" | "rendered" | "error", error?: string) {
+  /** After a restart: automation videos that were mid-way are picked up again (or recorded) instead of blocking the line. */
+  async resumeAutomation() {
+    const processing = new Set(
+      watch()
+        .get()
+        .channels.flatMap((c) => c.history.filter((h) => h.status === "processing").map((h) => h.jobId)),
+    );
+    for (const job of this.jobs.values()) {
+      if (!job.automation || !processing.has(job.id) || job.status === "analyzing" || job.status === "preparing") continue;
+      if (job.status === "ready" && job.clips.length) await this.onReady(job);
+      else this.finishAutomation(job, "error", "Interrupted (capy was closed or the run was cancelled)");
+    }
+  }
+
+  /** Record how an automation video went, and stop treating the job as automation (later re-picks are the user's). */
+  private finishAutomation(job: JobState, status: "rendered" | "error", error?: string) {
+    const toQueue = job.settings.autoPost !== false && publicAccounts().some((a) => a.connected && a.autoPost);
+    const note = status === "rendered" && !toQueue ? "No posting account connected: the clips are on the video page, not in Queue" : undefined;
     try {
-      watch().mutate((f) => markHistory(f, job.id, status, error));
+      watch().mutate((f) => markHistory(f, job.id, status, error, note));
     } catch (e) {
       this.log(job, "render", `automation history: ${e instanceof Error ? e.message : String(e)}`);
     }
+    job.automation = undefined;
+    void this.update(job);
   }
 
   /** The AI content reviewer on a finished clip: what viewers read, what it's posted with, and the original words. */

@@ -12,6 +12,7 @@ const TONE: Record<ContentReview["verdict"], { label: string; cls: string }> = {
 /** The AI content reviewer's verdict on a finished clip; `onUseTitle` offers its suggested YouTube title. */
 export function AiReview({ review, onUseTitle }: { review: ContentReview; onUseTitle?: (title: string) => Promise<void> }) {
   const [used, setUsed] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const t = TONE[review.verdict];
   return (
     <div className={`space-y-1.5 rounded-lg border px-3 py-2 text-sm ${t.cls}`}>
@@ -36,14 +37,20 @@ export function AiReview({ review, onUseTitle }: { review: ContentReview; onUseT
             className="inline-flex items-center gap-1 rounded border border-current/30 px-1.5 py-0.5 hover:bg-white/40 disabled:opacity-60"
             disabled={used}
             onClick={async () => {
-              await onUseTitle(review.title!);
-              setUsed(true);
+              setErr(null);
+              try {
+                await onUseTitle(review.title!);
+                setUsed(true);
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : String(e));
+              }
             }}
           >
             {used ? <Check className="size-3" /> : null} {used ? "Used" : "Use it"}
           </button>
         </p>
       )}
+      {err && <p className="text-xs text-red-700">{err}</p>}
     </div>
   );
 }
