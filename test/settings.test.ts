@@ -155,3 +155,11 @@ describe("settings", () => {
     expect(process.env.CAPY_USE_API_KEY).toBeUndefined();
   });
 });
+
+describe("audience", () => {
+  it("defaults to en-us and saves original", () => {
+    expect(effective().audience).toBe("en-us");
+    saveSettings({ audience: "original" });
+    expect(effective().audience).toBe("original");
+  });
+});

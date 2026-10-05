@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { AppSettings } from "@/lib/types";
+import type { AppSettings, Audience } from "@/lib/types";
 
 const BROWSERS: { value: string; label: string }[] = [
   { value: "", label: "None — no cookies" },
@@ -23,6 +23,7 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
   const [browser, setBrowser] = useState(initial.browser ?? "");
   const [outputDir, setOutputDir] = useState(initial.outputDir ?? "");
   const [claudeAuth, setClaudeAuth] = useState<AppSettings["claudeAuth"]>(initial.claudeAuth);
+  const [audience, setAudience] = useState<Audience>(initial.audience ?? "en-us");
   /** A new key typed in this session; empty means "keep what is stored". */
   const [apiKey, setApiKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
@@ -33,7 +34,7 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const patch: Partial<AppSettings> = { browser, outputDir: outputDir.trim(), claudeAuth };
+    const patch: Partial<AppSettings> = { browser, outputDir: outputDir.trim(), claudeAuth, audience };
     if (removeKey) patch.apiKey = "";
     else if (apiKey.trim()) patch.apiKey = apiKey.trim();
     try {
@@ -62,6 +63,12 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
           <CardDescription>How yt-dlp talks to YouTube and where the clips land.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <Field label="Audience" hint="English (US) writes titles, hooks and descriptions for American viewers and translates the captions when a video isn't in English. Each video can override this.">
+            <Select value={audience} onChange={(e) => setAudience(e.target.value as Audience)}>
+              <option value="en-us">English (US)</option>
+              <option value="original">Same as the video</option>
+            </Select>
+          </Field>
           <Field label="Browser cookies" hint="Use your browser's YouTube login. Fixes 429 errors and “confirm you're not a bot”.">
             <Select value={browser} onChange={(e) => setBrowser(e.target.value)} aria-label="Browser cookies">
               {BROWSERS.map((b) => (

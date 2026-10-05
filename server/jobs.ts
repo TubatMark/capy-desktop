@@ -268,6 +268,7 @@ class JobManager extends EventEmitter {
     if (!videoId) throw new Error("That doesn't look like a YouTube link.");
     const existing = [...this.jobs.values()].find((j) => j.videoId === videoId);
     const settings: JobSettings = { ...DEFAULT_SETTINGS, ...(existing?.settings ?? {}), ...settingsIn };
+    settings.audience ??= effective().audience;
     if (existing) {
       if (existing.status === "analyzing" || existing.status === "preparing") return existing;
       existing.settings = settings;

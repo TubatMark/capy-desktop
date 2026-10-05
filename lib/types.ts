@@ -88,6 +88,8 @@ export interface JobSettings {
   maxRes: number;
   browser?: string;
   lang?: string;
+  /** Who the clips are for; unset at create time = the app default (Settings). */
+  audience?: Audience;
 }
 
 export interface LogLine {
@@ -121,6 +123,10 @@ export interface JobState {
   log: LogLine[];
   /** Folder under output/, relative. */
   dir: string;
+  /** Spoken language (meta, else the caption track used); undefined = unknown, treated as English. */
+  sourceLang?: string;
+  /** Source-video ranges whose captions are translated into words.en.json. */
+  translated?: { start: number; end: number }[];
 }
 
 export interface Word {
@@ -183,6 +189,8 @@ export interface AppSettings {
   apiKey?: string;
   /** Unix ms of the last completed setup check. */
   checkedAt?: number;
+  /** Default audience for new videos (en-us unless set). */
+  audience?: Audience;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = { agent: "claude", models: {}, claudeAuth: "subscription" };

@@ -87,7 +87,14 @@ export function UrlForm({ large = false }: { large?: boolean }) {
               <option value={1080}>1080p (faster)</option>
             </Select>
           </Field>
-          <Field label="Focus (optional)" className="col-span-2 sm:col-span-3 lg:col-span-6">
+          <Field label="Audience" className="col-span-2 sm:col-span-3 lg:col-span-2">
+            <Select value={s.audience ?? ""} onChange={(e) => setS({ ...s, audience: (e.target.value || undefined) as JobSettings["audience"] })}>
+              <option value="">Default from Settings</option>
+              <option value="en-us">English (US)</option>
+              <option value="original">Same as the video</option>
+            </Select>
+          </Field>
+          <Field label="Focus (optional)" className="col-span-2 sm:col-span-3 lg:col-span-4">
             <Input value={s.focus ?? ""} onChange={(e) => setS({ ...s, focus: e.target.value || undefined })} placeholder='e.g. "every joke that landed" or "the parts about money"' />
           </Field>
         </div>

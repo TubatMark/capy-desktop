@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { AGENT_IDS, DEFAULT_APP_SETTINGS, MODELS, type AgentId, type AppSettings } from "../lib/types";
+import { AGENT_IDS, DEFAULT_APP_SETTINGS, MODELS, type AgentId, type AppSettings, type Audience } from "../lib/types";
 
 /**
  * App-wide settings in <CAPY_DATA_DIR>/settings.json. This module is the only reader/writer.
@@ -103,6 +103,7 @@ function clean(obj: Record<string, unknown>): Partial<AppSettings> {
   if (obj.claudeAuth === "subscription" || obj.claudeAuth === "apiKey") out.claudeAuth = obj.claudeAuth;
   if (typeof obj.apiKey === "string" && obj.apiKey) out.apiKey = obj.apiKey;
   if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt)) out.checkedAt = obj.checkedAt;
+  if (obj.audience === "original" || obj.audience === "en-us") out.audience = obj.audience;
   return out;
 }
 
@@ -175,6 +176,8 @@ export interface EffectiveSettings {
   model: string;
   claudeAuth: AppSettings["claudeAuth"];
   apiKey?: string;
+  /** Default audience for new videos. */
+  audience: Audience;
 }
 
 function env(...names: string[]): string | undefined {
@@ -198,6 +201,7 @@ export function effective(): EffectiveSettings {
     model: s.models?.claude ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
     claudeAuth: s.claudeAuth ?? (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY") ? "apiKey" : "subscription"),
     apiKey: s.apiKey ?? envApiKey(),
+    audience: s.audience ?? "en-us",
   };
 }
 

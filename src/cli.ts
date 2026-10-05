@@ -6,7 +6,9 @@ import { loadDotEnv } from "./env";
 loadDotEnv();
 import { applyToEnv, effective } from "../server/settings";
 import { runChecks } from "../server/doctor";
-import { fetchAudio, fetchCaptions, fetchMeta, fetchSection, videoIdFromUrl } from "./youtube";
+import { fetchAudio, fetchCaptions, fetchMeta, fetchSection, pickCaptionLang, videoIdFromUrl } from "./youtube";
+import { isEnglish } from "./lang";
+import { translateRange } from "./translate";
 import { wordsInRange } from "./captions";
 import { pickClips } from "./pick";
 import { agentSpec } from "./agents";
@@ -15,7 +17,7 @@ import { transcribe } from "./transcribe";
 import { writePublishFiles } from "./pipeline";
 import { fmtTime, log, pad2, pool, slug } from "./util";
 import type { Clip, RenderedClip, VideoMeta, Word } from "./types";
-import { MODELS } from "../lib/types";
+import { MODELS, type Audience } from "../lib/types";
 
 /** Good judgment at a fraction of Opus usage. Override with --model, CAPY_MODEL, or the app's Settings page. */
 const DEFAULT_MODEL = MODELS[0].id;
@@ -37,6 +39,8 @@ Options:
   --no-captions          Skip burned-in captions
   --no-hook              Skip the hook text overlay
   --lang <code>          Caption language to prefer (default: the spoken language)
+  --audience en-us|original  en-us writes text for US viewers and translates captions
+                         of non-English videos (default: Settings, else en-us)
   --agent <id>           AI that picks: claude (default), codex, cursor, gemini,
                          opencode, droid, copilot, qwen, amp (or CAPY_AGENT)
   --model <id>           Model for picking (Claude default: ${DEFAULT_MODEL};
@@ -69,6 +73,7 @@ async function main() {
       "no-captions": { type: "boolean", default: false },
       "no-hook": { type: "boolean", default: false },
       lang: { type: "string" },
+      audience: { type: "string" },
       agent: { type: "string" },
       model: { type: "string" },
       proxy: { type: "string" },
@@ -101,7 +106,9 @@ async function main() {
   const maxRes = int("--max-res", v["max-res"]!, 360, 4320);
   if (!["center", "blur"].includes(v.layout!)) throw new Error(`--layout must be center or blur (got "${v.layout}")`);
   if (!["bold", "clean"].includes(v.style!)) throw new Error(`--style must be bold or clean (got "${v.style}")`);
+  if (v.audience && !["en-us", "original"].includes(v.audience)) throw new Error(`--audience must be en-us or original (got "${v.audience}")`);
   const app = effective(); // default → env → settings.json; flags win
+  const audience: Audience = (v.audience as Audience | undefined) ?? app.audience;
   const agent = agentSpec(v.agent ?? app.agent).id;
   const model = v.model ?? (agent === "claude" ? app.model : app.models[agent]);
 
@@ -185,6 +192,7 @@ async function main() {
       agent,
       model,
       focus: v.focus,
+      audience,
       onRetry: (m) => log("pick", m),
     });
     clips = res.clips;
@@ -201,6 +209,8 @@ async function main() {
   // 4. download sections + 5. render
   const segName = (c: Clip, i: number) => `${pad2(i + 1)}-${Math.round(c.start * 10)}-${Math.round(c.end * 10)}-${maxRes}p.src.mp4`;
   await pruneWork(workDir, new Set(clips.map(segName)));
+  const sourceLang = meta.language ?? pickCaptionLang(meta, v.lang)?.lang;
+  const translate = captions && audience === "en-us" && !isEnglish(sourceLang);
   const enc = await detectEncoder("auto");
   log("render", `encoder: ${enc}, source up to ${maxRes}p, layout: ${v.layout}, style: ${v.style}, ${jobs} parallel`);
   const results = await pool(clips, jobs, async (c, i): Promise<RenderedClip> => {
@@ -214,10 +224,18 @@ async function main() {
     }
     const info = await probeVideo(src);
     log("render", `${n} ${c.title}  (source ${info.width}x${info.height} @ ${Math.round(info.fps)}fps)`);
+    let capWords = words;
+    if (translate) {
+      log("translate", `${n} captions → English`);
+      capWords = await translateRange(words, { start: c.start, end: c.end }, sourceLang, { agent, model }).catch((e) => {
+        log("translate", `${n} not translated: ${e instanceof Error ? e.message : e}`);
+        return words;
+      });
+    }
     await renderClip(
       src,
       out,
-      wordsInRange(words, c.start, c.end),
+      wordsInRange(capWords, c.start, c.end),
       {
         layout: v.layout as "center" | "blur",
         style: v.style!,

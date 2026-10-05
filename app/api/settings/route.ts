@@ -15,6 +15,7 @@ const Patch = z.strictObject({
   claudeAuth: z.enum(["subscription", "apiKey"]).optional(),
   apiKey: z.string().trim().max(512).optional(),
   checkedAt: z.number().int().nonnegative().or(z.literal("")).optional(),
+  audience: z.enum(["original", "en-us"]).optional(),
 });
 
 /** GET = saved settings (API key redacted) + every AI CLI found on this machine (?rescan=1 skips the cache). */
