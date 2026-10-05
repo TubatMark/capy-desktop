@@ -18,6 +18,7 @@ import { boot } from "./boot";
 import { onRendered, startPoster } from "./poster";
 import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
+import { startWatcher } from "./watcher";
 import { reviewContent } from "../src/content-review";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
@@ -73,6 +74,7 @@ class JobManager extends EventEmitter {
     return (this.loading ??= this.load().then(() => {
       this.loaded = true;
       startPoster();
+      startWatcher();
     }));
   }
 
