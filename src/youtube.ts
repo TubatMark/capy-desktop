@@ -162,3 +162,81 @@ export async function fetchSection(
   ]);
   return out;
 }
+
+// ---------- channels (creator automation) ----------
+
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  handle?: string;
+  /** The channel's uploads tab. */
+  url: string;
+}
+export interface Upload {
+  id: string;
+  title: string;
+  /** Seconds; undefined while YouTube doesn't know yet (premieres) or for live streams. */
+  duration?: number;
+  /** Live now or scheduled: nothing to clip yet. */
+  live: boolean;
+}
+
+/** The uploads tab for a channel URL, @handle or channel id; null for anything else (video links included). */
+export function channelVideosUrl(input: string): string | null {
+  const s = input.trim();
+  if (/^@[\w.-]+$/.test(s)) return `https://www.youtube.com/${s}/videos`;
+  if (/^UC[\w-]{22}$/.test(s)) return `https://www.youtube.com/channel/${s}/videos`;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (!/(^|\.)youtube\.com$/.test(u.hostname)) return null;
+  const m = u.pathname.match(/^\/(@[\w.-]+|channel\/UC[\w-]{22}|c\/[^/]+|user\/[^/]+)/);
+  return m ? `https://www.youtube.com/${m[1]}/videos` : null;
+}
+
+type Listing = { channel?: string; uploader?: string; channel_id?: string; uploader_id?: string; entries?: { id: string; title?: string; duration?: number | null; live_status?: string | null }[] };
+
+export function parseChannel(j: Listing): ChannelInfo {
+  const id = String(j.channel_id);
+  const handle = j.uploader_id?.startsWith("@") ? j.uploader_id : undefined;
+  return { id, name: j.channel ?? j.uploader ?? id, handle, url: `https://www.youtube.com/channel/${id}/videos` };
+}
+
+export function parseUploads(j: Listing): Upload[] {
+  return (j.entries ?? [])
+    .filter((e) => e?.id)
+    .map((e) => ({ id: e.id, title: e.title ?? e.id, duration: typeof e.duration === "number" ? e.duration : undefined, live: e.live_status === "is_live" || e.live_status === "is_upcoming" }));
+}
+
+function flatArgs(o: YtOpts): string[] {
+  const a = ["--no-warnings", "--flat-playlist", "-J"];
+  if (o.proxy) a.push("--proxy", o.proxy);
+  if (o.cookies) a.push("--cookies", o.cookies);
+  if (o.cookiesFromBrowser) a.push("--cookies-from-browser", o.cookiesFromBrowser);
+  return a;
+}
+
+/** Who a channel URL, @handle or video link belongs to. */
+export async function resolveChannel(input: string, o: YtOpts = {}): Promise<ChannelInfo> {
+  let url = channelVideosUrl(input);
+  if (!url) {
+    // a video link: find its channel
+    if (!videoIdFromUrl(input.trim())) throw new Error("Paste a YouTube channel link, an @handle, or a video from that channel.");
+    const meta = JSON.parse((await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", input.trim()])).stdout);
+    if (!meta.channel_id) throw new Error("Couldn't find the channel of that video.");
+    url = `https://www.youtube.com/channel/${meta.channel_id}/videos`;
+  }
+  const { stdout } = await run("yt-dlp", [...flatArgs(o), "--playlist-end", "1", url]);
+  const j = JSON.parse(stdout) as Listing;
+  if (!j.channel_id) throw new Error("That doesn't look like a YouTube channel.");
+  return parseChannel(j);
+}
+
+/** The newest `n` uploads of a channel, newest first. */
+export async function listUploads(channelUrl: string, n: number, o: YtOpts = {}): Promise<Upload[]> {
+  const { stdout } = await run("yt-dlp", [...flatArgs(o), "--playlist-end", String(n), channelUrl]);
+  return parseUploads(JSON.parse(stdout) as Listing);
+}
