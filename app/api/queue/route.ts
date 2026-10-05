@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { startPoster } from "@/server/poster";
 import { allocateSlot, audienceTz } from "@/lib/post-time";
 import { publicAccounts } from "@/server/accounts";
 import { queue, summary, taken } from "@/server/queue";
 import { effective } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
+
+// the header badge and the menu-bar icon call these on every page and every minute: make sure posting runs
+startPoster();
 
 /** GET = every queue entry, the summary, and the next free slot for the connected platforms. */
 export async function GET() {

@@ -12,7 +12,9 @@ import { takePosterLock } from "./poster-lock";
 import path from "node:path";
 
 /**
- * Posts due queue entries. Runs inside the app's server (started from instrumentation.ts), so it posts while
+ * Posts due queue entries. Runs inside the app's server (started by the job manager and the queue routes, never from
+ * instrumentation.ts: its file trace isn't covered by outputFileTracingExcludes and pulled the whole project, videos
+ * included, into the packaged app), so it posts while
  * capy is open or sitting in the menu bar. One upload at a time per platform.
  */
 
@@ -137,10 +139,12 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
 /** Start the 30-second loop once per server process. */
 export function startPoster() {
   const s = state();
-  if (s.timer) return;
+  // route modules are also loaded by `next build` workers: never post from a build
+  if (s.timer || process.env.NEXT_PHASE === "phase-production-build") return;
   const run = () => void tick().catch((e) => console.error("[poster]", e));
-  setTimeout(run, 5_000);
+  setTimeout(run, 5_000).unref();
   s.timer = setInterval(run, 30_000);
+  s.timer.unref(); // never the only thing keeping a process alive (tests, CLI)
 }
 
 /** A clip finished rendering: queue it for review on every connected platform with auto-post on. */

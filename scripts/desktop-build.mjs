@@ -32,6 +32,26 @@ fs.cpSync(path.join(root, "public"), path.join(standalone, "public"), { recursiv
 fs.rmSync(path.join(standalone, ".next/static"), { recursive: true, force: true });
 fs.cpSync(path.join(root, ".next/static"), path.join(standalone, ".next/static"), { recursive: true });
 
+// Sanity: nothing from the working folder that isn't app code. A file trace that escapes outputFileTracingExcludes
+// (it happened with instrumentation.ts) copies the whole project, rendered videos and old builds included.
+for (const junk of ["output", "dist", "videos", "test", ".superpowers"]) {
+  if (fs.existsSync(path.join(standalone, junk))) {
+    console.error(`Standalone output contains ${junk}/: a file trace pulled in the whole project. Check outputFileTracingExcludes in next.config.ts.`);
+    process.exit(1);
+  }
+}
+const sizeOf = (p) => {
+  const st = fs.lstatSync(p);
+  if (!st.isDirectory()) return st.size;
+  return fs.readdirSync(p).reduce((n, f) => n + sizeOf(path.join(p, f)), 0);
+};
+const mb = Math.round(sizeOf(standalone) / 1024 ** 2);
+if (mb > 1500) {
+  console.error(`Standalone output is ${mb} MB (limit 1500): something large was traced in.`);
+  process.exit(1);
+}
+console.log(`standalone server: ${mb} MB`);
+
 // Sanity: the Claude Agent SDK is external (serverExternalPackages) and must have been traced in, together with the
 // native `claude` binary it resolves from its sibling package. pnpm lays these out under node_modules/.pnpm/<pkg>@<ver>/.
 // (archiver is bundled into the route chunk, so it needs no node_modules entry.)

@@ -22,6 +22,9 @@ const config: NextConfig = {
   outputFileTracingExcludes: {
     "/*": [
       "output/**",
+      "videos/**",
+      ".superpowers/**",
+      "vitest.config.ts",
       "docs/**",
       "electron/**",
       "dist-electron/**",

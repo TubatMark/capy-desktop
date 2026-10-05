@@ -15,7 +15,7 @@ import { pool } from "../src/util";
 import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../src/exec";
 import type { VideoMeta, Word } from "../src/types";
 import { boot } from "./boot";
-import { onRendered } from "./poster";
+import { onRendered, startPoster } from "./poster";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
 import { loadTimings, learn, type Timings } from "./estimates";
@@ -69,6 +69,7 @@ class JobManager extends EventEmitter {
     if (this.loaded) return Promise.resolve();
     return (this.loading ??= this.load().then(() => {
       this.loaded = true;
+      startPoster();
     }));
   }
 

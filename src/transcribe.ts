@@ -53,7 +53,8 @@ export async function findWhisperModel(explicit?: string): Promise<string | unde
   }
   const found: string[] = [];
   for (const dir of WHISPER_MODEL_DIRS) {
-    const names = await readdir(dir).catch(() => [] as string[]);
+    // user folders outside the app: don't let the file tracer follow this into the project
+    const names = await readdir(/*turbopackIgnore: true*/ dir).catch(() => [] as string[]);
     for (const n of names) found.push(path.join(dir, n));
   }
   return rankGgmlModels(found)[0];

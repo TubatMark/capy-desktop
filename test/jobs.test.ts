@@ -67,6 +67,13 @@ beforeEach(() => {
   translatePhrases.mockImplementation(async (ph: { i: number; start: number; end: number }[]) => enFor(ph));
 });
 
+describe("poster start-up", () => {
+  it("loading the jobs starts the background poster (no instrumentation hook, which traced the whole project)", async () => {
+    await jobs().init();
+    expect(globalThis.__capyPoster?.timer).toBeDefined();
+  });
+});
+
 describe("replaceClip", () => {
   it("refuses clips that are queued or stale (they have, or are about to have, a render)", async () => {
     for (const status of ["queued", "stale"] as const) {
