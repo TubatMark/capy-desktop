@@ -415,7 +415,7 @@ class JobManager extends EventEmitter {
       await this.setStage(job, "pick");
       if (o.repick || job.clips.length === 0) {
         const { agent, model } = await this.ai(job);
-        this.log(job, "pick", `asking ${agentSpec(agent).name}${model ? ` (${model})` : ""} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s)`);
+        this.log(job, "pick", `asking ${agentSpec(agent).name}${model ? ` (${model})` : ""} for ${job.settings.count} clips (${job.settings.minSec}-${job.settings.maxSec}s) plus 2 spares for the reviewer`);
         const t2 = Date.now();
         const peaks = replayPeaks(meta.heatmap);
         if (peaks.length) this.log(job, "pick", `${peaks.length} "Most replayed" peaks sent to the picker`);
