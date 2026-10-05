@@ -165,7 +165,7 @@ const page = (title: string, msg: string) =>
  * Listen once on 127.0.0.1 and ::1 for `GET /callback?code&state`. Resolves when a valid callback was
  * handled (or `onCode` failed, with that error); rejects on timeout or a busy port.
  */
-export function listenOnce(o: { state: string; timeoutMs?: number; onCode: (code: string) => Promise<void> }): Promise<void> {
+export function listenOnce(o: { state: string; timeoutMs?: number; signal?: AbortSignal; onCode: (code: string) => Promise<void> }): Promise<void> {
   return new Promise((resolve, reject) => {
     const servers: http.Server[] = [];
     let done = false;
@@ -201,6 +201,7 @@ export function listenOnce(o: { state: string; timeoutMs?: number; onCode: (code
       }
     };
     const timer = setTimeout(() => finish(new Error("Sign-in timed out. Click Connect to try again.")), o.timeoutMs ?? 300_000);
+    o.signal?.addEventListener("abort", () => finish(new Error("Sign-in cancelled")));
     for (const host of ["127.0.0.1", "::1"]) {
       const s = http.createServer(handler);
       s.on("error", (e: NodeJS.ErrnoException) => {
