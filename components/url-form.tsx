@@ -94,6 +94,12 @@ export function UrlForm({ large = false }: { large?: boolean }) {
               <option value="original">Same as the video</option>
             </Select>
           </Field>
+          <Field label="Auto-post" className="col-span-2 sm:col-span-3 lg:col-span-6">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={s.autoPost !== false} onChange={(e) => setS({ ...s, autoPost: e.target.checked })} />
+              Rendered clips wait in Queue for your OK, then post to your connected accounts
+            </label>
+          </Field>
           <Field label="Focus (optional)" className="col-span-2 sm:col-span-3 lg:col-span-4">
             <Input value={s.focus ?? ""} onChange={(e) => setS({ ...s, focus: e.target.value || undefined })} placeholder='e.g. "every joke that landed" or "the parts about money"' />
           </Field>

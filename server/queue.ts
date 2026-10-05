@@ -30,11 +30,11 @@ const BACKOFF_MIN = [2, 10, 30];
 
 export const keyOf = (jobId: string, n: number, p: Platform) => `${jobId}:${n}:${p}`;
 
-function note(e: QueueEntry, msg: string, now: Date): QueueEntry {
+export function note(e: QueueEntry, msg: string, now: Date): QueueEntry {
   return { ...e, history: [...e.history, { t: now.getTime(), msg }].slice(-50), updatedAt: now.getTime() };
 }
 
-function patch(entries: QueueEntry[], key: string, fn: (e: QueueEntry) => QueueEntry): QueueEntry[] {
+export function patch(entries: QueueEntry[], key: string, fn: (e: QueueEntry) => QueueEntry): QueueEntry[] {
   return entries.map((e) => (e.key === key ? fn(e) : e));
 }
 

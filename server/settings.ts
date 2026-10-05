@@ -104,6 +104,8 @@ function clean(obj: Record<string, unknown>): Partial<AppSettings> {
   if (typeof obj.apiKey === "string" && obj.apiKey) out.apiKey = obj.apiKey;
   if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt)) out.checkedAt = obj.checkedAt;
   if (obj.audience === "original" || obj.audience === "en-us") out.audience = obj.audience;
+  if (typeof obj.postingAudience === "string" && obj.postingAudience) out.postingAudience = obj.postingAudience;
+  if (typeof obj.postingPaused === "boolean") out.postingPaused = obj.postingPaused;
   return out;
 }
 
@@ -178,6 +180,9 @@ export interface EffectiveSettings {
   apiKey?: string;
   /** Default audience for new videos. */
   audience: Audience;
+  /** AUDIENCES id whose time zone posting slots use. */
+  postingAudience: string;
+  postingPaused: boolean;
 }
 
 function env(...names: string[]): string | undefined {
@@ -202,6 +207,8 @@ export function effective(): EffectiveSettings {
     claudeAuth: s.claudeAuth ?? (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY") ? "apiKey" : "subscription"),
     apiKey: s.apiKey ?? envApiKey(),
     audience: s.audience ?? "en-us",
+    postingAudience: s.postingAudience ?? "us-east",
+    postingPaused: s.postingPaused ?? false,
   };
 }
 

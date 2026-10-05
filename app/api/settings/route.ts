@@ -16,6 +16,8 @@ const Patch = z.strictObject({
   apiKey: z.string().trim().max(512).optional(),
   checkedAt: z.number().int().nonnegative().or(z.literal("")).optional(),
   audience: z.enum(["original", "en-us"]).optional(),
+  postingAudience: z.string().trim().max(40).optional(),
+  postingPaused: z.boolean().optional(),
 });
 
 /** GET = saved settings (API key redacted) + every AI CLI found on this machine (?rescan=1 skips the cache). */

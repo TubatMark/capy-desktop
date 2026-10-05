@@ -15,6 +15,7 @@ import { pool } from "../src/util";
 import { CancelledError, isCancelled, throwIfCancelled, withCancel } from "../src/exec";
 import type { VideoMeta, Word } from "../src/types";
 import { boot } from "./boot";
+import { onRendered } from "./poster";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
 import { loadTimings, learn, type Timings } from "./estimates";
@@ -878,6 +879,11 @@ class JobManager extends EventEmitter {
         tookMs,
       };
       this.log(job, "render", `clip ${c.n} done in ${(tookMs / 1000).toFixed(1)}s`);
+      try {
+        onRendered(job, c, toMediaUrl);
+      } catch (e) {
+        this.log(job, "render", `auto-post: ${e instanceof Error ? e.message : String(e)}`);
+      }
       // candidate thumbnails from the finished clip, so the publish panel has options right away
       void this.generateThumbs(job.id, c.n).catch(() => {});
     } catch (e) {

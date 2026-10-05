@@ -163,3 +163,11 @@ describe("audience", () => {
     expect(effective().audience).toBe("original");
   });
 });
+
+describe("posting settings", () => {
+  it("defaults to US East, not paused, and saves both", () => {
+    expect(effective()).toMatchObject({ postingAudience: "us-east", postingPaused: false });
+    saveSettings({ postingAudience: "uk", postingPaused: true });
+    expect(effective()).toMatchObject({ postingAudience: "uk", postingPaused: true });
+  });
+});
