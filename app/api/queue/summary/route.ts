@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { startPoster } from "@/server/poster";
 import { queue, summary } from "@/server/queue";
+import { watch } from "@/server/watch";
 import { effective } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
@@ -10,5 +11,6 @@ startPoster();
 
 /** GET = review count and next post (header badge, menu-bar icon). */
 export async function GET() {
-  return NextResponse.json({ ...summary(queue().list(), new Date()), paused: effective().postingPaused });
+  const watching = watch().get().channels.filter((c) => c.enabled).length;
+  return NextResponse.json({ ...summary(queue().list(), new Date()), paused: effective().postingPaused, watching });
 }

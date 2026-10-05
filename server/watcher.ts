@@ -96,6 +96,16 @@ export async function watcherTick(d: WatcherDeps = defaultDeps(), o: { force?: b
   }
 }
 
+/** Run a normal pass soon (after adding a channel with "clip the latest upload"). */
+export function kickWatcher() {
+  const s = state();
+  if (s.running) return;
+  s.running = true;
+  void watcherTick()
+    .catch((e) => console.error("[watcher]", e))
+    .finally(() => (s.running = false));
+}
+
 /** Run a check right away (the "Check now" button). */
 export async function checkNow(): Promise<void> {
   await watcherTick(defaultDeps(), { force: true });
