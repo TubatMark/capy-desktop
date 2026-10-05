@@ -49,6 +49,23 @@ export function useWords(id: string | null, ready: boolean) {
   return words;
 }
 
+/** English caption words for a translated video; refetched when `version` (the translated ranges) changes. */
+export function useCaptionWords(id: string | null, version: string) {
+  const [words, setWords] = useState<Word[] | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let live = true;
+    fetch(`/api/jobs/${id}/caption-words`)
+      .then((r) => r.json())
+      .then((w) => live && setWords(Array.isArray(w) ? w : []))
+      .catch(() => live && setWords([]));
+    return () => {
+      live = false;
+    };
+  }, [id, version]);
+  return words;
+}
+
 export async function api<T = unknown>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
   const body = await r.json().catch(() => ({}));

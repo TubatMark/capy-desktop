@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { Check, Clock, Loader2, Play, AlertCircle, Sparkles } from "lucide-react";
+import { Check, Clock, Loader2, Play, AlertCircle, Sparkles, Flame } from "lucide-react";
+import { ReplacePopover, RetryTranslation } from "@/components/replace-popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtTime, fmtRemaining } from "@/lib/utils";
@@ -28,9 +29,16 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
 
         {/* top row */}
         <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3">
-          <span className="truncate rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-white/90 backdrop-blur">
-            {fmtTime(clip.start)} · {Math.round(len)}s
-          </span>
+          <div className="flex min-w-0 flex-wrap gap-1">
+            <span className="truncate rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-white/90 backdrop-blur">
+              {fmtTime(clip.start)} · {Math.round(len)}s
+            </span>
+            {clip.replayPeak !== undefined && clip.replayPeak >= 0.7 && (
+              <span className="flex items-center gap-0.5 whitespace-nowrap rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-orange-300 backdrop-blur" title="Overlaps the part viewers rewind to most">
+                <Flame className="size-3" /> Most replayed
+              </span>
+            )}
+          </div>
           <span className="flex shrink-0 items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-primary backdrop-blur">
             <Sparkles className="size-3" />
             {clip.score}/10
@@ -56,6 +64,9 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
 
         {/* bottom text */}
         <div className="absolute inset-x-0 bottom-0 min-w-0 p-3">
+          {clip.review?.verdict === "fail" && <p className="mb-1 line-clamp-3 break-words text-[11px] font-medium text-red-400">Reviewer: {clip.review.problem ?? "weak pick"}</p>}
+          {clip.review?.verdict === "fix_hook" && <p className="mb-1 text-[11px] text-white/60">Hook rewritten by the reviewer</p>}
+          {clip.captionsTranslated === "error" && <p className="mb-1 text-[11px] text-amber-400">Captions not translated</p>}
           {clip.hook && <p className="mb-1 line-clamp-2 break-words text-[11px] font-medium uppercase tracking-wide text-primary">{clip.hook}</p>}
           <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-white">{clip.title}</p>
           <div className="mt-2 flex min-w-0 items-center gap-2 text-[11px] text-white/70">
@@ -63,6 +74,13 @@ export function PickCard({ jobId, clip, onSelect }: { jobId: string; clip: ClipS
           </div>
         </div>
       </Link>
+
+      {clip.render.status !== "done" && clip.render.status !== "rendering" && (
+        <div className="absolute right-2 top-10 z-10 flex flex-col items-end gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          <ReplacePopover jobId={jobId} clip={clip} />
+          {clip.captionsTranslated === "error" && <RetryTranslation jobId={jobId} n={clip.n} />}
+        </div>
+      )}
 
       {/* 40px hit area around the 20px checkbox: clicks on the padding toggle it too */}
       <div

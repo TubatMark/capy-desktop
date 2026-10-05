@@ -17,7 +17,7 @@ import { RenderStatus } from "@/components/pick-card";
 import { PostTime } from "@/components/post-time";
 import { PostTextCard } from "@/components/post-sheet";
 import { ThumbnailCard } from "@/components/thumbnail-card";
-import { api, useJob, useWords } from "@/hooks/use-job";
+import { api, useCaptionWords, useJob, useWords } from "@/hooks/use-job";
 import { fmtTime, fmtTimeMs, fmtRemaining } from "@/lib/utils";
 import type { ClipState, JobState } from "@/lib/types";
 import { defaultLook, looksEqual, normalizeLook, vibeById, type Look } from "@/lib/look";
@@ -80,6 +80,11 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
   const showRendered = rendered && locked;
   const base = showRendered ? clip!.start : seg?.start;
   const segWords = useMemo(() => (words && seg ? words.filter((w) => w.end > seg.start && w.start < seg.end) : []), [words, seg]);
+  const capWords = useCaptionWords(id, JSON.stringify(job?.translated ?? []));
+  const clipCaptionWords = useMemo(() => {
+    if (!draft || clip?.captionsTranslated !== true || !capWords?.length) return null;
+    return capWords.filter((w) => w.start >= draft.start - 0.1 && w.start < draft.end).map((w) => ({ ...w, start: w.start - draft.start, end: w.end - draft.start }));
+  }, [capWords, clip?.captionsTranslated, draft]);
   const clipWords = useMemo(
     () => (draft ? segWords.filter((w) => w.start >= draft.start - 0.1 && w.start < draft.end).map((w) => ({ ...w, start: w.start - draft.start, end: w.end - draft.start })) : []),
     [segWords, draft],
@@ -269,7 +274,7 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
               preload="auto"
               style={{ filter: vibe.css }}
             />
-            <CaptionOverlay words={clipWords} t={t - draft.start} style={job.settings.style} look={look} hook={draft.hook} showHook={job.settings.hook} sample={lookActive} />
+            <CaptionOverlay words={clipCaptionWords ?? clipWords} t={t - draft.start} style={job.settings.style} look={look} hook={draft.hook} showHook={job.settings.hook} sample={lookActive} />
           </>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-center text-xs text-muted-foreground">
