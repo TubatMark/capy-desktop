@@ -1,6 +1,9 @@
 import type { Look } from "./look";
 /** Shared between server and browser. No node imports here. */
 
+/** Who the clips are for: "en-us" writes text in US English and translates captions of non-English videos. */
+export type Audience = "original" | "en-us";
+
 export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
 export type Stage = "meta" | "captions" | "pick" | "segments" | "done";
 

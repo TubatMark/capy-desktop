@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { Clip, Word } from "./types";
 import { snapToWords, transcriptForPrompt } from "./captions";
 import { askAgent } from "./agents";
-import type { AgentId } from "../lib/types";
+import type { AgentId, Audience } from "../lib/types";
+import { fmtPeaks, type HeatPoint } from "./heatmap";
 
 const ClipSchema = z.object({
   start: z.number().describe("Clip start in seconds"),
@@ -29,6 +30,12 @@ export interface PickOpts {
   focus?: string;
   effort?: "low" | "medium" | "high";
   onRetry?: (msg: string) => void;
+  /** "Most replayed" ranges to steer the picker toward. */
+  peaks?: HeatPoint[];
+  /** Who the clips are for; en-us writes all text in US English. */
+  audience?: Audience;
+  /** Replacing one rejected pick: avoid its problem and every range already taken. */
+  replace?: { start: number; end: number; reason: string; avoid: { start: number; end: number }[] };
 }
 
 export interface PickResult {
@@ -72,6 +79,15 @@ export function picksJsonSchema(): Record<string, unknown> {
   return schema;
 }
 
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+/** What language the title/hook/upload text is written in. */
+export function languageRule(audience?: Audience): string {
+  return audience === "en-us"
+    ? "Write title, hook, ytTitle, description and hashtags in natural US English for American viewers, even when the speakers use another language. Avoid moments that only work with local cultural context the hook can't explain. Prefer hashtags US viewers search for."
+    : "title and hook in the same language the speakers use.";
+}
+
 export function buildPrompt(transcript: string, meta: { title: string; duration: number; channel?: string }, o: PickOpts): string {
   const mins = Math.round(meta.duration / 60);
   return `Video: "${meta.title}" (${mins} min)${meta.channel ? ` by ${meta.channel}` : ""}
@@ -88,11 +104,11 @@ Rules:
 - Decide the reason first, then write title and hook that sell that exact moment. If the reason is "a heated argument over a missed trip", the title and hook are about that argument, not a throwaway line from it.
 - hook = the text a viewer with zero context reads before anyone speaks. Set up the situation or stakes in third person and name who is in it when the video title or channel tells you (e.g. "Mia & Jay almost fall out over a missed trip"). Do not just quote the transcript; a quote only works if it makes sense on its own and states the conflict.
 - title = what happens in the clip (the conflict, reveal, or payoff), specific, under 60 chars.
-- title and hook in the same language the speakers use.
+- ${languageRule(o.audience)}
 - For each clip also write the YouTube Shorts upload text: ytTitle (max 100 chars, may include one emoji, end with 2-3 #hashtags like "#${(meta.channel ?? "creator").replace(/[^a-z0-9]/gi, "").toLowerCase()} #shorts"), a description (2-4 short lines: what happens, a hook question or CTA, "Credit: ${meta.channel ?? "original creator"}", hashtags last), and 4-8 hashtags (no # sign; include creator names, the topic, and shorts).
 - start and end are in seconds from the start of the video. Each transcript line starts at the [seconds] marker; estimate positions within a line proportionally.
-${o.focus ? `- Editor's focus: ${o.focus}\n` : ""}
-Transcript:
+${o.replace ? `- Find a different moment. The previous pick at ${mmss(o.replace.start)}–${mmss(o.replace.end)} was rejected because: ${o.replace.reason}. Avoid that problem. Do not overlap these ranges: ${[o.replace, ...o.replace.avoid].map((r) => `${mmss(r.start)}–${mmss(r.end)}`).join(", ")}.\n` : ""}${o.focus ? `- Editor's focus: ${o.focus}\n` : ""}
+${o.peaks?.length ? `Viewer replay peaks (the parts viewers rewound to most: a strong signal of a great moment; prefer clips that contain one, but each clip must still be self-contained):\n${fmtPeaks(o.peaks)}\n\n` : ""}Transcript:
 ${transcript}`;
 }
 
@@ -105,6 +121,7 @@ export async function rewriteTitleHook(
   clip: { start: number; end: number; title: string; hook: string; reason: string },
   model?: string,
   agent: AgentId = "claude",
+  audience?: Audience,
 ): Promise<{ title: string; hook: string }> {
   const excerpt = words
     .filter((w) => w.start >= clip.start - 0.1 && w.start < clip.end)
@@ -121,7 +138,7 @@ Write a better title and on-screen hook for this vertical short:
 - Both must sell the moment described in "why this clip was picked", not a throwaway line from the transcript.
 - hook: under 40 chars, no emoji. The text a viewer with zero context reads before anyone speaks: set up the situation or stakes in third person and name who is in it when the video title or channel tells you (e.g. "Mia & Jay almost fall out over a missed trip"). Only quote the transcript if the quote alone states the conflict.
 - title: under 60 chars, says what happens (the conflict, reveal, or payoff), specific.
-Same language as the speakers.`;
+${audience === "en-us" ? "Write in natural US English for American viewers." : "Same language as the speakers."}`;
   const { data: raw } = await askAgent(agent, prompt, {
     model,
     maxTurns: 2,
@@ -141,6 +158,7 @@ export async function generatePublish(
   clip: { start: number; end: number; title: string; hook: string },
   model?: string,
   agent: AgentId = "claude",
+  audience?: Audience,
 ): Promise<{ ytTitle: string; description: string; hashtags: string[] }> {
   const excerpt = words
     .filter((w) => w.start >= clip.start - 0.1 && w.start < clip.end)
@@ -157,7 +175,7 @@ Write the YouTube Shorts upload text for this clip:
 - ytTitle: max 100 chars, punchy, may include one emoji, ends with 2-3 #hashtags (e.g. "#${handle} #shorts").
 - description: 2-4 short lines: what happens, a hook question or CTA, then "Credit: ${meta.channel ?? "original creator"}", then the hashtags on the last line.
 - hashtags: 4-8 without the # sign: creator names, topic, and shorts.
-Same language as the speakers.`;
+${audience === "en-us" ? "Write in natural US English for American viewers." : "Same language as the speakers."}`;
   const { data: raw } = await askAgent(agent, prompt, {
     model,
     maxTurns: 2,
