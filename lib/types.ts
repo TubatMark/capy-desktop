@@ -31,6 +31,8 @@ export interface QueueEntry {
   fp?: string;
   /** Upload progress kept across retries so a retry never uploads twice. */
   progress?: Record<string, string>;
+  /** The AI content reviewer's verdict on this clip. */
+  aiReview?: ContentReview;
   videoTitle?: string;
   videoUrl?: string;
   thumbUrl?: string;
@@ -176,6 +178,8 @@ export interface ClipState {
   replayPeak?: number;
   /** English captions ready (true), or the translation failed ("error"); unset when not needed. */
   captionsTranslated?: boolean | "error";
+  /** The AI content reviewer's verdict on the rendered clip. */
+  contentReview?: ContentReview;
 }
 
 export type ReviewVerdict = "pass" | "fix_hook" | "fail";
@@ -239,6 +243,8 @@ export interface JobState {
   sourceLang?: string;
   /** Source-video ranges whose captions are translated into words.en.json. */
   translated?: { start: number; end: number }[];
+  /** Started by creator automation: render the picks on its own once they're ready. */
+  automation?: { channelId: string; channelName: string };
 }
 
 export interface Word {

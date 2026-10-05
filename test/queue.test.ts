@@ -184,3 +184,13 @@ describe("taken", () => {
     expect(taken([sent, missing], now)).toEqual([{ platform: "tiktok", at: sent.slotAt }]);
   });
 });
+
+describe("AI content review on queue entries", () => {
+  const review = { verdict: "caution" as const, summary: "Title oversells", issues: [], at: 1 };
+  it("new entries carry the clip's AI review, and a re-render refreshes it", () => {
+    let e = upsertForRender([], clip(1, { aiReview: review }), ["youtube"], now);
+    expect(e[0]!.aiReview).toEqual(review);
+    e = upsertForRender(e, clip(1, { aiReview: { ...review, verdict: "ok", summary: "Fixed" } }), ["youtube"], now);
+    expect(e[0]!.aiReview).toMatchObject({ verdict: "ok", summary: "Fixed" });
+  });
+});
