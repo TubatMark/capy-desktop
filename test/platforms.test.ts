@@ -198,3 +198,11 @@ describe("tiktokAccount", () => {
     expect(calls[0]!.url).not.toContain("username");
   });
 });
+
+describe("youtube: made for kids", () => {
+  it("declares a kids' story as made for kids", async () => {
+    const { f, calls } = stub([json({}, 200, { location: "https://upload.example/k" }), json({ id: "k1" }), json({}), json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
+    await postYouTube({ ...job, madeForKids: true }, ctx(f));
+    expect(JSON.parse(String(calls[0]!.body)).status.selfDeclaredMadeForKids).toBe(true);
+  });
+});

@@ -18,7 +18,7 @@ async function upload(job: PostJob, ctx: ClientCtx, auth: Record<string, string>
     headers: { ...auth, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": String(size) },
     body: JSON.stringify({
       snippet: { title: job.text.title ?? "", description: job.text.description ?? "", tags: job.text.tags ?? [], categoryId: "22" },
-      status: { privacyStatus: "public", selfDeclaredMadeForKids: false },
+      status: { privacyStatus: "public", selfDeclaredMadeForKids: !!job.madeForKids },
     }),
   });
   if (!init.ok) throw httpError(init, await readJson(init));

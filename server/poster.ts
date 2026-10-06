@@ -51,6 +51,11 @@ function defaultDeps(): PosterDeps {
     token: async (p) => (await import("./accounts")).getAccessToken(p),
     lock: () => takePosterLock(path.join(dataDir(), "poster.lock"), Date.now()),
     fileFor: async (e) => {
+      if (e.jobId.startsWith("story-")) {
+        const { stories, storyClipFile } = await import("./stories");
+        await stories().init();
+        return storyClipFile(stories().getStory(e.jobId.slice("story-".length)), e);
+      }
       // the job manager is loaded lazily (it imports this module for onRendered), and must have read the jobs from disk
       const { jobs, renderedFile } = await import("./jobs");
       await jobs().init();
@@ -118,7 +123,7 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
         let r: Parameters<typeof markResult>[2];
         try {
           const token = await d.token(e.platform);
-          r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text, resume: e.progress }, token, checkpoint) };
+          r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text, resume: e.progress, madeForKids: e.madeForKids }, token, checkpoint) };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (err instanceof AuthError) r = { error: { message, retryable: false, auth: true } };

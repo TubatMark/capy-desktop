@@ -13,7 +13,7 @@ import type { AiOpts } from "../src/story/write";
 import { slug } from "../src/util";
 import { publicAccounts } from "./accounts";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
-import { queue, upsertForRender } from "./queue";
+import { fingerprint, queue, upsertForRender } from "./queue";
 import { effective } from "./settings";
 
 /**
@@ -424,6 +424,15 @@ export class StoryManager {
     await mkdir(this.storyDir(st), { recursive: true });
     await writeFile(path.join(this.storyDir(st), "story.json"), JSON.stringify(st, null, 2));
   }
+}
+
+/** The file the poster posts for a story's queue entry; "changed" if it was re-rendered after the approval. */
+export function storyClipFile(st: StoryState | undefined, e: { fp?: string }, exists: (f: string) => boolean = existsSync): { file: string; thumbFile?: string } | "missing" | "changed" | "rendering" {
+  if (st?.status === "rendering") return "rendering"; // the mp4 is being rewritten: post it on a later tick
+  if (!st?.video || !exists(st.video.file)) return "missing";
+  if (e.fp && fingerprint(0, st.video.duration) !== e.fp) return "changed";
+  const jpg = st.video.file.replace(/\.mp4$/, ".jpg");
+  return { file: st.video.file, thumbFile: exists(jpg) ? jpg : undefined };
 }
 
 async function readJson<T>(f: string): Promise<T | null> {

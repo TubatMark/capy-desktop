@@ -8,6 +8,8 @@ export interface PostJob {
   /** Seconds into the clip for the cover frame. */
   thumbAt?: number;
   text: PostText;
+  /** A kids' story (YouTube: selfDeclaredMadeForKids). */
+  madeForKids?: boolean;
   /** Progress saved by an earlier attempt (video id, container, publish id): resume instead of uploading again. */
   resume?: Record<string, string>;
 }

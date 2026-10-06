@@ -11,7 +11,7 @@ vi.hoisted(() => {
   process.env.CAPY_DATA_DIR = p.join(root, "data");
 });
 
-import { StoryManager, type StoryDeps } from "../server/stories";
+import { StoryManager, storyClipFile, type StoryDeps } from "../server/stories";
 import { saveAccount, resetAccountsCache } from "../server/accounts";
 import { queue, resetQueueCache } from "../server/queue";
 import type { StoryState } from "../lib/types";
@@ -157,5 +157,19 @@ describe("StoryManager", () => {
     expect(back.status).toBe("pages");
     expect(back.pages.every((p) => p.status === "pending")).toBe(true);
     expect(existsSync(file)).toBe(true);
+  });
+});
+
+describe("storyClipFile (what the poster posts for a story entry)", () => {
+  const st = { video: { file: "/x/pip.mp4", duration: 41.2, url: "u", coverUrl: "c" } } as unknown as StoryState;
+  const entry = (fp?: string) => ({ fp }) as { fp?: string };
+  it("returns the video for the approved cut", () => {
+    expect(storyClipFile(st, entry("0-412"), () => true)).toEqual({ file: "/x/pip.mp4", thumbFile: "/x/pip.jpg" });
+  });
+  it("says changed when the story was re-rendered after approval, missing when there's no video", () => {
+    expect(storyClipFile(st, entry("0-300"), () => true)).toBe("changed");
+    expect(storyClipFile(undefined, entry("0-412"), () => true)).toBe("missing");
+    expect(storyClipFile(st, entry("0-412"), () => false)).toBe("missing");
+    expect(storyClipFile({ ...st, status: "rendering" } as StoryState, entry("0-412"), () => true)).toBe("rendering");
   });
 });
