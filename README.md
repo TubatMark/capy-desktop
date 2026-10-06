@@ -91,7 +91,22 @@ each card; you decide what gets scheduled. Nothing posts on its own.
 - Checks every hour while capy runs (window or menu bar), or on **Check now**. A desktop notification says when new
   clips are waiting. The watch list lives in `<CAPY_DATA_DIR>/watch.json`.
 
-A plan for original kids' story videos is in `docs/superpowers/specs/2026-10-06-kids-story-videos-plan.md` (not built yet).
+## Stories: original read-aloud picture books for kids
+
+**Stories** (book icon) makes original narrated picture-book Shorts, for free:
+
+1. Create a **series**: name, age group (2–4 or 5–8), tone, values, a look, and 1–6 characters described in words.
+   AI draws each character once as vector art; they look the same on every page of every story.
+2. Give a **story idea**. AI writes it, a **kid-safety reviewer** checks it (and the writer fixes what it flags once),
+   and you edit any page's words, picture or cast before anything is drawn.
+3. **Approve the script**: AI draws each page's scene and capy places the characters (2 pages at a time).
+4. **Narrate & make the video** with one of this computer's voices: page zooms, crossfades, read-along captions with
+   the current word highlighted, the title over the first page.
+5. An **AI content reviewer** (kids profile) checks it, AI writes the upload text for parents, and **Send to Queue**
+   puts it in Queue → Waiting for your OK. YouTube posts it as made for kids.
+
+Files live in `<output>/stories/<series>/<story>/` (pages as SVG and PNG, narration, the mp4). Install nicer voices in
+System Settings → Accessibility → Spoken Content → Manage Voices; they appear in the narrator list.
 
 ## Settings
 
