@@ -21,6 +21,7 @@ import { markHistory, watch } from "./watch";
 import { startWatcher } from "./watcher";
 import { reviewContent, reviewUnavailable } from "../src/content-review";
 import { tuneSeo } from "./seo";
+import { scoreSeo } from "../src/seo/score";
 import { cleanCaptionWords } from "../src/ass";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
@@ -577,7 +578,14 @@ class JobManager extends EventEmitter {
       patch.end = s.end;
     }
     const { snap: _s, ...rest } = patch;
+    const prevTags = c.publish?.tags;
     Object.assign(c, rest);
+    if (patch.publish && c.publish) {
+      // the user's own words: SEO keeps scoring them but never rewrites them (search tags carry over)
+      c.publish = { ...(prevTags && !c.publish.tags ? { tags: prevTags } : {}), ...c.publish, edited: true };
+      const p = c.publish;
+      c.seo = { ...scoreSeo({ title: p.ytTitle, description: p.description, hashtags: p.hashtags, tags: p.tags ?? [] }, { kind: "short", keyword: c.seo?.keyword }), at: Date.now(), note: "Your own text: capy scores it but won't rewrite it." };
+    }
     const rendered = renderFile(c);
     if (patch.publish && rendered) {
       // keep the .txt next to the mp4 in sync without re-rendering
@@ -906,7 +914,7 @@ class JobManager extends EventEmitter {
       const queueing = job.settings.autoPost !== false && publicAccounts().some((a) => a.connected && a.autoPost);
       if (job.automation || queueing) {
         // search-tune the upload text first, so the content reviewer judges the text that will actually go out
-        await this.tuneSeo(job, c, words, base);
+        await this.tuneSeo(job, c, words, base).catch((e) => this.log(job, "render", `clip ${c.n} SEO skipped: ${e instanceof Error ? e.message : String(e)}`));
         c.contentReview = await this.contentReview(job, c, words).catch((e) => reviewUnavailable(e instanceof Error ? e.message : String(e), Date.now()));
         this.log(job, "render", `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`);
       }
@@ -982,6 +990,10 @@ class JobManager extends EventEmitter {
   /** Keyword research + an SEO rewrite of the clip's upload text (kept only if it scores higher). Never throws. */
   private async tuneSeo(job: JobState, c: ClipState, captionWords: Word[], base: string) {
     const publish = c.publish ?? { ytTitle: c.title, description: "", hashtags: [] };
+    if (publish.edited) {
+      c.seo = { ...scoreSeo({ title: publish.ytTitle, description: publish.description, hashtags: publish.hashtags, tags: publish.tags ?? [] }, { kind: "short", keyword: c.seo?.keyword }), at: Date.now(), note: "Your own text: capy scores it but won't rewrite it." };
+      return;
+    }
     const about = [c.title, c.hook, cleanCaptionWords(wordsInRange(captionWords, c.start, c.end)).map((w) => w.text).join(" ")].filter(Boolean).join("\n");
     const keep = publish.description.split("\n").find((l) => /^\s*credit:/i.test(l))?.trim();
     const { publish: next, seo } = await tuneSeo({ kind: "short", publish, about, keep }, await this.ai(job));

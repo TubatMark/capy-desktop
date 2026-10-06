@@ -140,7 +140,7 @@ export class StoryManager {
     }
     // anything the assessor never got to (capy closed mid-way) is assessed now
     for (const st of this.stories.values()) {
-      if (st.status === "script" && st.pages.length && !st.assessments?.script) this.assessor.add({ id: st.id, stage: "script" });
+      if ((st.status === "script" || st.status === "pages") && st.pages.length && !st.assessments?.script) this.assessor.add({ id: st.id, stage: "script" });
       if (st.status === "done" && st.video && !st.assessments?.video) this.assessor.add({ id: st.id, stage: "video" });
     }
   }
@@ -236,7 +236,7 @@ export class StoryManager {
     await this.saveStory(st);
     void this.task(st, async () => {
       const ai = await this.deps.ai();
-      const next = notes.length && st.pages.length ? await this.deps.reviseStory(s, st, notes, ai) : await this.deps.writeStory(s, st.brief, ai);
+      const next = notes.length && st.pages.length ? await this.deps.reviseStory(s, st, notes, ai) : await this.deps.writeStory(s, st.brief, ai, st.plan);
       Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, seo: undefined, queuedAt: undefined, assessments: undefined });
       this.log(st, notes.length ? "Rewritten with your notes" : "Written again");
       st.status = "script";
@@ -319,16 +319,17 @@ export class StoryManager {
     const s = st && this.series.get(st.seriesId);
     if (!st || !s || !st.pages.length || (stage === "video" && !st.video)) return;
     const key = stage === "script" ? wordsKey(st) : String(st.video?.renderedAt);
-    st.assessing = stage;
-    await this.saveStory(st);
     let a: StoryAssessment;
     try {
+      st.assessing = stage;
+      await this.saveStory(st);
       a = await this.deps.assess(s, st, stage, await this.deps.ai());
     } catch (e) {
       a = { stage, at: Date.now(), overall: 0, scores: { hook: 0, retention: 0, search: 0, safety: 0, production: 0 }, verdict: "fix", strengths: [], fixes: [], error: errText(e) };
+    } finally {
+      st.assessing = undefined;
     }
     if (!this.stories.has(id)) return; // deleted meanwhile
-    st.assessing = undefined;
     // the words (or the video) changed while it looked: that change queued a fresh assessment
     if ((stage === "script" ? wordsKey(st) : String(st.video?.renderedAt)) === key) {
       st.assessments = { ...st.assessments, [stage]: a };
@@ -475,7 +476,8 @@ export class StoryManager {
       const draft = await this.deps.storyPublish(s, st, ai).catch(() => ({ ytTitle: `${st.title} | Bedtime Story #shorts`.slice(0, 100), description: st.moral, hashtags: ["bedtimestory", "kidsstories", "readaloud", "shorts"] }));
       // search-tuned for what parents type; the kids content review below then checks the final text
       // the planned search title is the upload title (the story keeps its short name for the title card)
-      if (st.plan?.title && `${st.plan.title} #shorts`.length <= 100) draft.ytTitle = `${st.plan.title} #shorts`;
+      // (only while the story still has the planned name: a renamed story keeps its own)
+      if (st.plan?.title && storyName(st.plan.title) === st.title && `${st.plan.title} #shorts`.length <= 100) draft.ytTitle = `${st.plan.title} #shorts`;
       const seeds = st.plan?.keyword ? [st.plan.keyword, ...st.plan.searchTerms.slice(0, 2)] : undefined;
       const tuned = await this.deps.tuneSeo({ kind: "kids", publish: draft, seeds, about: `${st.title}. Ages ${s.ageBand}. Length: ${Math.round(duration)} seconds (say so truthfully if the length is mentioned). Moral: ${st.moral}. ${st.pages.map((p) => p.text).join(" ")}` }, ai);
       st.publish = tuned.publish;
@@ -580,6 +582,8 @@ export class StoryManager {
       st.error = errText(e);
       st.status = st.pages.length ? (st.pages.every((p) => p.status === "ready") ? "pages" : "script") : "error";
       this.log(st, `Error: ${st.error}`);
+      // words written but the step failed later (e.g. a revise): still assess what's there
+      if (st.status === "script" && !st.assessments?.script) this.assess(st, "script");
     } finally {
       this.busy.delete(st.id);
       await this.saveStory(st);

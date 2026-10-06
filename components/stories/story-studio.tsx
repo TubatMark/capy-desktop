@@ -65,7 +65,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
   const st = data?.story;
   const working = !!st && (WORKING.has(st.status) || st.pages.some((p) => p.status === "drawing"));
   // the assessor works on its own after a step: keep the page fresh until it has looked
-  const assessorPending = !!st && (!!st.assessing || (st.status === "script" && st.pages.length > 0 && !st.assessments?.script) || (st.status === "done" && !!st.video && !st.assessments?.video));
+  const assessorPending = !!st && (!!st.assessing || ((st.status === "script" || st.status === "pages") && st.pages.length > 0 && !st.assessments?.script) || (st.status === "done" && !!st.video && !st.assessments?.video));
   useEffect(() => {
     if (!working && !assessorPending) return;
     const t = setInterval(() => void load(), working ? 2000 : 3000);

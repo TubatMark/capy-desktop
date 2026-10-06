@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { scoreSeo, matchesKeyword } from "../src/seo/score";
 import { mergeKeywords, parseSuggest, suggestedTags, pacificDay } from "../src/seo/keywords";
 import { youtubeText } from "../server/platforms/text";
+import { withLine } from "../src/seo/optimize";
 
 const good = {
   title: "Bedtime Story for Toddlers: Pip Learns to Share 🛷 #shorts",
@@ -100,5 +101,12 @@ describe("youtubeText with search tags", () => {
     expect(t.tags).toEqual(["bedtime story", "kids story", "shorts", "kidsstory"]);
     const long = youtubeText({ ytTitle: "T", description: "D", hashtags: [], tags: Array.from({ length: 80 }, (_, i) => `keyword number ${i}`) });
     expect(long.tags!.join(",").length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("withLine", () => {
+  it("puts a dropped credit line back above the hashtags", () => {
+    expect(withLine("Funny moment.\n\n#cats #shorts", "Credit: Bob")).toBe("Funny moment.\nCredit: Bob\n\n#cats #shorts");
+    expect(withLine("No tags here", "Credit: Bob")).toBe("No tags here\nCredit: Bob");
   });
 });

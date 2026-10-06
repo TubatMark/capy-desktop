@@ -140,6 +140,17 @@ describe("keyword research", () => {
     expect(r.keywords.length).toBeGreaterThan(0);
   });
 
+  it("two researches of the same topic at once pay for one search", async () => {
+    globalThis.__capySeoCache = undefined;
+    const { f, calls } = api([
+      [/suggestqueries/, () => ["q", ["x"]]],
+      [/\/search\?/, () => ({ items: [] })],
+    ]);
+    const d = sdeps(f);
+    await Promise.all([research("same topic", {}, d), research("same topic", {}, d)]);
+    expect(calls.filter((c) => c.url.pathname === "/youtube/v3/search").length).toBe(1);
+  });
+
   it("without YouTube connected: autocomplete only, with a note", async () => {
     globalThis.__capySeoCache = undefined;
     const { f } = api([[/suggestqueries/, () => ["q", ["kids story"]]]]);

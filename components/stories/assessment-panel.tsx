@@ -29,9 +29,14 @@ export function AssessmentPanel({ story, stage, busy, onFix, onAgain }: { story:
     return (
       <section className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 text-sm">
         <Loader2 className="size-4 animate-spin text-primary" />
-        <span className="text-pretty">
+        <span className="min-w-0 flex-1 text-pretty">
           {looking ? `The assessor is looking at the ${stage === "script" ? "script" : "finished video"}: hook, retention, search, kid-safety and production.` : "Waiting for the assessor…"}
         </span>
+        {!looking && (
+          <Button size="sm" variant="ghost" onClick={onAgain} disabled={busy !== null}>
+            <RefreshCw /> Check now
+          </Button>
+        )}
       </section>
     );
 

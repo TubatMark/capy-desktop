@@ -172,6 +172,8 @@ export async function channelState(o: { refresh?: boolean } = {}, d: ChannelDeps
 
 /** After an edit on YouTube: the saved snapshot shows the new text right away. */
 export async function replaceVideo(v: ChannelVideo) {
+  // a refresh that started before the edit would save the old text over it: apply the edit after it
+  await globalThis.__capyChannelRefresh?.catch(() => {});
   const s = await loadSnapshot();
   if (!s) return;
   const i = s.videos.findIndex((x) => x.id === v.id);

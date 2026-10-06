@@ -69,6 +69,14 @@ Rules:
 - Keep the title true to the video: no promises it doesn't keep, no all caps, at most one emoji.${i.kind === "video" ? "" : "\n- Include #shorts in the hashtags."}${i.kind === "kids" ? "\n- Made for kids: no requests to subscribe, like, comment or turn on notifications; nothing aimed at children. Write for parents." : ""}${i.keep ? `\n- Keep this line in the description: ${i.keep}` : ""}`;
 }
 
+/** Put a line (e.g. "Credit: …") back into a description, above its hashtag lines. */
+export function withLine(description: string, line: string): string {
+  const lines = description.trimEnd().split("\n");
+  let at = lines.length;
+  while (at > 0 && /^\s*(#\S+\s*)*$/.test(lines[at - 1]!)) at--;
+  return [...lines.slice(0, at), line, ...lines.slice(at)].join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 /** Rewrite for search; keep whichever version scores higher. */
 export async function optimizeSeo(
   i: { kind: SeoKind; text: SeoText; about: string; research?: KeywordResearch; channelTerms?: string[]; keep?: string },
@@ -90,6 +98,7 @@ export async function optimizeSeo(
     hashtags: [...new Set(r.hashtags.map((h) => h.replace(/^#/, "").replace(/\s+/g, "").trim()).filter(Boolean))].slice(0, 8),
     tags: [...new Set(r.tags.map((t) => t.replace(/^#/, "").trim().toLowerCase()).filter(Boolean))].slice(0, 20),
   };
+  if (i.keep && !next.description.includes(i.keep)) next.description = withLine(next.description, i.keep);
   const before = scoreSeo(i.text, { keyword, kind: i.kind });
   const after = scoreSeo(next, { keyword, kind: i.kind });
   const improved = after.score > before.score;

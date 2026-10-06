@@ -359,7 +359,7 @@ export interface StoryState {
   /** The AI content reviewer on the finished video (kids profile). */
   contentReview?: ContentReview;
   /** Upload text, written for parents. */
-  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
+  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[]; /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean };
   seo?: SeoReport;
   plan?: StoryPlan;
   assessments?: { script?: StoryAssessment; video?: StoryAssessment };
@@ -429,7 +429,7 @@ export interface ClipState {
   thumbAt?: number;
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
-  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
+  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[]; /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean };
   seo?: SeoReport;
   /** The independent reviewer's verdict on this pick. */
   review?: ClipReview;

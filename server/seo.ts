@@ -41,16 +41,16 @@ const defaultDeps = (): SeoDeps => ({
 
 declare global {
   // eslint-disable-next-line no-var
-  var __capySeoCache: { file: string; data: Cache } | undefined;
+  var __capySeoCache: { file: string; data: Promise<Cache> } | undefined;
+  // eslint-disable-next-line no-var
+  var __capySeoSearches: Map<string, Promise<RankVideo[] | "quota">> | undefined;
 }
 
 async function cache(d: SeoDeps): Promise<Cache> {
   const file = d.cacheFile();
-  if (globalThis.__capySeoCache?.file !== file) {
-    const data = (await readJsonFile<Cache>(file)) ?? { day: "", searches: 0, suggest: {}, search: {} };
-    globalThis.__capySeoCache = { file, data };
-  }
-  const c = globalThis.__capySeoCache.data;
+  // one load per file, shared by concurrent callers, so no one's counts or entries get lost
+  if (globalThis.__capySeoCache?.file !== file) globalThis.__capySeoCache = { file, data: readJsonFile<Cache>(file).then((d) => d ?? { day: "", searches: 0, suggest: {}, search: {} }) };
+  const c = await globalThis.__capySeoCache.data;
   const today = pacificDay(d.now());
   if (c.day !== today) Object.assign(c, { day: today, searches: 0 });
   // drop expired entries so the file stays small
@@ -73,7 +73,19 @@ async function suggest(d: SeoDeps, c: Cache, q: string): Promise<string[]> {
   return terms;
 }
 
-async function ranking(d: SeoDeps, c: Cache, q: string, token: string): Promise<RankVideo[] | "quota"> {
+/** One YouTube search per query at a time: a second caller waits for the first instead of paying again. */
+function ranking(d: SeoDeps, c: Cache, q: string, token: string): Promise<RankVideo[] | "quota"> {
+  const inflight = (globalThis.__capySeoSearches ??= new Map());
+  const k = `${d.cacheFile()}\n${q}`;
+  let p = inflight.get(k);
+  if (!p) {
+    p = searchOnce(d, c, q, token).finally(() => inflight.delete(k));
+    inflight.set(k, p);
+  }
+  return p;
+}
+
+async function searchOnce(d: SeoDeps, c: Cache, q: string, token: string): Promise<RankVideo[] | "quota"> {
   const hit = c.search[q];
   if (hit) return hit.ranking;
   if (c.searches >= SEARCHES_PER_DAY) return "quota";

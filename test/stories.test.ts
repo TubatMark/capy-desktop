@@ -435,4 +435,28 @@ describe("plan and assessor", () => {
     await until(() => !!m.getStory(a.id)!.assessments?.script && !!m.getStory(b.id)!.assessments?.script);
     expect(most).toBe(1);
   });
+
+  it("a revise that fails still gets the script assessed (it never waits forever)", async () => {
+    const { m, s } = await made({
+      reviewStory: async () => ({ verdict: "fix" as const, notes: ["page 2"] }),
+      reviseStory: async () => {
+        throw new Error("AI timed out");
+      },
+    });
+    const st = await m.createStory(s.id, "x");
+    await until(() => !!m.getStory(st.id)!.assessments?.script);
+    expect(m.getStory(st.id)!.status).toBe("script");
+  });
+
+  it("a renamed story keeps its own name as the upload title", async () => {
+    const { m, s, calls } = await made();
+    const st = await m.createStory(s.id, "x");
+    await until(() => !!m.getStory(st.id)!.assessments?.script);
+    await m.updateStory(st.id, { title: "Pip and the Big Snow" });
+    await m.approveScript(st.id);
+    await until(() => m.getStory(st.id)!.status === "pages");
+    await m.render(st.id, "Samantha");
+    await until(() => m.getStory(st.id)!.status === "done");
+    expect((calls.tuneSeo!.at(-1)![0] as { publish: { ytTitle: string } }).publish.ytTitle).toBe("Pip Shares #shorts");
+  });
 });
