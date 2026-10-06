@@ -283,6 +283,8 @@ export class StoryManager {
       // a drawing that won't render (broken SVG) gets one fresh attempt before the page is marked failed
       for (let attempt = 1; ; attempt++) {
         const bg = await this.deps.drawBackground(s, p, await this.deps.ai());
+        // the scene alone is kept, so a render can rebuild the page with the characters as they are then
+        await writeFile(path.join(dir, `${pad2(i + 1)}.bg.svg`), bg);
         await writeFile(svgFile, composePage(bg, chars, p.cast));
         try {
           await this.deps.rasterize(svgFile, png);
@@ -308,6 +310,7 @@ export class StoryManager {
     await this.saveStory(st);
     void this.task(st, async () => {
       const dir = this.storyDir(st);
+      await this.recomposePages(st, s);
       await mkdir(path.join(dir, "audio"), { recursive: true });
       const narration: string[] = [];
       const durations: number[] = [];
@@ -345,6 +348,23 @@ export class StoryManager {
       st.status = "done";
     });
     return st;
+  }
+
+  /**
+   * Rebuild every page from its saved scene and the series' current characters (a redrawn character or a layout
+   * fix shows up everywhere, with no new drawing). Pages made before scenes were kept stay as they are.
+   */
+  private async recomposePages(st: StoryState, s: StorySeries) {
+    const dir = path.join(this.storyDir(st), "pages");
+    const chars = s.characters.filter((c) => c.svg).map((c) => ({ id: c.id, svg: c.svg! }));
+    for (let i = 0; i < st.pages.length; i++) {
+      const bg = await readFile(path.join(dir, `${pad2(i + 1)}.bg.svg`), "utf8").catch(() => null);
+      if (bg === null) continue;
+      const svgFile = path.join(dir, `${pad2(i + 1)}.svg`);
+      await writeFile(svgFile, composePage(bg, chars, st.pages[i]!.cast));
+      await this.deps.rasterize(svgFile, path.join(dir, `${pad2(i + 1)}.png`));
+      st.pages[i]!.imageUrl = `${toMediaUrl(path.join(dir, `${pad2(i + 1)}.png`))}?v=${Date.now()}`;
+    }
   }
 
   /** Into Queue → Waiting for your OK on every connected platform (YouTube marks it made for kids). */

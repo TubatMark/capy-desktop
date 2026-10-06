@@ -131,6 +131,23 @@ describe("StoryManager", () => {
     expect(m.getStory(st.id)!.pages[0]!.status).toBe("ready");
     expect(calls.drawBackground).toHaveLength(3); // page 1 twice, page 2 once
   });
+  it("re-rendering rebuilds every page from its saved background with the characters as they are now", async () => {
+    const { deps } = fakes();
+    const m = new StoryManager(deps);
+    const s = await newSeries(m);
+    await until(() => m.getSeries(s.id)!.characters.every((c) => c.status === "ready"));
+    const st = await m.createStory(s.id, "x");
+    await until(() => m.getStory(st.id)!.status === "script");
+    await m.approveScript(st.id);
+    await until(() => m.getStory(st.id)!.status === "pages");
+    const dir = path.join(m.storyDir(m.getStory(st.id)!), "pages");
+    expect(existsSync(path.join(dir, "01.bg.svg"))).toBe(true);
+    // Pip is redrawn after the pages were made: the next render uses the new Pip without drawing any page again
+    m.getSeries(s.id)!.characters[0]!.svg = '<rect id="new-pip"/>';
+    await m.render(st.id, "Samantha");
+    await until(() => m.getStory(st.id)!.status === "done");
+    expect(readFileSync(path.join(dir, "01.svg"), "utf8")).toContain('<rect id="new-pip"/>');
+  });
   it("refuses a second action while the story is busy", async () => {
     let release!: () => void;
     const { deps } = fakes({ writeStory: () => new Promise((r) => (release = () => r({ title: "T", moral: "M", pages: [page("Hi.")] }))) });
