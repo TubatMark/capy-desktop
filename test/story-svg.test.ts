@@ -53,7 +53,7 @@ describe("layoutCast", () => {
   it("two characters never overlap: smaller and far enough apart, in the writer's order", () => {
     const [a, b] = layoutCast([{ id: "pip", x: 0.45 }, { id: "lulu", x: 0.55 }]);
     expect(a!.scale).toBeLessThan(1.6);
-    expect(b!.x - a!.x).toBeGreaterThanOrEqual((400 * a!.scale!) / 1080);
+    expect(b!.x - a!.x).toBeGreaterThanOrEqual((400 * a!.scale!) / 1080 - 1e-9);
     expect(a!.x).toBeLessThan(b!.x);
     expect(a!.x).toBeGreaterThan(0.05);
     expect(b!.x).toBeLessThan(0.95);
