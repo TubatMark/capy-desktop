@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { AiReview } from "@/components/ai-review";
+import { SeoScore } from "@/components/seo-score";
 import { StatusChip } from "@/components/stories/status-chip";
 import { api } from "@/hooks/use-job";
 import type { StoryCast, StoryPage, StorySeries, StoryState } from "@/lib/types";
@@ -322,12 +323,14 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
           <video src={st.video.url} poster={st.video.coverUrl} controls className="aspect-[9/16] w-full rounded-lg bg-black" />
           <div className="min-w-0 space-y-4">
             {st.contentReview && <AiReview review={st.contentReview} />}
+            {st.seo && <SeoScore seo={st.seo} />}
             {st.publish && (
               <div className="space-y-1 text-sm">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Upload text (for parents)</p>
                 <p className="font-medium">{st.publish.ytTitle}</p>
                 <p className="whitespace-pre-line text-muted-foreground">{st.publish.description}</p>
                 <p className="text-xs text-muted-foreground">{st.publish.hashtags.map((h) => `#${h}`).join(" ")}</p>
+                {!!st.publish.tags?.length && <p className="text-xs text-muted-foreground">Search tags: {st.publish.tags.join(", ")}</p>}
                 <p className="text-xs text-muted-foreground">YouTube posts it as made for kids (comments and personalised ads off).</p>
               </div>
             )}

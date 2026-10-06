@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BookOpen, Check, ChevronDown, Link2, Loader2, LogOut, Pause, Play } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Link2, Loader2, LogOut, MonitorPlay, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -229,6 +229,13 @@ function AccountCard({ a, onChange, reload }: { a: AccountPublic; onChange: (a: 
         <Button type="button" size="sm" onClick={connect} disabled={busy !== null || !clientId.trim() || !secret.trim()}>
           {busy === "connect" || waiting ? <Loader2 className="animate-spin" /> : <Link2 />} {a.connected ? "Reconnect" : a.needsReconnect ? "Reconnect" : "Connect"}
         </Button>
+        {a.connected && a.platform === "youtube" && (
+          <Button asChild size="sm" variant="outline">
+            <Link href="/channel">
+              <MonitorPlay /> Open channel
+            </Link>
+          </Button>
+        )}
         {a.connected && (
           <Button
             type="button"

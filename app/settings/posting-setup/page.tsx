@@ -31,11 +31,14 @@ export default function PostingSetupPage() {
           Open the <A href="https://console.cloud.google.com/projectcreate">Google Cloud console</A> and create a project (any name, e.g. "capy").
         </Step>
         <Step>
-          In <A href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">APIs &amp; Services → Library</A>, enable <b>YouTube Data API v3</b>.
+          In <A href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">APIs &amp; Services → Library</A>, enable <b>YouTube Data API v3</b>, then search
+          for and enable <A href="https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com">YouTube Analytics API</A> too (the Channel page&apos;s watch
+          time and search terms).
         </Step>
         <Step>
-          Go to <b>OAuth consent screen</b>: choose <b>External</b>, fill in the app name and your email, and add the scopes <code>youtube.upload</code> and{" "}
-          <code>youtube.readonly</code>. Then click <b>Publish app</b> so it's "In production". You don't need Google's verification for yourself: at sign-in,
+          Go to <b>OAuth consent screen</b>: choose <b>External</b>, fill in the app name and your email, and add the scopes <code>youtube.upload</code>,{" "}
+          <code>youtube.readonly</code>, <code>yt-analytics.readonly</code> and <code>youtube.force-ssl</code> (the last lets capy fix old videos&apos; titles and tags
+          when you click Update). Then click <b>Publish app</b> so it's "In production". You don't need Google's verification for yourself: at sign-in,
           click <i>Advanced → Go to capy (unsafe)</i>. Leaving it in Testing signs you out every 7 days.
         </Step>
         <Step>

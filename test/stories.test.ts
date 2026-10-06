@@ -38,6 +38,10 @@ function fakes(over: Partial<StoryDeps> = {}) {
     assemble: track("assemble", async (o: { out: string; total: number }) => (writeFileSync(o.out, "mp4"), { duration: o.total + 1.2 })),
     cover: track("cover", async (_mp4: string, jpg: string) => void writeFileSync(jpg, "jpg")),
     reviewContent: track("reviewContent", async () => ({ verdict: "ok" as const, summary: "Lovely", issues: [], at: 1 })),
+    tuneSeo: track("tuneSeo", async (i: { publish: { ytTitle: string; description: string; hashtags: string[] } }) => ({
+      publish: { ...i.publish, ytTitle: `Bedtime Story: ${i.publish.ytTitle}`, tags: ["bedtime story"] },
+      seo: { score: 88, before: 40, keyword: "bedtime story", checks: [], at: 1 },
+    })),
     storyPublish: track("storyPublish", async () => ({ ytTitle: "Pip Shares #shorts", description: "A story about sharing.", hashtags: ["bedtimestory"] })),
     ...over,
   };
@@ -110,7 +114,11 @@ describe("StoryManager", () => {
     expect(a.starts[0]).toBe(a.lead);
     expect(done.video!.url).toMatch(/\.mp4\?v=/);
     expect(calls.reviewContent![0]![0]).toMatchObject({ profile: "kids", clipTitle: "Pip Shares" });
-    expect(done.publish!.ytTitle).toBe("Pip Shares #shorts");
+    // the upload text is search-tuned before the kids review, and the reviewer sees the tuned text
+    expect(calls.tuneSeo![0]![0]).toMatchObject({ kind: "kids", publish: { ytTitle: "Pip Shares #shorts" } });
+    expect(done.publish).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares #shorts", tags: ["bedtime story"] });
+    expect(done.seo).toMatchObject({ score: 88, before: 40 });
+    expect(calls.reviewContent![0]![0]).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares #shorts" });
   });
 
   it("draws a page again once when its drawing won't render, then gives up with a clear error", async () => {

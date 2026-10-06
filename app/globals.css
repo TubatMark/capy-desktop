@@ -40,6 +40,13 @@
   --sidebar-rail: 64px;
   --sidebar-w: 0px;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* instrument dials (components/gauge.tsx): warm-shifted bands that sit with the cream and brown */
+  --gauge-track: oklch(0.24 0.03 45 / 9%);
+  --gauge-tick: oklch(0.24 0.03 45 / 28%);
+  --gauge-poor: oklch(0.62 0.17 32);
+  --gauge-fair: oklch(0.76 0.15 72);
+  --gauge-good: oklch(0.6 0.13 152);
 }
 
 @theme inline {

@@ -175,6 +175,7 @@ export function onRendered(job: JobState, c: ClipState, toMediaUrl: (abs: string
         publish: c.publish,
         hook: c.hook,
         aiReview: c.contentReview,
+        seo: c.seo,
       },
       platforms,
       new Date(),

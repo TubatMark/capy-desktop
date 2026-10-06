@@ -1,7 +1,7 @@
 import type { Platform, PostText } from "../../lib/types";
 
 /** The clip's AI-written upload text (ClipState.publish). */
-export type Publish = { ytTitle: string; description: string; hashtags: string[] };
+export type Publish = { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
 
 const bare = (h: string) => h.replace(/^#/, "").replace(/\s+/g, "");
 const tagsOf = (p: Publish) => [...new Set(p.hashtags.map(bare).filter(Boolean))];
@@ -15,8 +15,9 @@ const body = (d: string) =>
     .trim();
 
 export function youtubeText(p: Publish): PostText {
+  // search tags first (they're chosen for search), then the hashtags; YouTube caps the list at 500 characters
   const tags: string[] = [];
-  for (const t of tagsOf(p)) if ([...tags, t].join(",").length <= 500) tags.push(t);
+  for (const t of new Set([...(p.tags ?? []).map((x) => x.trim()).filter(Boolean), ...tagsOf(p)])) if ([...tags, t].join(",").length <= 500) tags.push(t);
   return { title: cut(p.ytTitle.trim(), 100), description: cut(p.description.trim(), 5000), tags };
 }
 

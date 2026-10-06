@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { BookOpen, CalendarClock, Clapperboard, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { BookOpen, CalendarClock, Clapperboard, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -29,6 +29,7 @@ const MAIN: Item[] = [
   { href: "/stories", label: "Stories", icon: BookOpen },
   { href: "/automation", label: "Automation", icon: Radar },
   { href: "/queue", label: "Queue", icon: CalendarClock },
+  { href: "/channel", label: "Channel", icon: MonitorPlay },
 ];
 const SETTINGS: Item = { href: "/settings", label: "Settings", icon: Settings };
 

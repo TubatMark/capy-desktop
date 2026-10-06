@@ -37,6 +37,8 @@ export interface QueueEntry {
   madeForKids?: boolean;
   /** Where the review card's title links (default: the clip page). */
   link?: string;
+  /** The SEO score of the text it posts with. */
+  seo?: SeoReport;
   videoTitle?: string;
   videoUrl?: string;
   thumbUrl?: string;
@@ -119,6 +121,122 @@ export interface ContentReview {
   at: number;
 }
 
+// ---------- YouTube SEO and the user's channel ----------
+
+/** Upload text as SEO sees it. */
+export interface SeoText {
+  title: string;
+  description: string;
+  hashtags: string[];
+  /** Search tags (YouTube's hidden tags), separate from hashtags. */
+  tags: string[];
+}
+export interface SeoCheck {
+  id: string;
+  label: string;
+  weight: number;
+  pass: boolean;
+  /** What to change, when the check fails. */
+  tip?: string;
+}
+export interface SeoReport {
+  /** 0–100. */
+  score: number;
+  /** The score of the text before capy tuned it. */
+  before?: number;
+  keyword?: string;
+  checks: SeoCheck[];
+  /** Why SEO couldn't run, or what limited it (e.g. search quota). */
+  note?: string;
+  at: number;
+}
+export interface Keyword {
+  term: string;
+  /** 0–100. */
+  score: number;
+  sources: ("autocomplete" | "ranking" | "yours")[];
+  /** Views this search brought the channel (last 28 days). */
+  views?: number;
+}
+/** A video that ranks for a search. */
+export interface RankVideo {
+  id: string;
+  title: string;
+  channel: string;
+  views?: number;
+  publishedAt?: number;
+  tags?: string[];
+  thumb?: string;
+}
+export interface KeywordResearch {
+  seed: string;
+  keywords: Keyword[];
+  ranking: RankVideo[];
+  tags: string[];
+  /** Sources that were skipped, and why. */
+  notes: string[];
+  at: number;
+}
+
+/** "Improve" on one of the channel's videos: the current text next to a search-tuned rewrite. */
+export interface VideoSeoSuggestion {
+  videoId: string;
+  keyword?: string;
+  current: SeoText;
+  suggested: SeoText;
+  before: SeoReport;
+  after: SeoReport;
+  research?: KeywordResearch;
+}
+
+export interface ChannelInfo {
+  id: string;
+  title: string;
+  handle?: string;
+  description: string;
+  avatar?: string;
+  subscribers?: number;
+  views?: number;
+  videos?: number;
+  uploads?: string;
+  keywords: string[];
+}
+export interface ChannelVideo {
+  id: string;
+  title: string;
+  description: string;
+  tags: string[];
+  publishedAt: number;
+  categoryId?: string;
+  thumb?: string;
+  /** Seconds. */
+  duration: number;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  privacy?: string;
+  madeForKids?: boolean;
+  /** From Analytics (last 28 days). */
+  minutes?: number;
+  avgViewPct?: number;
+  /** Deterministic SEO score of its current text. */
+  seo?: number;
+}
+export interface ChannelSnapshot {
+  channel: ChannelInfo;
+  videos: ChannelVideo[];
+  /** Last 28 days; missing without the Analytics permission. */
+  analytics?: {
+    days: { day: string; views: number; minutes: number; subsGained: number; subsLost: number }[];
+    sources: { source: string; views: number }[];
+    searches: { term: string; views: number }[];
+    avgViewPct?: number;
+  };
+  /** What couldn't be loaded, in plain words. */
+  notes: string[];
+  fetchedAt: number;
+}
+
 // ---------- original kids stories ----------
 
 export type AgeBand = "2-4" | "5-8";
@@ -193,7 +311,8 @@ export interface StoryState {
   /** The AI content reviewer on the finished video (kids profile). */
   contentReview?: ContentReview;
   /** Upload text, written for parents. */
-  publish?: { ytTitle: string; description: string; hashtags: string[] };
+  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
+  seo?: SeoReport;
   /** Sent to the posting queue's review list. */
   queuedAt?: number;
   error?: string;
@@ -258,7 +377,8 @@ export interface ClipState {
   thumbAt?: number;
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
-  publish?: { ytTitle: string; description: string; hashtags: string[] };
+  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
+  seo?: SeoReport;
   /** The independent reviewer's verdict on this pick. */
   review?: ClipReview;
   /** Highest "Most replayed" value overlapping the clip, 0..1. */

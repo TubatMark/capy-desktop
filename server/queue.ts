@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { allocateSlot, fmtIn } from "../lib/post-time";
-import type { ContentReview, Platform, PostText, QueueEntry, QueueSummary } from "../lib/types";
+import type { ContentReview, Platform, PostText, QueueEntry, QueueSummary, SeoReport } from "../lib/types";
 import { postTextFor, type Publish } from "./platforms/text";
 import type { PostOutcome } from "./platforms/types";
 import { dataDir } from "./settings";
@@ -30,6 +30,7 @@ export interface ClipInfo {
   /** Identity of this cut when start/end can't tell (a story's render); default fingerprint(start, end). */
   fp?: string;
   link?: string;
+  seo?: SeoReport;
 }
 
 const MIN = 60_000;
@@ -56,7 +57,7 @@ export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: P
   const fp = c.fp ?? fingerprint(c.start, c.end);
   const fresh = (key: string, p: Platform): QueueEntry =>
     note({ key, jobId: c.jobId, n: c.n, platform: p, fp, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now);
-  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}), ...(c.link ? { link: c.link } : {}) };
+  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}), ...(c.link ? { link: c.link } : {}), ...(c.seo ? { seo: c.seo } : {}) };
   for (const p of platforms) {
     const key = keyOf(c.jobId, c.n, p);
     const i = out.findIndex((e) => e.key === key);

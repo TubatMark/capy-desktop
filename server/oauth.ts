@@ -47,7 +47,13 @@ export function pkce(): { verifier: string; challenge: string; challengeHex: str
 }
 
 export const SCOPES: Record<Platform, string[]> = {
-  youtube: ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"],
+  // upload; read the channel; Analytics (watch time, search terms); force-ssl to edit old videos' text (SEO fixes)
+  youtube: [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+  ],
   instagram: ["instagram_basic", "instagram_content_publish", "pages_show_list", "pages_read_engagement", "business_management"],
   tiktok: ["user.info.basic", "video.upload"],
 };

@@ -108,6 +108,25 @@ each card; you decide what gets scheduled. Nothing posts on its own.
 Files live in `<output>/stories/<series>/<story>/` (pages as SVG and PNG, narration, the mp4). Install nicer voices in
 System Settings → Accessibility → Spoken Content → Manage Voices; they appear in the narrator list.
 
+## Channel and YouTube SEO
+
+**Channel** (sidebar) shows your connected YouTube channel: subscribers and views, four dials (search score of your
+videos' text, average % watched, share of views from YouTube search, two-week momentum), daily views for 28 days,
+where viewers come from, the exact searches that found you, and every upload with its numbers and search score.
+
+- **Improve** on any video researches what people search for its topic, rewrites the title, description, hashtags and
+  tags around the best keyword, and shows both versions with their scores (the rewrite re-scores as you edit).
+  **Update on YouTube** changes it there; nothing changes until you click.
+- **Keywords** researches any topic: YouTube autocomplete (what people type), what ranks for it (views, tags they
+  share) and your own search terms, scored together.
+- **Every new upload is tuned too**: clips and stories get keyword research and an SEO rewrite (kept only if it
+  scores higher) before the AI content reviewer checks them, and their Queue card shows the score.
+
+Watch time, traffic sources, search terms and editing old videos need two more free Google permissions
+(Analytics and `youtube.force-ssl`): reconnect YouTube once in Settings. Ranking searches cost 100 of YouTube's
+10,000 free daily API units (an upload costs 1,600), so capy caches them for a week and runs at most 25 a day.
+The snapshot lives in `<CAPY_DATA_DIR>/channel.json`, the research cache in `seo-cache.json`.
+
 ## Settings
 
 Open **Settings** in the header (or **⌘,** in the app). Everything you set there is stored in one

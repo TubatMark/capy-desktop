@@ -11,10 +11,14 @@ import { characterCard, composePage } from "../src/story/svg";
 import * as write from "../src/story/write";
 import type { AiOpts } from "../src/story/write";
 import { slug } from "../src/util";
+import { tuneSeo as tuneSeoImpl } from "./seo";
 import { publicAccounts } from "./accounts";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { fingerprint, queue, upsertForRender } from "./queue";
 import { effective } from "./settings";
+import { saveJsonAtomic } from "./json-file";
+
+export { saveJsonAtomic };
 
 /**
  * Original kids' stories: series (bible + cast) and stories under <output>/stories/<seriesId>/<storyId>/.
@@ -35,6 +39,7 @@ export interface StoryDeps {
   assemble: typeof assembleStory;
   cover(mp4: string, jpg: string): Promise<void>;
   reviewContent(i: ContentInput, o: AiOpts): Promise<ContentReview>;
+  tuneSeo: typeof tuneSeoImpl;
 }
 
 const defaultDeps = (): StoryDeps => ({
@@ -53,6 +58,7 @@ const defaultDeps = (): StoryDeps => ({
   assemble: assembleStory,
   cover: (mp4, jpg) => clipThumbnail(mp4, jpg, 0.8),
   reviewContent: reviewContentImpl,
+  tuneSeo: (i, ai) => tuneSeoImpl(i, ai),
 });
 
 /** Seconds the title shows over the first page before the narration starts. */
@@ -203,7 +209,7 @@ export class StoryManager {
     void this.task(st, async () => {
       const ai = await this.deps.ai();
       const next = notes.length && st.pages.length ? await this.deps.reviseStory(s, st, notes, ai) : await this.deps.writeStory(s, st.brief, ai);
-      Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, queuedAt: undefined });
+      Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, seo: undefined, queuedAt: undefined });
       this.log(st, notes.length ? "Rewritten with your notes" : "Written again");
       st.status = "script";
       st.review = await this.tryReview(st, s, ai);
@@ -380,7 +386,12 @@ export class StoryManager {
       st.video = { url: `${toMediaUrl(out)}?v=${renderedAt}`, file: out, duration, coverUrl: hasCover ? `${toMediaUrl(jpg)}?v=${renderedAt}` : undefined, renderedAt };
       this.log(st, `Rendered ${Math.round(duration)}s with ${voice}`);
       const ai = await this.deps.ai();
-      st.publish = await this.deps.storyPublish(s, st, ai).catch(() => ({ ytTitle: `${st.title} | Bedtime Story #shorts`.slice(0, 100), description: st.moral, hashtags: ["bedtimestory", "kidsstories", "readaloud", "shorts"] }));
+      const draft = await this.deps.storyPublish(s, st, ai).catch(() => ({ ytTitle: `${st.title} | Bedtime Story #shorts`.slice(0, 100), description: st.moral, hashtags: ["bedtimestory", "kidsstories", "readaloud", "shorts"] }));
+      // search-tuned for what parents type; the kids content review below then checks the final text
+      const tuned = await this.deps.tuneSeo({ kind: "kids", publish: draft, about: `${st.title}. Ages ${s.ageBand}. Moral: ${st.moral}. ${st.pages.map((p) => p.text).join(" ")}` }, ai);
+      st.publish = tuned.publish;
+      st.seo = tuned.seo;
+      this.log(st, `SEO ${tuned.seo.score}${tuned.seo.keyword ? ` for "${tuned.seo.keyword}"` : ""}`);
       st.contentReview = await this.deps.reviewContent(
         { profile: "kids", videoTitle: s.title, clipTitle: st.title, hook: st.title, transcript: st.pages.map((p) => p.text).join(" "), ytTitle: st.publish.ytTitle, caption: st.publish.description, hashtags: st.publish.hashtags },
         ai,
@@ -435,6 +446,7 @@ export class StoryManager {
           publish: st.publish,
           hook: st.title,
           aiReview: st.contentReview,
+          seo: st.seo,
           madeForKids: true,
         },
         platforms,
@@ -502,27 +514,6 @@ export class StoryManager {
 /** Identity of a story's current video: every render is a new cut, even one of the same length. */
 export function storyFp(st: StoryState): string {
   return st.video?.renderedAt ? `r${st.video.renderedAt}` : fingerprint(0, st.video?.duration ?? 0);
-}
-
-const saving = new Map<string, Promise<void>>();
-
-/**
- * Write JSON so a reader (or a crash) never sees half a file: a temp file renamed over the old one. Saves of one
- * file run in call order, so the last call's data is what stays.
- */
-export function saveJsonAtomic(file: string, data: unknown): Promise<void> {
-  const body = JSON.stringify(data, null, 2);
-  const next = (saving.get(file) ?? Promise.resolve())
-    .catch(() => {})
-    .then(async () => {
-      await mkdir(path.dirname(file), { recursive: true });
-      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      await writeFile(tmp, body);
-      await rename(tmp, file);
-    });
-  saving.set(file, next);
-  void next.finally(() => saving.get(file) === next && saving.delete(file)).catch(() => {});
-  return next;
 }
 
 /** The file the poster posts for a story's queue entry; "changed" if it was re-rendered after the approval. */

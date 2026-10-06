@@ -20,6 +20,7 @@ import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
 import { startWatcher } from "./watcher";
 import { reviewContent, reviewUnavailable } from "../src/content-review";
+import { tuneSeo } from "./seo";
 import { cleanCaptionWords } from "../src/ass";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { effective } from "./settings";
@@ -904,6 +905,8 @@ class JobManager extends EventEmitter {
       // the AI content reviewer looks at every clip that is about to be posted (and everything automation makes)
       const queueing = job.settings.autoPost !== false && publicAccounts().some((a) => a.connected && a.autoPost);
       if (job.automation || queueing) {
+        // search-tune the upload text first, so the content reviewer judges the text that will actually go out
+        await this.tuneSeo(job, c, words, base);
         c.contentReview = await this.contentReview(job, c, words).catch((e) => reviewUnavailable(e instanceof Error ? e.message : String(e), Date.now()));
         this.log(job, "render", `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`);
       }
@@ -974,6 +977,20 @@ class JobManager extends EventEmitter {
     }
     job.automation = undefined;
     void this.update(job);
+  }
+
+  /** Keyword research + an SEO rewrite of the clip's upload text (kept only if it scores higher). Never throws. */
+  private async tuneSeo(job: JobState, c: ClipState, captionWords: Word[], base: string) {
+    const publish = c.publish ?? { ytTitle: c.title, description: "", hashtags: [] };
+    const about = [c.title, c.hook, cleanCaptionWords(wordsInRange(captionWords, c.start, c.end)).map((w) => w.text).join(" ")].filter(Boolean).join("\n");
+    const keep = publish.description.split("\n").find((l) => /^\s*credit:/i.test(l))?.trim();
+    const { publish: next, seo } = await tuneSeo({ kind: "short", publish, about, keep }, await this.ai(job));
+    c.publish = next;
+    c.seo = seo;
+    this.log(job, "render", `clip ${c.n} SEO: ${seo.before !== undefined && seo.before !== seo.score ? `${seo.before} → ` : ""}${seo.score}${seo.keyword ? ` for "${seo.keyword}"` : ""}${seo.note ? ` (${seo.note})` : ""}`);
+    // the upload-text file next to the mp4 shows what will be posted
+    const tags = next.hashtags.map((h) => `#${h.replace(/^#/, "")}`).join(" ");
+    await writeFile(`${base}.txt`, [`TITLE`, next.ytTitle, ``, `DESCRIPTION`, next.description, ``, `HASHTAGS`, tags, ``, `TAGS`, (next.tags ?? []).join(", "), ``].join("\n"), "utf8").catch(() => {});
   }
 
   /** The AI content reviewer on a finished clip: what viewers read, what it's posted with, and the original words. */
