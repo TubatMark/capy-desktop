@@ -109,6 +109,8 @@ export interface HookSpec {
   text: string;
   /** seconds the hook stays on screen */
   seconds: number;
+  /** Show the text as written instead of uppercased (story titles). */
+  keepCase?: boolean;
 }
 
 const PAUSE_SEC = 1.0;
@@ -187,7 +189,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const lines: string[] = [];
   const hookText = hook ? stripEmoji(hook.text) : "";
   if (hook && hookText) {
-    lines.push(`Dialogue: 1,${assTime(0)},${assTime(hook.seconds)},Hook,,0,0,0,,${escapeAss(hookText.toUpperCase())}`);
+    lines.push(`Dialogue: 1,${assTime(0)},${assTime(hook.seconds)},Hook,,0,0,0,,${escapeAss(hook.keepCase ? hookText : hookText.toUpperCase())}`);
   }
   const fmt = (w: Word) => escapeAss(style.uppercase ? w.text.toUpperCase() : w.text);
   const karaoke = style.highlight !== style.primary;
