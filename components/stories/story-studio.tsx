@@ -40,6 +40,8 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  /** Which action the current error came from, so it shows next to that button (the page is long). */
+  const [errAt, setErrAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +79,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
   async function act(name: string, url: string, body?: unknown, after?: string) {
     setBusy(name);
     setErr(null);
+    setErrAt(null);
     setMsg(null);
     try {
       await api(url, { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -84,6 +87,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      setErrAt(name);
     } finally {
       setBusy(null);
     }
@@ -152,7 +156,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
           <AlertTriangle className="size-4 shrink-0" /> {st.error}
         </p>
       )}
-      {err && <p className="text-sm text-red-600">{err}</p>}
+      {err && !["render", "queue"].includes(errAt ?? "") && <p className="text-sm text-red-600">{err}</p>}
       {msg && <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">{msg}</p>}
 
       {st.review && (
@@ -300,6 +304,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
               {busy === "render" || st.status === "rendering" ? <Loader2 className="animate-spin" /> : <Clapperboard />} {st.video ? "Make the video again" : "Narrate & make the video"}
             </Button>
           </div>
+          {err && errAt === "render" && <p className="text-sm text-red-600">{err}</p>}
           <p className="text-xs text-muted-foreground">Voices come from this computer. Install nicer ones in System Settings → Accessibility → Spoken Content → System voice → Manage Voices.</p>
         </section>
       )}
@@ -341,6 +346,16 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
                   Download MP4
                 </a>
               </Button>
+              {err && errAt === "queue" && (
+                <p className="w-full text-sm text-red-600">
+                  {err}{" "}
+                  {/posting account/i.test(err) && (
+                    <Link href="/settings#accounts" className="underline underline-offset-2">
+                      Connect one
+                    </Link>
+                  )}
+                </p>
+              )}
             </div>
           </div>
         </section>
