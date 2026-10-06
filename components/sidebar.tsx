@@ -95,21 +95,21 @@ export function AppSidebar() {
         <div className="sidebar-top flex h-14 shrink-0 items-center px-4">
           <Link href="/" className="no-drag flex min-w-0 items-center gap-2.5 rounded-md outline-offset-4" aria-label="capy home">
             <Mark className="size-8 shrink-0" />
-            <Wordmark className="sb-label h-6" />
+            <Wordmark className="sb-word h-6" />
           </Link>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
+        <nav className="sb-pad flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
           {MAIN.map((item) => (
             <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue"} collapsed={collapsed} />
           ))}
         </nav>
-        <div className="flex flex-col gap-1 border-t border-border/60 px-3 py-3">
+        <div className="sb-pad flex flex-col gap-1 border-t border-border/60 px-3 py-3">
           <NavItem item={SETTINGS} active={isActive(SETTINGS, path)} collapsed={collapsed} />
-          <Tip show={collapsed} label={`Expand sidebar`} hint={shortcut}>
+          <Tip show={collapsed} label="Expand sidebar" hint={shortcut}>
             <button type="button" onClick={toggle} className="sb-item no-drag text-muted-foreground" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-keyshortcuts="Meta+B Control+B">
               {collapsed ? <PanelLeftOpen className="size-[18px] shrink-0" /> : <PanelLeftClose className="size-[18px] shrink-0" />}
-              <span className="sb-label flex-1 text-left">Collapse</span>
-              <kbd className="sb-label font-sans text-[11px] text-muted-foreground/80">{shortcut}</kbd>
+              <span className="sb-label flex-1 text-left">{collapsed ? "Expand" : "Collapse"}</span>
+              <kbd className="sb-hint font-sans text-[11px] text-muted-foreground/80">{shortcut}</kbd>
             </button>
           </Tip>
         </div>
@@ -164,7 +164,7 @@ function NavItem({ item, active, count, urgent, collapsed }: { item: Item; activ
   const Icon = item.icon;
   const hint = count ? (urgent ? `${count} waiting for your OK` : `${count} watched`) : undefined;
   return (
-    <Tip show={collapsed} label={item.label} hint={hint}>
+    <Tip show={collapsed && !!hint} label={item.label} hint={hint}>
       <Link href={item.href} aria-current={active ? "page" : undefined} className={cn("sb-item no-drag relative", active ? "sb-active" : "text-muted-foreground")}>
         <Icon className="sb-icon size-[18px] shrink-0" />
         <span className="sb-label flex-1 truncate">{item.label}</span>

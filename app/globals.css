@@ -37,7 +37,7 @@
   /* navigation: a slightly deeper cream than the page so the content reads as the lit surface */
   --sidebar: oklch(0.968 0.016 78);
   --sidebar-open: 232px;
-  --sidebar-rail: 64px;
+  --sidebar-rail: 76px;
   --sidebar-w: 0px;
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -170,7 +170,8 @@
 
 /* ---- Sidebar (components/sidebar.tsx). Width comes from <html data-sidebar>, set before paint. ----
    With no saved choice it is a rail below 1280px (pages size their columns by the window, not the space left)
-   and open above; once the user toggles it, data-sidebar="open" | "collapsed" wins at every width. */
+   and open above; once the user toggles it, data-sidebar="open" | "collapsed" wins at every width.
+   The rail keeps every name: a small caption under each icon. */
 @media (min-width: 768px) {
   :root {
     --sidebar-w: var(--sidebar-open);
@@ -178,10 +179,26 @@
   html[data-sidebar="collapsed"] {
     --sidebar-w: var(--sidebar-rail);
   }
-  html[data-sidebar="collapsed"] .sb-label {
+  html[data-sidebar="collapsed"] .sb-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: auto;
+    padding: 7px 2px 6px;
+    font-size: 10.5px;
+    line-height: 1.15;
+  }
+  html[data-sidebar="collapsed"] .sb-pad {
+    padding-inline: 6px;
+  }
+  html[data-sidebar="collapsed"] .sb-item .sb-label {
+    flex: none;
+    max-width: 100%;
+    text-align: center;
+  }
+  html[data-sidebar="collapsed"] :is(.sb-word, .sb-hint) {
     display: none;
   }
-  html[data-sidebar="collapsed"] .sb-item,
   html[data-sidebar="collapsed"] .sidebar-top {
     justify-content: center;
     padding-inline: 0;
@@ -191,10 +208,26 @@
   html:not([data-sidebar]) {
     --sidebar-w: var(--sidebar-rail);
   }
-  html:not([data-sidebar]) .sb-label {
+  html:not([data-sidebar]) .sb-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: auto;
+    padding: 7px 2px 6px;
+    font-size: 10.5px;
+    line-height: 1.15;
+  }
+  html:not([data-sidebar]) .sb-pad {
+    padding-inline: 6px;
+  }
+  html:not([data-sidebar]) .sb-item .sb-label {
+    flex: none;
+    max-width: 100%;
+    text-align: center;
+  }
+  html:not([data-sidebar]) :is(.sb-word, .sb-hint) {
     display: none;
   }
-  html:not([data-sidebar]) .sb-item,
   html:not([data-sidebar]) .sidebar-top {
     justify-content: center;
     padding-inline: 0;
@@ -207,7 +240,7 @@
 .app-main {
   padding-left: var(--sidebar-w);
 }
-.sidebar .sb-label {
+.sidebar :is(.sb-label, .sb-word, .sb-hint) {
   animation: label-in 200ms var(--ease-out-expo);
 }
 .sb-item {
@@ -286,7 +319,7 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sidebar .sb-label,
+  .sidebar :is(.sb-label, .sb-word, .sb-hint),
   .drawer,
   .drawer-overlay,
   .tip {
@@ -298,7 +331,7 @@
 /* ---- Desktop shell (Electron sets data-desktop on <html>; see app/layout.tsx) ---- */
 /* The sidebar top (or the narrow-window top bar) is the title bar: draggable, with room for the macOS traffic lights. */
 html[data-desktop] {
-  --sidebar-rail: 76px;
+  --sidebar-rail: 80px;
 }
 html[data-desktop] .sidebar-top,
 html[data-desktop] .mobile-bar,
