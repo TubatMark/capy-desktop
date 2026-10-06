@@ -21,6 +21,8 @@ export interface ContentInput {
   ytTitle?: string;
   caption?: string;
   hashtags?: string[];
+  /** "kids": an original story for young children, posted as made for kids (different checks). */
+  profile?: "kids";
 }
 
 const Schema = z.object({
@@ -31,6 +33,7 @@ const Schema = z.object({
 });
 
 export function buildContentPrompt(i: ContentInput): string {
+  if (i.profile === "kids") return kidsPrompt(i);
   return `A vertical short was cut from "${i.videoTitle}"${i.channel ? ` by ${i.channel}` : ""} and is about to be posted to YouTube Shorts, Instagram Reels and TikTok.
 
 On-screen hook: ${i.hook}
@@ -50,6 +53,26 @@ Review it before a human editor does. Check:
 5. Personal data: phone numbers, addresses or other private details said out loud.
 
 verdict: "ok" if it can go out as is; "caution" if the editor should look at something first; "block" only for a real policy problem or something seriously misleading. Keep notes short and concrete.`;
+}
+
+function kidsPrompt(i: ContentInput): string {
+  return `An original animated story for young children, "${i.clipTitle}" from the series "${i.videoTitle}", is about to be posted as made for kids on YouTube (and to parents on Instagram and TikTok).
+
+Title card: ${i.hook}
+YouTube title: ${i.ytTitle ?? "(none)"}
+Caption: ${i.caption ?? "(none)"}
+Hashtags: ${(i.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ") || "(none)"}
+
+The words read aloud (and shown as read-along captions):
+${i.transcript}
+
+Review it before a human editor does. Check:
+1. Kid safety: nothing scary, violent, or unsafe a child could imitate; no stereotypes, no brand names or real people.
+2. Made for kids: nothing that asks children to comment, subscribe, buy or click; the caption and title address parents, not children.
+3. Honest: title and caption describe the story; no clickbait.
+4. Quality: the read-aloud text makes sense and has no garbled lines.
+
+verdict: "ok" if it can go out as is; "caution" if the editor should look at something first; "block" only for a real child-safety or policy problem. Keep notes short and concrete.`;
 }
 
 export function normalizeContentReview(raw: unknown, at: number): ContentReview {

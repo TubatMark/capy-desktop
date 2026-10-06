@@ -39,3 +39,13 @@ describe("buildContentPrompt", () => {
     expect(p).toContain("ela pegou carona");
   });
 });
+
+describe("kids profile", () => {
+  it("reviews an original children's story against kid-safety and made-for-kids rules", () => {
+    const p = buildContentPrompt({ videoTitle: "Pip & Lulu", clipTitle: "Pip Learns to Share", hook: "Pip Learns to Share", transcript: "Pip had a sled.", profile: "kids" });
+    expect(p).toMatch(/original animated story for young children/i);
+    expect(p).toMatch(/made for kids/i);
+    expect(p).toMatch(/scary|imitate/i);
+    expect(p).not.toMatch(/credit to the original creator/i);
+  });
+});
