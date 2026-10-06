@@ -116,13 +116,18 @@ ${notes.map((n) => `- ${n}`).join("\n")}`,
 
 const ReviewSchema = z.object({
   verdict: z.enum(["ok", "fix", "block"]),
-  notes: z.array(z.string()).describe("Concrete, page-numbered notes (empty when ok)"),
+  notes: z.array(z.string()).describe("Only the problems to fix, concrete and page-numbered; leave out checks that pass (empty when ok)"),
 });
 
 export function normalizeStoryReview(raw: unknown): StoryReview {
   const r = (raw ?? {}) as { verdict?: string; notes?: unknown[] };
   const verdict = r.verdict === "ok" || r.verdict === "block" ? r.verdict : "fix";
-  const notes = (Array.isArray(r.notes) ? r.notes : []).filter((n): n is string => typeof n === "string" && !!n.trim()).map((n) => n.trim().slice(0, 300)).slice(0, 10);
+  // only problems are notes: a check that passed ("…. Pass.", "(pass)") is noise next to a real issue
+  const passed = (n: string) => /(\bpass(ed|es)?\b\.?\)?\.?\s*$)|(\(pass(ed)?\)\.?\s*$)/i.test(n.trim());
+  const notes = (Array.isArray(r.notes) ? r.notes : [])
+    .filter((n): n is string => typeof n === "string" && !!n.trim() && !passed(n))
+    .map((n) => n.trim().slice(0, 300))
+    .slice(0, 10);
   return { verdict, notes };
 }
 
@@ -141,7 +146,8 @@ Check:
 3. Age fit: words and sentence length suit the age band; the page word limits are kept.
 4. It works as a story: a clear beginning, a small problem, a warm ending.
 
-verdict: "ok" if ready; "fix" with notes if a writer should change something; "block" only if the story is unsuitable for children at all.`,
+verdict: "ok" if ready; "fix" with notes if a writer should change something; "block" only if the story is unsuitable for children at all.
+notes: only what needs changing. Do not list checks that pass.`,
     { model: o.model, maxTurns: 2, effort: "medium", system: "You review children's stories for safety and quality. Answer only with the requested JSON.", schema: schemaOf(ReviewSchema) },
   );
   return normalizeStoryReview(res.data);

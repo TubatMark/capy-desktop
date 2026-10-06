@@ -45,4 +45,8 @@ describe("normalizeStoryReview", () => {
     expect(normalizeStoryReview({ verdict: "meh", notes: ["Page 3 is scary", 5, "x".repeat(500)] })).toEqual({ verdict: "fix", notes: ["Page 3 is scary", "x".repeat(300)] });
     expect(normalizeStoryReview({ verdict: "ok", notes: [] })).toEqual({ verdict: "ok", notes: [] });
   });
+  it("keeps only problems: checks that passed are not notes", () => {
+    const r = normalizeStoryReview({ verdict: "fix", notes: ["Page count: 9 pages, ages 2-4 need 6-8. Merge pages 8 and 9.", "Safety: gentle hill, no danger. Pass.", "Original: no sign of a retelling. Pass", "Word limits: all pages under 15 words (pass)."] });
+    expect(r.notes).toEqual(["Page count: 9 pages, ages 2-4 need 6-8. Merge pages 8 and 9."]);
+  });
 });
