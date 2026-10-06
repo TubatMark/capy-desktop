@@ -12,14 +12,9 @@ import { cn } from "@/lib/utils";
 const KEY = "capy.sidebar";
 
 /** Runs before first paint (see app/layout.tsx) so a collapsed sidebar never flashes open. */
-export const SIDEBAR_BOOT = `try{var v=localStorage.getItem("${KEY}");if(v==="collapsed"||v==="open")document.documentElement.dataset.sidebar=v}catch(e){}`;
+export const SIDEBAR_BOOT = `try{if(localStorage.getItem("${KEY}")==="collapsed")document.documentElement.dataset.sidebar="collapsed"}catch(e){}`;
 
-/** No saved choice: a rail below this width, open above (globals.css mirrors it). */
-const WIDE = "(min-width: 1280px)";
-const isCollapsed = () => {
-  const v = document.documentElement.dataset.sidebar;
-  return v ? v === "collapsed" : !window.matchMedia(WIDE).matches;
-};
+const isCollapsed = () => document.documentElement.dataset.sidebar === "collapsed";
 
 interface Item {
   href: string;
@@ -41,17 +36,11 @@ const isActive = (item: Item, path: string) => (item.href === "/" ? path === "/"
 /** Collapsed state lives on <html data-sidebar> (CSS sizes everything from it) and in localStorage. */
 function useCollapsed() {
   const [collapsed, set] = useState(false);
-  useEffect(() => {
-    set(isCollapsed());
-    // without a saved choice the default follows the window width
-    const mq = window.matchMedia(WIDE);
-    const onChange = () => set(isCollapsed());
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  useEffect(() => set(isCollapsed()), []);
   const toggle = useCallback(() => {
     const next = !isCollapsed();
-    document.documentElement.dataset.sidebar = next ? "collapsed" : "open";
+    if (next) document.documentElement.dataset.sidebar = "collapsed";
+    else delete document.documentElement.dataset.sidebar;
     try {
       localStorage.setItem(KEY, next ? "collapsed" : "open");
     } catch {
@@ -98,17 +87,17 @@ export function AppSidebar() {
             <Wordmark className="sb-word h-6" />
           </Link>
         </div>
-        <nav className="sb-pad flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
           {MAIN.map((item) => (
             <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue"} collapsed={collapsed} />
           ))}
         </nav>
-        <div className="sb-pad flex flex-col gap-1 border-t border-border/60 px-3 py-3">
+        <div className="flex flex-col gap-1 border-t border-border/60 px-3 py-3">
           <NavItem item={SETTINGS} active={isActive(SETTINGS, path)} collapsed={collapsed} />
           <Tip show={collapsed} label="Expand sidebar" hint={shortcut}>
             <button type="button" onClick={toggle} className="sb-item no-drag text-muted-foreground" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-keyshortcuts="Meta+B Control+B">
               {collapsed ? <PanelLeftOpen className="size-[18px] shrink-0" /> : <PanelLeftClose className="size-[18px] shrink-0" />}
-              <span className="sb-label flex-1 text-left">{collapsed ? "Expand" : "Collapse"}</span>
+              <span className="sb-label flex-1 text-left">Collapse</span>
               <kbd className="sb-hint font-sans text-[11px] text-muted-foreground/80">{shortcut}</kbd>
             </button>
           </Tip>
@@ -164,7 +153,7 @@ function NavItem({ item, active, count, urgent, collapsed }: { item: Item; activ
   const Icon = item.icon;
   const hint = count ? (urgent ? `${count} waiting for your OK` : `${count} watched`) : undefined;
   return (
-    <Tip show={collapsed && !!hint} label={item.label} hint={hint}>
+    <Tip show={collapsed} label={item.label} hint={hint}>
       <Link href={item.href} aria-current={active ? "page" : undefined} className={cn("sb-item no-drag relative", active ? "sb-active" : "text-muted-foreground")}>
         <Icon className="sb-icon size-[18px] shrink-0" />
         <span className="sb-label flex-1 truncate">{item.label}</span>
