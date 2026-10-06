@@ -25,6 +25,8 @@ export interface ClipInfo {
   publish?: Publish;
   hook?: string;
   aiReview?: ContentReview;
+  /** A kids' story: YouTube marks it "made for kids". */
+  madeForKids?: boolean;
 }
 
 const MIN = 60_000;
@@ -51,7 +53,7 @@ export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: P
   const fp = fingerprint(c.start, c.end);
   const fresh = (key: string, p: Platform): QueueEntry =>
     note({ key, jobId: c.jobId, n: c.n, platform: p, fp, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now);
-  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview };
+  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}) };
   for (const p of platforms) {
     const key = keyOf(c.jobId, c.n, p);
     const i = out.findIndex((e) => e.key === key);
