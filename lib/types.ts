@@ -33,6 +33,8 @@ export interface QueueEntry {
   progress?: Record<string, string>;
   /** The AI content reviewer's verdict on this clip. */
   aiReview?: ContentReview;
+  /** A kids' story: YouTube marks it "made for kids". */
+  madeForKids?: boolean;
   videoTitle?: string;
   videoUrl?: string;
   thumbUrl?: string;
@@ -113,6 +115,89 @@ export interface ContentReview {
   /** A better YouTube title, when the reviewer has one. */
   title?: string;
   at: number;
+}
+
+// ---------- original kids stories ----------
+
+export type AgeBand = "2-4" | "5-8";
+
+/** A recurring character, drawn once as an SVG sprite (400×400 box, feet at 200,390) and reused on every page. */
+export interface StoryCharacter {
+  id: string;
+  name: string;
+  description: string;
+  svg?: string;
+  status: "drawing" | "ready" | "error";
+  error?: string;
+  /** PNG preview. */
+  imageUrl?: string;
+}
+
+/** A series bible: who the stories are for, how they look, and the cast. */
+export interface StorySeries {
+  id: string;
+  title: string;
+  ageBand: AgeBand;
+  /** e.g. "gentle and funny, bedtime-calm endings" */
+  tone: string;
+  /** e.g. "sharing", "trying new things" */
+  values: string[];
+  /** Palette and drawing style every page follows. */
+  artStyle: string;
+  characters: StoryCharacter[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoryCast {
+  id: string;
+  /** 0..1 across the page. */
+  x: number;
+  y?: number;
+  scale?: number;
+  flip?: boolean;
+}
+
+export interface StoryPage {
+  text: string;
+  /** What the picture shows (the illustrator draws the background from it). */
+  scene: string;
+  cast: StoryCast[];
+  mood?: string;
+  status?: "pending" | "drawing" | "ready" | "error";
+  imageUrl?: string;
+  error?: string;
+}
+
+export interface StoryReview {
+  verdict: "ok" | "fix" | "block";
+  notes: string[];
+}
+
+export type StoryStatus = "writing" | "script" | "illustrating" | "pages" | "rendering" | "done" | "error";
+
+export interface StoryState {
+  id: string;
+  seriesId: string;
+  title: string;
+  brief: string;
+  moral: string;
+  status: StoryStatus;
+  pages: StoryPage[];
+  /** The kid-safety story reviewer's verdict on the script. */
+  review?: StoryReview;
+  voice?: string;
+  video?: { url: string; file: string; duration: number; coverUrl?: string };
+  /** The AI content reviewer on the finished video (kids profile). */
+  contentReview?: ContentReview;
+  /** Upload text, written for parents. */
+  publish?: { ytTitle: string; description: string; hashtags: string[] };
+  /** Sent to the posting queue's review list. */
+  queuedAt?: number;
+  error?: string;
+  log: { t: number; msg: string }[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
