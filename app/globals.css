@@ -33,6 +33,13 @@
   --blob-c: oklch(0.84 0.09 25 / 38%);
   --grid-line: oklch(0.24 0.03 45 / 7%);
   --sticker-opacity: 0.92;
+
+  /* navigation: a slightly deeper cream than the page so the content reads as the lit surface */
+  --sidebar: oklch(0.968 0.016 78);
+  --sidebar-open: 232px;
+  --sidebar-rail: 64px;
+  --sidebar-w: 0px;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme inline {
@@ -161,14 +168,170 @@
   }
 }
 
+/* ---- Sidebar (components/sidebar.tsx). Width comes from <html data-sidebar>, set before paint. ----
+   With no saved choice it is a rail below 1280px (pages size their columns by the window, not the space left)
+   and open above; once the user toggles it, data-sidebar="open" | "collapsed" wins at every width. */
+@media (min-width: 768px) {
+  :root {
+    --sidebar-w: var(--sidebar-open);
+  }
+  html[data-sidebar="collapsed"] {
+    --sidebar-w: var(--sidebar-rail);
+  }
+  html[data-sidebar="collapsed"] .sb-label {
+    display: none;
+  }
+  html[data-sidebar="collapsed"] .sb-item,
+  html[data-sidebar="collapsed"] .sidebar-top {
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+@media (min-width: 768px) and (max-width: 1279px) {
+  html:not([data-sidebar]) {
+    --sidebar-w: var(--sidebar-rail);
+  }
+  html:not([data-sidebar]) .sb-label {
+    display: none;
+  }
+  html:not([data-sidebar]) .sb-item,
+  html:not([data-sidebar]) .sidebar-top {
+    justify-content: center;
+    padding-inline: 0;
+  }
+}
+/* the width snaps (animating it would re-lay out the whole page every frame); the labels fade in instead */
+.sidebar {
+  width: var(--sidebar-w);
+}
+.app-main {
+  padding-left: var(--sidebar-w);
+}
+.sidebar .sb-label {
+  animation: label-in 200ms var(--ease-out-expo);
+}
+.sb-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.5rem;
+  padding-inline: 0.75rem;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out;
+}
+.sb-item:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.sb-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.sb-active {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow:
+    0 1px 2px oklch(0.24 0.03 45 / 8%),
+    0 0 0 1px var(--border);
+}
+.sb-active .sb-icon {
+  color: var(--primary);
+}
+.drawer[data-state="open"] {
+  animation: drawer-in 260ms var(--ease-out-expo);
+}
+.drawer[data-state="closed"] {
+  animation: drawer-out 180ms ease-in;
+}
+.drawer-overlay[data-state="open"] {
+  animation: fade-in 200ms ease-out;
+}
+.drawer-overlay[data-state="closed"] {
+  animation: fade-in 160ms ease-in reverse;
+}
+.tip[data-state="delayed-open"],
+.tip[data-state="instant-open"] {
+  animation: tip-in 140ms var(--ease-out-expo);
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@keyframes drawer-out {
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes label-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar .sb-label,
+  .drawer,
+  .drawer-overlay,
+  .tip {
+    transition: none;
+    animation: none !important;
+  }
+}
+
 /* ---- Desktop shell (Electron sets data-desktop on <html>; see app/layout.tsx) ---- */
-/* The header doubles as the title bar: draggable, with room for the macOS traffic lights. */
-html[data-desktop] .app-header {
+/* The sidebar top (or the narrow-window top bar) is the title bar: draggable, with room for the macOS traffic lights. */
+html[data-desktop] {
+  --sidebar-rail: 76px;
+}
+html[data-desktop] .sidebar-top,
+html[data-desktop] .mobile-bar,
+html[data-desktop] .app-titlebar {
   -webkit-app-region: drag;
   user-select: none;
 }
-html[data-desktop] .app-header > div {
+html[data-desktop] .sidebar-top {
   padding-left: 84px;
+}
+html[data-desktop] .mobile-bar {
+  padding-left: 84px;
+}
+/* folded rail: the traffic lights take the whole top, the mark would collide with them */
+html[data-desktop][data-sidebar="collapsed"] .sidebar-top > a {
+  display: none;
+}
+@media (max-width: 1279px) {
+  html[data-desktop]:not([data-sidebar]) .sidebar-top > a {
+    display: none;
+  }
+}
+.app-titlebar {
+  display: none;
+}
+html[data-desktop] .app-titlebar {
+  display: block;
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: var(--sidebar-w);
+  height: 18px;
+  z-index: 30;
 }
 html[data-desktop] .no-drag,
 html[data-desktop] .no-drag * {

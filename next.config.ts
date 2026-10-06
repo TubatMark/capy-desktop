@@ -41,6 +41,8 @@ const config: NextConfig = {
     ],
   },
   images: { remotePatterns: [{ protocol: "https", hostname: "i.ytimg.com" }] },
+  // the dev-only Next.js badge would sit on the sidebar's collapse button (bottom-left)
+  devIndicators: { position: "bottom-right" },
 };
 
 export default config;

@@ -32,3 +32,23 @@ export function useQueue() {
 export function fmtSlot(at: number, tz: string) {
   return new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(at));
 }
+
+/** Review count, next post and watched creators for the navigation; refreshed every 15 s. */
+export function useQueueSummary() {
+  const [s, setS] = useState<(QueueSummary & { watching?: number }) | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch("/api/queue/summary")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((v) => live && v && setS(v))
+        .catch(() => {});
+    void load();
+    const t = setInterval(load, 15_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+  return s;
+}
