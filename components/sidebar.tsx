@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { CalendarClock, Clapperboard, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { BookOpen, CalendarClock, Clapperboard, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ interface Item {
 
 const MAIN: Item[] = [
   { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
+  { href: "/stories", label: "Stories", icon: BookOpen },
   { href: "/automation", label: "Automation", icon: Radar },
   { href: "/queue", label: "Queue", icon: CalendarClock },
 ];
