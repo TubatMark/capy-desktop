@@ -12,6 +12,10 @@ describe("sanitizeSvg", () => {
   it("unwraps an <svg> wrapper the AI added anyway", () => {
     expect(sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1"/></svg>')).toBe('<rect width="1"/>');
   });
+  it("drops stray <svg> and </svg> tags inside a fragment (they would close the page early)", () => {
+    expect(sanitizeSvg('<defs><linearGradient id="sky"/></defs><rect width="1"/></svg>')).toBe('<defs><linearGradient id="sky"/></defs><rect width="1"/>');
+    expect(sanitizeSvg('<rect width="1"/><svg x="5"><circle r="1"/></svg>')).toBe('<rect width="1"/><circle r="1"/>');
+  });
   it("strips code fences around the markup", () => {
     expect(sanitizeSvg("```svg\n<rect width=\"1\"/>\n```")).toBe('<rect width="1"/>');
   });

@@ -39,9 +39,8 @@ export function sanitizeSvg(raw: string): string {
     // only same-document references (#id) survive
     .replace(/\s(?:xlink:)?href\s*=\s*("(?!#)[^"]*"|'(?!#)[^']*')/gi, "")
     .replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, "none");
-  // the AI was asked for a fragment; keep the inside of an <svg> wrapper if it added one
-  const wrapped = s.match(/^\s*<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/i);
-  return (wrapped ? wrapped[1]! : s).trim();
+  // the AI was asked for a fragment: drop any <svg> wrapper or stray <svg>/</svg> tag (one would close the page early)
+  return s.replace(/<svg\b[^>]*>/gi, "").replace(/<\/svg\s*>/gi, "").trim();
 }
 
 /** SVG transform that stands a character's feet on the placement point (clamped onto the page). */

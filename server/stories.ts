@@ -252,7 +252,8 @@ export class StoryManager {
       const todo = st.pages.map((p, i) => ({ p, i })).filter(({ p }) => p.status !== "ready");
       await pool(todo, 2, ({ i }) => this.drawPage(st, s, i));
       st.status = "pages";
-      this.log(st, `Illustrated ${todo.length} page${todo.length === 1 ? "" : "s"}`);
+      const failed = todo.filter(({ i }) => st.pages[i]!.status === "error").length;
+      this.log(st, `Illustrated ${todo.length - failed} page${todo.length - failed === 1 ? "" : "s"}${failed ? `; ${failed} failed (draw them again)` : ""}`);
     });
     return st;
   }
@@ -274,14 +275,22 @@ export class StoryManager {
     p.status = "drawing";
     await this.saveStory(st);
     try {
-      const bg = await this.deps.drawBackground(s, p, await this.deps.ai());
       const dir = path.join(this.storyDir(st), "pages");
       await mkdir(dir, { recursive: true });
       const chars = s.characters.filter((c) => c.svg).map((c) => ({ id: c.id, svg: c.svg! }));
       const svgFile = path.join(dir, `${pad2(i + 1)}.svg`);
-      await writeFile(svgFile, composePage(bg, chars, p.cast));
       const png = path.join(dir, `${pad2(i + 1)}.png`);
-      await this.deps.rasterize(svgFile, png);
+      // a drawing that won't render (broken SVG) gets one fresh attempt before the page is marked failed
+      for (let attempt = 1; ; attempt++) {
+        const bg = await this.deps.drawBackground(s, p, await this.deps.ai());
+        await writeFile(svgFile, composePage(bg, chars, p.cast));
+        try {
+          await this.deps.rasterize(svgFile, png);
+          break;
+        } catch (e) {
+          if (attempt >= 2) throw new Error(`The drawing for this page wouldn't render (${errText(e)}). Draw it again.`);
+        }
+      }
       Object.assign(p, { status: "ready", error: undefined, imageUrl: `${toMediaUrl(png)}?v=${Date.now()}` });
     } catch (e) {
       Object.assign(p, { status: "error", error: errText(e) });

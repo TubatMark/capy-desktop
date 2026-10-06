@@ -113,6 +113,24 @@ describe("StoryManager", () => {
     expect(done.publish!.ytTitle).toBe("Pip Shares #shorts");
   });
 
+  it("draws a page again once when its drawing won't render, then gives up with a clear error", async () => {
+    let tries = 0;
+    const { deps, calls } = fakes({
+      rasterize: async (svg: string, png: string) => {
+        if (svg.includes("/pages/") && svg.endsWith("01.svg") && tries++ < 1) throw new Error("rsvg-convert exited with code 1");
+        writeFileSync(png, "png");
+      },
+    });
+    const m = new StoryManager(deps);
+    const s = await newSeries(m);
+    await until(() => m.getSeries(s.id)!.characters.every((c) => c.status === "ready"));
+    const st = await m.createStory(s.id, "x");
+    await until(() => m.getStory(st.id)!.status === "script");
+    await m.approveScript(st.id);
+    await until(() => m.getStory(st.id)!.status === "pages");
+    expect(m.getStory(st.id)!.pages[0]!.status).toBe("ready");
+    expect(calls.drawBackground).toHaveLength(3); // page 1 twice, page 2 once
+  });
   it("refuses a second action while the story is busy", async () => {
     let release!: () => void;
     const { deps } = fakes({ writeStory: () => new Promise((r) => (release = () => r({ title: "T", moral: "M", pages: [page("Hi.")] }))) });
