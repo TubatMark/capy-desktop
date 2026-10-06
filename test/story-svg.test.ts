@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { castTransform, composePage, PAGE_H, PAGE_W, sanitizeSvg } from "../src/story/svg";
+import { castTransform, composePage, layoutCast, PAGE_H, PAGE_W, sanitizeSvg } from "../src/story/svg";
 
 describe("sanitizeSvg", () => {
   it("drops scripts, foreignObject, images, event handlers and outside links", () => {
@@ -43,5 +43,26 @@ describe("composePage", () => {
     expect(svg).toContain('<use href="#char-pip"');
     expect(svg).not.toContain("#char-ghost"); // unknown cast members are skipped
     expect(svg.indexOf('fill="#fde"')).toBeLessThan(svg.indexOf("<use")); // background first, characters on top
+  });
+});
+
+describe("layoutCast", () => {
+  it("one character stands where the writer put it, full size", () => {
+    expect(layoutCast([{ id: "a", x: 0.4 }])).toEqual([{ id: "a", x: 0.4, scale: 1.6 }]);
+  });
+  it("two characters never overlap: smaller and far enough apart, in the writer's order", () => {
+    const [a, b] = layoutCast([{ id: "pip", x: 0.45 }, { id: "lulu", x: 0.55 }]);
+    expect(a!.scale).toBeLessThan(1.6);
+    expect(b!.x - a!.x).toBeGreaterThanOrEqual((400 * a!.scale!) / 1080);
+    expect(a!.x).toBeLessThan(b!.x);
+    expect(a!.x).toBeGreaterThan(0.05);
+    expect(b!.x).toBeLessThan(0.95);
+  });
+  it("three characters fit across the page", () => {
+    const c = layoutCast([{ id: "a", x: 0.5 }, { id: "b", x: 0.5 }, { id: "c", x: 0.5 }]);
+    for (let i = 1; i < c.length; i++) expect(c[i]!.x - c[i - 1]!.x).toBeGreaterThanOrEqual((400 * c[0]!.scale!) / 1080 - 1e-9);
+  });
+  it("keeps who faces which way", () => {
+    expect(layoutCast([{ id: "a", x: 0.3, flip: true }, { id: "b", x: 0.7 }])[0]!.flip).toBe(true);
   });
 });

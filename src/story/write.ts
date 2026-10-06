@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { askAgent } from "../agents";
 import type { AgentId, StoryPage, StoryReview, StorySeries, StoryState } from "../../lib/types";
-import { sanitizeSvg } from "./svg";
+import { layoutCast, sanitizeSvg } from "./svg";
 
 /**
  * The words and pictures of a story, by AI: the writer, the kid-safety reviewer, revisions, the character sprites,
@@ -176,7 +176,11 @@ ${drawingRules(series)}`,
 
 /** A page's scene (no characters: capy places them), for a 1080×1920 portrait page. */
 export async function drawBackground(series: StorySeries, page: Pick<StoryPage, "scene" | "mood" | "cast">, o: AiOpts): Promise<string> {
-  const where = page.cast.length ? `Characters will stand on the ground around x=${page.cast.map((c) => Math.round(c.x * 1080)).join(", ")} with their feet near y=1380: keep that ground open and flat.` : "No characters on this page.";
+  // the same spots capy will put the characters on (svg.ts layoutCast)
+  const spots = layoutCast(page.cast).map((c) => Math.round(c.x * 1080));
+  const where = page.cast.length
+    ? `Characters will stand on flat ground at x=${spots.join(", ")} with their feet at y=1380; keep that ground open. If the scene mentions something a character sits on, holds or uses (a sled, a ball, a bed), draw it large and right at that character's spot so they appear to use it.`
+    : "No characters on this page.";
   const res = await askAgent(
     o.agent,
     `Draw the background for a portrait picture-book page, canvas 1080x1920.

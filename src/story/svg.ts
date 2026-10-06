@@ -52,12 +52,26 @@ export function castTransform(p: CastPlacement): string {
   return p.flip ? `translate(${n(X + FEET.x * s)} ${n(ty)}) scale(${n(-s)} ${n(s)})` : `translate(${n(X - FEET.x * s)} ${n(ty)}) scale(${n(s)})`;
 }
 
+/**
+ * Where the cast actually stands: one character keeps the writer's spot at full size; two or three are drawn
+ * smaller and spread evenly (in the writer's left-to-right order) so their 400px boxes never overlap.
+ */
+export function layoutCast(cast: CastPlacement[]): CastPlacement[] {
+  if (cast.length <= 1) return cast.map((c) => ({ ...c, scale: c.scale ?? 1.6 }));
+  const scale = cast.length === 2 ? 1.25 : 1.0;
+  const step = (400 * scale) / PAGE_W;
+  const first = 0.5 - (step * (cast.length - 1)) / 2;
+  return cast
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => a.c.x - b.c.x || a.i - b.i)
+    .map(({ c }, k) => ({ ...c, x: first + k * step, scale }));
+}
+
 /** One page: the scene, then the cast on top. Cast members that aren't characters of the series are skipped. */
 export function composePage(background: string, chars: { id: string; svg: string }[], cast: CastPlacement[]): string {
   const known = new Set(chars.map((c) => c.id));
   const defs = chars.map((c) => `<g id="char-${c.id}">${sanitizeSvg(c.svg)}</g>`).join("");
-  const uses = cast
-    .filter((p) => known.has(p.id))
+  const uses = layoutCast(cast.filter((p) => known.has(p.id)))
     .map((p) => `<use href="#char-${p.id}" transform="${castTransform(p)}"/>`)
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_W}" height="${PAGE_H}" viewBox="0 0 ${PAGE_W} ${PAGE_H}"><defs>${defs}</defs><rect width="${PAGE_W}" height="${PAGE_H}" fill="#fef9f1"/>${sanitizeSvg(background)}${uses}</svg>`;
