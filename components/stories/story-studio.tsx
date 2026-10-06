@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { AiReview } from "@/components/ai-review";
 import { SeoScore } from "@/components/seo-score";
 import { StatusChip } from "@/components/stories/status-chip";
+import { AssessmentPanel } from "@/components/stories/assessment-panel";
+import { PlanCard } from "@/components/stories/plan-card";
 import { api } from "@/hooks/use-job";
 import type { StoryCast, StoryPage, StorySeries, StoryState } from "@/lib/types";
 
@@ -18,7 +20,7 @@ type Data = { story: StoryState; series: StorySeries };
 type Voice = { name: string; lang: string };
 type Draft = Pick<StoryPage, "text" | "scene" | "cast">[];
 
-const WORKING = new Set(["writing", "illustrating", "rendering"]);
+const WORKING = new Set(["planning", "writing", "illustrating", "rendering"]);
 const STEPS = [
   { key: "script", label: "Script" },
   { key: "pages", label: "Pictures" },
@@ -62,11 +64,13 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
 
   const st = data?.story;
   const working = !!st && (WORKING.has(st.status) || st.pages.some((p) => p.status === "drawing"));
+  // the assessor works on its own after a step: keep the page fresh until it has looked
+  const assessorPending = !!st && (!!st.assessing || (st.status === "script" && st.pages.length > 0 && !st.assessments?.script) || (st.status === "done" && !!st.video && !st.assessments?.video));
   useEffect(() => {
-    if (!working) return;
-    const t = setInterval(() => void load(), 2000);
+    if (!working && !assessorPending) return;
+    const t = setInterval(() => void load(), working ? 2000 : 3000);
     return () => clearInterval(t);
-  }, [working, load]);
+  }, [working, assessorPending, load]);
 
   // the editable copy follows the server until the user starts typing
   useEffect(() => {
@@ -148,7 +152,11 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
       {working && (
         <p className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm">
           <Loader2 className="size-4 animate-spin text-primary" />
-          {st.status === "writing" ? "Writing the story and checking it for kids…" : st.status === "illustrating" ? `Drawing the pages (${st.pages.filter((p) => p.status === "ready").length}/${st.pages.length})…` : "Narrating and making the video…"}
+          {st.status === "planning"
+            ? "Planning for reach: what parents search, the hook, the shape of the story…"
+            : st.status === "writing"
+              ? "Writing the story and checking it for kids…"
+              : st.status === "illustrating" ? `Drawing the pages (${st.pages.filter((p) => p.status === "ready").length}/${st.pages.length})…` : "Narrating and making the video…"}
           {lastLog && <span className="truncate text-xs text-muted-foreground">· {lastLog}</span>}
         </p>
       )}
@@ -158,6 +166,16 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
         </p>
       )}
       {err && !["render", "queue"].includes(errAt ?? "") && <p className="text-sm text-red-600">{err}</p>}
+      {st.plan && <PlanCard plan={st.plan} />}
+      {!working && st.pages.length > 0 && ["script", "pages", "done"].includes(st.status) && (
+        <AssessmentPanel
+          story={st}
+          stage={st.status === "done" ? "video" : "script"}
+          busy={busy}
+          onAgain={() => void act("assess", `/api/stories/story/${id}/assess`)}
+          onFix={st.status === "script" ? (fixNotes) => void act("rewrite", `/api/stories/story/${id}/rewrite`, { notes: fixNotes }) : undefined}
+        />
+      )}
       {msg && <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">{msg}</p>}
 
       {st.review && (

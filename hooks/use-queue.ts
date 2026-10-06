@@ -35,7 +35,7 @@ export function fmtSlot(at: number, tz: string) {
 
 /** Review count, next post and watched creators for the navigation; refreshed every 15 s. */
 export function useQueueSummary() {
-  const [s, setS] = useState<(QueueSummary & { watching?: number }) | null>(null);
+  const [s, setS] = useState<(QueueSummary & { watching?: number; todo?: number }) | null>(null);
   useEffect(() => {
     let live = true;
     const load = () =>

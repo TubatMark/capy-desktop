@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgeBand, ContentReview, StoryCharacter, StoryPage, StorySeries, StoryState } from "../lib/types";
+import type { AgeBand, ContentReview, StoryAssessment, StoryCharacter, StoryPage, StoryPlan, StorySeries, StoryState } from "../lib/types";
 import { run } from "../src/exec";
 import { clipThumbnail } from "../src/render";
 import { reviewContent as reviewContentImpl, type ContentInput } from "../src/content-review";
@@ -11,7 +11,11 @@ import { characterCard, composePage } from "../src/story/svg";
 import * as write from "../src/story/write";
 import type { AiOpts } from "../src/story/write";
 import { slug } from "../src/util";
-import { tuneSeo as tuneSeoImpl } from "./seo";
+import { research, tuneSeo as tuneSeoImpl } from "./seo";
+import { SerialWorker } from "./assessor";
+import { planStory, storyName } from "../src/story/plan";
+import { assessStory } from "../src/story/assess";
+import { seedPhrases } from "../src/seo/optimize";
 import { publicAccounts } from "./accounts";
 import { OUTPUT_ROOT, toMediaUrl } from "./paths";
 import { fingerprint, queue, upsertForRender } from "./queue";
@@ -40,6 +44,9 @@ export interface StoryDeps {
   cover(mp4: string, jpg: string): Promise<void>;
   reviewContent(i: ContentInput, o: AiOpts): Promise<ContentReview>;
   tuneSeo: typeof tuneSeoImpl;
+  /** Keyword research + the plan, before writing. */
+  plan(series: StorySeries, brief: string, ai: AiOpts): Promise<StoryPlan>;
+  assess: typeof assessStory;
 }
 
 const defaultDeps = (): StoryDeps => ({
@@ -59,7 +66,18 @@ const defaultDeps = (): StoryDeps => ({
   cover: (mp4, jpg) => clipThumbnail(mp4, jpg, 0.8),
   reviewContent: reviewContentImpl,
   tuneSeo: (i, ai) => tuneSeoImpl(i, ai),
+  plan: async (s, brief, ai) => {
+    const about = `${brief}. A read-aloud story for ages ${s.ageBand}. Values: ${s.values.join(", ")}.`;
+    const seeds = await seedPhrases({ kind: "kids", text: { title: brief, description: "", hashtags: [], tags: [] }, about }, ai).catch(() => [] as string[]);
+    const res = seeds[0] ? await research(seeds[0]).catch(() => undefined) : undefined;
+    return planStory(s, brief, res, ai);
+  },
+  assess: assessStory,
 });
+
+/** What the script assessment was about: a change here makes it stale. */
+const wordsKey = (st: StoryState) => JSON.stringify([st.title, st.pages.map((p) => [p.text, p.scene])]);
+type AssessJob = { id: string; stage: StoryAssessment["stage"] };
 
 /** Seconds the title shows over the first page before the narration starts. */
 const LEAD = 2.4;
@@ -82,8 +100,12 @@ export class StoryManager {
   stories = new Map<string, StoryState>();
   private busy = new Set<string>();
   private loaded?: Promise<void>;
+  /** The assessor: its own queue, one story at a time. */
+  readonly assessor: SerialWorker<AssessJob>;
 
-  constructor(private deps: StoryDeps = defaultDeps()) {}
+  constructor(private deps: StoryDeps = defaultDeps()) {
+    this.assessor = new SerialWorker<AssessJob>((j) => `${j.id}:${j.stage}`, (j) => this.runAssessment(j));
+  }
 
   get root() {
     return path.join(OUTPUT_ROOT, "stories");
@@ -110,10 +132,16 @@ export class StoryManager {
         const st = await readJson<StoryState>(path.join(this.seriesDir(sid), stid, "story.json"));
         if (!st) continue;
         for (const p of st.pages) if (p.status === "drawing") p.status = "pending";
-        if (st.status === "writing") Object.assign(st, { status: st.pages.length ? "script" : "error", error: st.pages.length ? undefined : "Interrupted while writing. Write it again." });
+        if (st.status === "planning" || st.status === "writing") Object.assign(st, { status: st.pages.length ? "script" : "error", error: st.pages.length ? undefined : "Interrupted while writing. Write it again." });
+        st.assessing = undefined;
         if (st.status === "illustrating" || st.status === "rendering") st.status = "pages";
         this.stories.set(st.id, st);
       }
+    }
+    // anything the assessor never got to (capy closed mid-way) is assessed now
+    for (const st of this.stories.values()) {
+      if (st.status === "script" && st.pages.length && !st.assessments?.script) this.assessor.add({ id: st.id, stage: "script" });
+      if (st.status === "done" && st.video && !st.assessments?.video) this.assessor.add({ id: st.id, stage: "video" });
     }
   }
 
@@ -194,7 +222,7 @@ export class StoryManager {
     const s = this.series.get(seriesId);
     if (!s) throw notFound("Series");
     const now = Date.now();
-    const st: StoryState = { id: newId("st"), seriesId, title: "Writing…", brief: brief.trim(), moral: "", status: "writing", pages: [], log: [], createdAt: now, updatedAt: now };
+    const st: StoryState = { id: newId("st"), seriesId, title: "Planning…", brief: brief.trim(), moral: "", status: "planning", pages: [], log: [], createdAt: now, updatedAt: now };
     this.stories.set(st.id, st);
     await this.saveStory(st);
     void this.task(st, () => this.writeAndReview(st, s));
@@ -209,17 +237,28 @@ export class StoryManager {
     void this.task(st, async () => {
       const ai = await this.deps.ai();
       const next = notes.length && st.pages.length ? await this.deps.reviseStory(s, st, notes, ai) : await this.deps.writeStory(s, st.brief, ai);
-      Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, seo: undefined, queuedAt: undefined });
+      Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, seo: undefined, queuedAt: undefined, assessments: undefined });
       this.log(st, notes.length ? "Rewritten with your notes" : "Written again");
       st.status = "script";
       st.review = await this.tryReview(st, s, ai);
+      this.assess(st, "script");
     });
     return st;
   }
 
   private async writeAndReview(st: StoryState, s: StorySeries) {
     const ai = await this.deps.ai();
-    Object.assign(st, await this.deps.writeStory(s, st.brief, ai));
+    // planned for reach first: what parents search, the hook, the shape; a failed plan just means writing from the brief
+    try {
+      st.plan = await this.deps.plan(s, st.brief, ai);
+      st.title = storyName(st.plan.title);
+      this.log(st, `Planned for "${st.plan.keyword}": ${st.plan.pages} pages, ~${st.plan.targetSeconds}s`);
+    } catch (e) {
+      this.log(st, `Couldn't plan it (${errText(e)}); writing from the idea alone`);
+    }
+    st.status = "writing";
+    await this.saveStory(st);
+    Object.assign(st, await this.deps.writeStory(s, st.brief, ai, st.plan));
     this.log(st, `Written: ${st.pages.length} pages`);
     st.status = "script";
     let review = await this.tryReview(st, s, ai);
@@ -230,6 +269,7 @@ export class StoryManager {
       review = await this.tryReview(st, s, ai);
     }
     st.review = review;
+    this.assess(st, "script");
   }
 
   /** The story reviewer's verdict, or undefined (logged) if it couldn't run: the script waits for a recheck. */
@@ -253,13 +293,54 @@ export class StoryManager {
     void this.task(st, async () => {
       st.review = await this.tryReview(st, s, await this.deps.ai());
       st.status = prev;
+      this.assess(st, "script");
     });
     return st;
+  }
+
+  /** Run the assessor again on the story's current stage (after it failed, or to get a fresh look). */
+  async reassess(id: string) {
+    const { st } = this.ready(id, ["script", "pages", "done"]);
+    if (!st.pages.length) throw new Error("Write the story first");
+    this.assess(st, st.status === "done" && st.video ? "video" : "script");
+    return st;
+  }
+
+  // ---------- the assessor ----------
+
+  /** Ask the assessor to look at a stage; the old verdict for that stage is dropped right away. */
+  private assess(st: StoryState, stage: StoryAssessment["stage"]) {
+    if (st.assessments?.[stage]) st.assessments = { ...st.assessments, [stage]: undefined };
+    this.assessor.add({ id: st.id, stage });
+  }
+
+  private async runAssessment({ id, stage }: AssessJob) {
+    const st = this.stories.get(id);
+    const s = st && this.series.get(st.seriesId);
+    if (!st || !s || !st.pages.length || (stage === "video" && !st.video)) return;
+    const key = stage === "script" ? wordsKey(st) : String(st.video?.renderedAt);
+    st.assessing = stage;
+    await this.saveStory(st);
+    let a: StoryAssessment;
+    try {
+      a = await this.deps.assess(s, st, stage, await this.deps.ai());
+    } catch (e) {
+      a = { stage, at: Date.now(), overall: 0, scores: { hook: 0, retention: 0, search: 0, safety: 0, production: 0 }, verdict: "fix", strengths: [], fixes: [], error: errText(e) };
+    }
+    if (!this.stories.has(id)) return; // deleted meanwhile
+    st.assessing = undefined;
+    // the words (or the video) changed while it looked: that change queued a fresh assessment
+    if ((stage === "script" ? wordsKey(st) : String(st.video?.renderedAt)) === key) {
+      st.assessments = { ...st.assessments, [stage]: a };
+      this.log(st, a.error ? `Assessor couldn't run: ${a.error}` : `Assessor (${stage}): ${a.overall}/100, ${a.verdict}`);
+    }
+    await this.saveStory(st);
   }
 
   /** The user's edits to the script. A changed scene or cast means that page's picture is drawn again. */
   async updateStory(id: string, patch: { title?: string; pages?: Pick<StoryPage, "text" | "scene" | "cast">[] }) {
     const { st } = this.ready(id, ["script", "pages", "done"]);
+    const before = wordsKey(st);
     if (patch.title?.trim() && patch.title.trim() !== st.title) {
       st.title = patch.title.trim();
       if (st.status === "done") st.status = "pages"; // the title card shows the old one
@@ -271,6 +352,10 @@ export class StoryManager {
         return { ...(old ?? {}), text: p.text.trim(), scene: p.scene.trim(), cast: p.cast, status: same ? old!.status : "pending", ...(same ? {} : { imageUrl: undefined }) };
       });
       if (st.status === "done") st.status = "pages"; // the video no longer matches the words
+    }
+    if (wordsKey(st) !== before) {
+      st.assessments = undefined; // it was about the old words
+      this.assess(st, "script");
     }
     await this.saveStory(st);
     return st;
@@ -346,6 +431,7 @@ export class StoryManager {
     if (s.characters.some((c) => c.status !== "ready")) throw Object.assign(new Error("Wait for the characters to be drawn (or draw the failed ones again)"), { status: 409 });
     st.status = "rendering";
     st.voice = voice;
+    if (st.assessments?.video) st.assessments = { ...st.assessments, video: undefined };
     await this.saveStory(st);
     void this.task(st, async () => {
       const dir = this.storyDir(st);
@@ -388,7 +474,10 @@ export class StoryManager {
       const ai = await this.deps.ai();
       const draft = await this.deps.storyPublish(s, st, ai).catch(() => ({ ytTitle: `${st.title} | Bedtime Story #shorts`.slice(0, 100), description: st.moral, hashtags: ["bedtimestory", "kidsstories", "readaloud", "shorts"] }));
       // search-tuned for what parents type; the kids content review below then checks the final text
-      const tuned = await this.deps.tuneSeo({ kind: "kids", publish: draft, about: `${st.title}. Ages ${s.ageBand}. Moral: ${st.moral}. ${st.pages.map((p) => p.text).join(" ")}` }, ai);
+      // the planned search title is the upload title (the story keeps its short name for the title card)
+      if (st.plan?.title && `${st.plan.title} #shorts`.length <= 100) draft.ytTitle = `${st.plan.title} #shorts`;
+      const seeds = st.plan?.keyword ? [st.plan.keyword, ...st.plan.searchTerms.slice(0, 2)] : undefined;
+      const tuned = await this.deps.tuneSeo({ kind: "kids", publish: draft, seeds, about: `${st.title}. Ages ${s.ageBand}. Length: ${Math.round(duration)} seconds (say so truthfully if the length is mentioned). Moral: ${st.moral}. ${st.pages.map((p) => p.text).join(" ")}` }, ai);
       st.publish = tuned.publish;
       st.seo = tuned.seo;
       this.log(st, `SEO ${tuned.seo.score}${tuned.seo.keyword ? ` for "${tuned.seo.keyword}"` : ""}`);
@@ -399,6 +488,7 @@ export class StoryManager {
       this.log(st, `AI review: ${st.contentReview.verdict}`);
       st.queuedAt = undefined;
       st.status = "done";
+      this.assess(st, "video");
     });
     return st;
   }
@@ -462,7 +552,7 @@ export class StoryManager {
   async deleteStory(id: string) {
     const st = this.stories.get(id);
     if (!st) throw notFound("Story");
-    if (this.busy.has(id) || ["writing", "illustrating", "rendering"].includes(st.status)) throw busyError();
+    if (this.busy.has(id) || ["planning", "writing", "illustrating", "rendering"].includes(st.status)) throw busyError();
     this.stories.delete(id);
     // a queued copy would point at a file that's gone
     queue().mutate((e) => e.filter((x) => x.jobId !== `story-${id}`));

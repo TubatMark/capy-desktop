@@ -27,7 +27,7 @@ export function SeriesView({ id }: { id: string }) {
     void load();
   }, [load]);
   // keep polling while characters are being drawn or a story is working
-  const working = !!data && (data.series.characters.some((c) => c.status === "drawing") || data.stories.some((s) => ["writing", "illustrating", "rendering"].includes(s.status)));
+  const working = !!data && (data.series.characters.some((c) => c.status === "drawing") || data.stories.some((s) => ["planning", "writing", "illustrating", "rendering"].includes(s.status) || !!s.assessing));
   useEffect(() => {
     if (!working) return;
     const t = setInterval(() => void load(), 2500);

@@ -294,7 +294,55 @@ export interface StoryReview {
   notes: string[];
 }
 
-export type StoryStatus = "writing" | "script" | "illustrating" | "pages" | "rendering" | "done" | "error";
+export type StoryStatus = "planning" | "writing" | "script" | "illustrating" | "pages" | "rendering" | "done" | "error";
+
+/** Planned at the brief, before a word is written: what parents search, the hook, the shape of the story. */
+export interface StoryPlan {
+  /** The one search phrase the story should rank for. */
+  keyword: string;
+  searchTerms: string[];
+  /** Searchable, warm, for parents. */
+  title: string;
+  /** Page 1: the opening line and its picture (also the cover). */
+  hook: { line: string; picture: string };
+  beats: { setup: string; problem: string; turn: string; ending: string };
+  /** A repeated line little ones join in on. */
+  refrain?: string;
+  pages: number;
+  targetSeconds: number;
+  /** Why a parent would pick it and play it again. */
+  parentsWhy: string;
+  /** What limited the research (e.g. search quota). */
+  notes?: string[];
+  at: number;
+}
+
+/** The assessor's look at a story before it reaches the user: one per stage. */
+export interface StoryAssessment {
+  stage: "script" | "video";
+  at: number;
+  /** 0–100 each. */
+  overall: number;
+  scores: { hook: number; retention: number; search: number; safety: number; production: number };
+  verdict: "ready" | "fix" | "block";
+  strengths: string[];
+  fixes: { area: string; note: string }[];
+  /** The assessor couldn't run; the scores are meaningless. */
+  error?: string;
+}
+
+/** Something waiting for the user, derived from the stories and the queue. */
+export interface TodoTask {
+  id: string;
+  kind: "script" | "pictures" | "video" | "send" | "fix" | "queue" | "error";
+  title: string;
+  detail?: string;
+  href: string;
+  tone: "action" | "warn" | "block";
+  /** For gauges on the card. */
+  overall?: number;
+  at: number;
+}
 
 export interface StoryState {
   id: string;
@@ -313,6 +361,10 @@ export interface StoryState {
   /** Upload text, written for parents. */
   publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[] };
   seo?: SeoReport;
+  plan?: StoryPlan;
+  assessments?: { script?: StoryAssessment; video?: StoryAssessment };
+  /** The assessor is looking at this stage now. */
+  assessing?: "script" | "video";
   /** Sent to the posting queue's review list. */
   queuedAt?: number;
   error?: string;

@@ -12,6 +12,9 @@ const m = vi.hoisted(() => ({
     throw Object.assign(new Error("This story is busy."), { status: 409 });
   },
   render: async (_id: string, voice: string) => ({ id: "st1", voice }),
+  reassess: async (id: string) => ({ id, assessing: "script" }),
+  stories: new Map([["st1", { id: "st1", seriesId: "ser1", title: "Pip", assessing: "script" }]]),
+  assessor: { size: 2 },
 }));
 vi.mock("../server/stories", () => ({ stories: () => m }));
 vi.mock("../src/story/narrate", async (orig) => ({ ...(await orig<typeof import("../src/story/narrate")>()), listVoices: async () => [{ name: "Samantha", lang: "en_US" }] }));
@@ -19,6 +22,8 @@ vi.mock("../src/story/narrate", async (orig) => ({ ...(await orig<typeof import(
 import { GET as listRoute, POST as createSeriesRoute } from "../app/api/stories/route";
 import { GET as storyGet } from "../app/api/stories/story/[id]/route";
 import { POST as storyAction } from "../app/api/stories/story/[id]/[action]/route";
+import { GET as todoGet } from "../app/api/todo/route";
+vi.mock("../server/todo", () => ({ currentTasks: async () => [{ id: "st1:script", kind: "script", title: "Review the script", href: "/stories/ser1/st1", tone: "action", at: 1 }] }));
 
 const req = (url: string, method = "GET", body?: unknown) => new Request(`http://localhost${url}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { "content-type": "application/json" } });
 const params = <T>(p: T) => ({ params: Promise.resolve(p) });
@@ -39,5 +44,12 @@ describe("story routes", () => {
     expect((await storyAction(req("/x", "POST", {}), params({ id: "st1", action: "explode" }))).status).toBe(400);
     const r = await storyAction(req("/x", "POST", { voice: "Samantha" }), params({ id: "st1", action: "render" }));
     expect(await r.json()).toMatchObject({ voice: "Samantha" });
+  });
+  it("assess asks the assessor again; To do lists tasks and what the assessor is looking at", async () => {
+    expect(await (await storyAction(req("/x", "POST", {}), params({ id: "st1", action: "assess" }))).json()).toEqual({ id: "st1", assessing: "script" });
+    const t = await (await todoGet()).json();
+    expect(t.tasks[0].kind).toBe("script");
+    expect(t.assessing).toEqual([{ id: "st1", seriesId: "ser1", title: "Pip", stage: "script" }]);
+    expect(t.waiting).toBe(2);
   });
 });

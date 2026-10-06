@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { askAgent } from "../agents";
-import type { AgentId, StoryPage, StoryReview, StorySeries, StoryState } from "../../lib/types";
+import type { AgentId, StoryPage, StoryPlan, StoryReview, StorySeries, StoryState } from "../../lib/types";
 import { layoutCast, sanitizeSvg } from "./svg";
+import { storyName } from "./plan";
 
 /**
  * The words and pictures of a story, by AI: the writer, the kid-safety reviewer, revisions, the character sprites,
@@ -41,7 +42,22 @@ const StorySchema = z.object({
   ),
 });
 
-export function storyWriterPrompt(series: StorySeries, brief: string): string {
+/** The plan, as the writer has to follow it. */
+function planSection(p: StoryPlan): string {
+  return `
+Follow this plan (made for reach before writing):
+Title: ${storyName(p.title)}
+Page 1 (the hook, also the cover): words "${p.hook.line}" (you may polish it, keep the promise); picture: ${p.hook.picture}
+Setup: ${p.beats.setup}
+Problem: ${p.beats.problem}
+Turn: ${p.beats.turn}
+Ending: ${p.beats.ending} (call back to the opening so it invites a replay)${p.refrain ? `\nRefrain (repeat it 2-3 times): "${p.refrain}"` : ""}
+Length: ${p.pages} pages, about ${p.targetSeconds} seconds read aloud.
+Keep the search keyword ("${p.keyword}") out of the story's words: it belongs in the title and upload text.
+`;
+}
+
+export function storyWriterPrompt(series: StorySeries, brief: string, plan?: StoryPlan): string {
   return `Write an original picture-book story for the series "${series.title}".
 
 Characters (use only these, by id):
@@ -52,7 +68,7 @@ Values the series cares about: ${series.values.join(", ") || "kindness"}
 ${AGE_RULES[series.ageBand]}
 
 Story idea: ${brief}
-
+${plan ? planSection(plan) : ""}
 Rules:
 - Original story, not a retelling of any existing book, film or show. No brand names or real people.
 - Nothing scary, violent or unsafe that a child could copy (no climbing high places alone, no talking to strangers, no playing with fire or water unsupervised). Calm, happy ending.
@@ -85,22 +101,24 @@ export function normalizeStory(raw: unknown, series: StorySeries): { title: stri
   return { title: str(r.title) || "Untitled", moral: str(r.moral), pages };
 }
 
-export async function writeStory(series: StorySeries, brief: string, o: AiOpts) {
-  const res = await askAgent(o.agent, storyWriterPrompt(series, brief), {
+export async function writeStory(series: StorySeries, brief: string, o: AiOpts, plan?: StoryPlan) {
+  const res = await askAgent(o.agent, storyWriterPrompt(series, brief, plan), {
     model: o.model,
     maxTurns: 2,
     effort: "medium",
     system: "You write original, gentle picture-book stories for young children. Answer only with the requested JSON.",
     schema: schemaOf(StorySchema),
   });
-  return normalizeStory(res.data, series);
+  const out = normalizeStory(res.data, series);
+  // the planned title is chosen for search; the writer's own is only a fallback
+  return plan?.title ? { ...out, title: storyName(plan.title) } : out;
 }
 
-export async function reviseStory(series: StorySeries, story: Pick<StoryState, "title" | "moral" | "pages">, notes: string[], o: AiOpts) {
+export async function reviseStory(series: StorySeries, story: Pick<StoryState, "title" | "moral" | "pages" | "plan">, notes: string[], o: AiOpts) {
   const current = JSON.stringify({ title: story.title, moral: story.moral, pages: story.pages.map((p) => ({ text: p.text, scene: p.scene, cast: p.cast, mood: p.mood })) });
   const res = await askAgent(
     o.agent,
-    `${storyWriterPrompt(series, "(revise the story below)")}
+    `${storyWriterPrompt(series, "(revise the story below)", story.plan)}
 
 Current story:
 ${current}
@@ -203,12 +221,13 @@ const PublishSchema = z.object({
   hashtags: z.array(z.string()).describe("4-8 hashtags without #"),
 });
 
-export async function storyPublish(series: StorySeries, story: Pick<StoryState, "title" | "moral" | "pages">, o: AiOpts) {
+export async function storyPublish(series: StorySeries, story: Pick<StoryState, "title" | "moral" | "pages" | "video">, o: AiOpts) {
+  const secs = story.video ? Math.round(story.video.duration) : undefined;
   const res = await askAgent(
     o.agent,
-    `Write the upload text for a 1-minute animated read-aloud story Short for young children, "${story.title}" from the series "${series.title}" (${series.ageBand} year olds). Moral: ${story.moral}.
+    `Write the upload text for a ${secs ? `${secs}-second` : "short"} animated read-aloud story Short for young children, "${story.title}" from the series "${series.title}" (${series.ageBand} year olds). Moral: ${story.moral}.
 First page: ${story.pages[0]?.text ?? ""}
-Address parents (platforms are 13+), never children. No emoji spam, no clickbait. Hashtags like bedtimestory, kidsstories, readaloud, shorts.`,
+Address parents (platforms are 13+), never children. No emoji spam, no clickbait.${secs ? ` If you mention the length, say ${secs} seconds (or "under a minute"); never "one-minute" unless it is.` : ""} Hashtags like bedtimestory, kidsstories, readaloud, shorts.`,
     { model: o.model, maxTurns: 2, effort: "low", system: "You write honest, warm upload text for children's story videos. Answer only with the requested JSON.", schema: schemaOf(PublishSchema) },
   );
   const p = PublishSchema.parse(res.data);

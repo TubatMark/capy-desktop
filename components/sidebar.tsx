@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { BookOpen, CalendarClock, Clapperboard, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { BookOpen, CalendarClock, Clapperboard, ListChecks, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ interface Item {
 }
 
 const MAIN: Item[] = [
+  { href: "/todo", label: "To do", icon: ListChecks },
   { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
   { href: "/stories", label: "Stories", icon: BookOpen },
   { href: "/automation", label: "Automation", icon: Radar },
@@ -77,7 +78,7 @@ export function AppSidebar() {
   useEffect(() => setShortcut(isMac() ? "⌘B" : "Ctrl B"), []);
   useEffect(() => setDrawer(false), [path]);
 
-  const counts: Record<string, number | undefined> = { "/queue": summary?.review || undefined, "/automation": summary?.watching || undefined };
+  const counts: Record<string, number | undefined> = { "/todo": summary?.todo || undefined, "/queue": summary?.review || undefined, "/automation": summary?.watching || undefined };
 
   return (
     <Tooltip.Provider delayDuration={300} skipDelayDuration={0}>
@@ -91,7 +92,7 @@ export function AppSidebar() {
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
           {MAIN.map((item) => (
-            <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue"} collapsed={collapsed} />
+            <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={collapsed} />
           ))}
         </nav>
         <div className="flex flex-col gap-1 border-t border-border/60 px-3 py-3">
@@ -138,7 +139,7 @@ export function AppSidebar() {
             <Dialog.Description className="sr-only">Go to another part of capy</Dialog.Description>
             <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
               {MAIN.map((item) => (
-                <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue"} collapsed={false} />
+                <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={false} />
               ))}
             </nav>
             <div className="border-t border-border/60 px-3 py-3">
@@ -153,7 +154,7 @@ export function AppSidebar() {
 
 function NavItem({ item, active, count, urgent, collapsed }: { item: Item; active: boolean; count?: number; urgent?: boolean; collapsed: boolean }) {
   const Icon = item.icon;
-  const hint = count ? (urgent ? `${count} waiting for your OK` : `${count} watched`) : undefined;
+  const hint = count ? (item.href === "/todo" ? `${count} to do` : urgent ? `${count} waiting for your OK` : `${count} watched`) : undefined;
   return (
     <Tip show={collapsed} label={item.label} hint={hint}>
       <Link href={item.href} aria-current={active ? "page" : undefined} className={cn("sb-item no-drag relative", active ? "sb-active" : "text-muted-foreground")}>

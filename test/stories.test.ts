@@ -43,6 +43,26 @@ function fakes(over: Partial<StoryDeps> = {}) {
       seo: { score: 88, before: 40, keyword: "bedtime story", checks: [], at: 1 },
     })),
     storyPublish: track("storyPublish", async () => ({ ytTitle: "Pip Shares #shorts", description: "A story about sharing.", hashtags: ["bedtimestory"] })),
+    plan: track("plan", async () => ({
+      keyword: "bedtime story for toddlers",
+      searchTerms: ["sharing story"],
+      title: "Pip Shares | Bedtime Story for Toddlers",
+      hook: { line: "Pip had a brand-new sled!", picture: "a red sled" },
+      beats: { setup: "a", problem: "b", turn: "c", ending: "d" },
+      pages: 7,
+      targetSeconds: 45,
+      parentsWhy: "sharing",
+      at: 1,
+    })),
+    assess: track("assess", async (_s: unknown, _st: unknown, stage: "script" | "video") => ({
+      stage,
+      at: 1,
+      overall: 81,
+      scores: { hook: 80, retention: 80, search: 80, safety: 100, production: 60 },
+      verdict: "ready" as const,
+      strengths: ["Warm opening"],
+      fixes: [],
+    })),
     ...over,
   };
   return { deps, calls };
@@ -115,10 +135,11 @@ describe("StoryManager", () => {
     expect(done.video!.url).toMatch(/\.mp4\?v=/);
     expect(calls.reviewContent![0]![0]).toMatchObject({ profile: "kids", clipTitle: "Pip Shares" });
     // the upload text is search-tuned before the kids review, and the reviewer sees the tuned text
-    expect(calls.tuneSeo![0]![0]).toMatchObject({ kind: "kids", publish: { ytTitle: "Pip Shares #shorts" } });
-    expect(done.publish).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares #shorts", tags: ["bedtime story"] });
+    // the planned search title is the upload title; then it's search-tuned; then the kids reviewer sees the tuned text
+    expect(calls.tuneSeo![0]![0]).toMatchObject({ kind: "kids", publish: { ytTitle: "Pip Shares | Bedtime Story for Toddlers #shorts" } });
+    expect(done.publish).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares | Bedtime Story for Toddlers #shorts", tags: ["bedtime story"] });
     expect(done.seo).toMatchObject({ score: 88, before: 40 });
-    expect(calls.reviewContent![0]![0]).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares #shorts" });
+    expect(calls.reviewContent![0]![0]).toMatchObject({ ytTitle: "Bedtime Story: Pip Shares | Bedtime Story for Toddlers #shorts" });
   });
 
   it("draws a page again once when its drawing won't render, then gives up with a clear error", async () => {
@@ -163,6 +184,7 @@ describe("StoryManager", () => {
     const s = await newSeries(m);
     const st = await m.createStory(s.id, "x");
     await expect(m.approveScript(st.id)).rejects.toMatchObject({ status: 409 });
+    await until(() => typeof release === "function"); // the writer starts once the plan is made
     release();
     await until(() => m.getStory(st.id)!.status === "script");
   });
@@ -338,5 +360,79 @@ describe("saveJsonAtomic", () => {
     const f = path.join(process.env.CAPY_OUTPUT!, "atomic.json");
     await Promise.all(Array.from({ length: 40 }, (_, i) => saveJsonAtomic(f, { i, pad: "x".repeat(i % 2 ? 5000 : 10) })));
     expect(JSON.parse(readFileSync(f, "utf8")).i).toBe(39);
+  });
+});
+
+describe("plan and assessor", () => {
+  const made = async (over: Partial<StoryDeps> = {}) => {
+    const { deps, calls } = fakes(over);
+    const m = new StoryManager(deps);
+    const s = await newSeries(m);
+    await until(() => m.getSeries(s.id)!.characters.every((c) => c.status === "ready"));
+    return { m, s, calls };
+  };
+
+  it("plans before writing: the writer gets the plan, then the assessor looks at the script", async () => {
+    const { m, s, calls } = await made();
+    const st = await m.createStory(s.id, "Pip learns to share");
+    expect(st.status).toBe("planning");
+    await until(() => !!m.getStory(st.id)!.assessments?.script);
+    const done = m.getStory(st.id)!;
+    expect(done.plan!.keyword).toBe("bedtime story for toddlers");
+    expect(calls.writeStory![0]![3]).toMatchObject({ title: "Pip Shares | Bedtime Story for Toddlers" });
+    expect(m.getStory(st.id)!.title).toBe("Pip Shares"); // the short name; the search title is for the upload
+    expect(done.assessments!.script).toMatchObject({ stage: "script", overall: 81, verdict: "ready" });
+    expect(done.assessing).toBeUndefined();
+  });
+
+  it("a failed plan still writes the story; a failed assessment is recorded, not fatal", async () => {
+    const { m, s } = await made({
+      plan: async () => {
+        throw new Error("AI timed out");
+      },
+      assess: async () => {
+        throw new Error("assessor down");
+      },
+    });
+    const st = await m.createStory(s.id, "x");
+    await until(() => !!m.getStory(st.id)!.assessments?.script);
+    expect(m.getStory(st.id)!.status).toBe("script");
+    expect(m.getStory(st.id)!.plan).toBeUndefined();
+    expect(m.getStory(st.id)!.assessments!.script!.error).toBe("assessor down");
+  });
+
+  it("editing the words drops the old assessment and assesses again; the video gets its own", async () => {
+    const { m, s, calls } = await made();
+    const st = await m.createStory(s.id, "x");
+    await until(() => !!m.getStory(st.id)!.assessments?.script);
+    const pages = m.getStory(st.id)!.pages.map((p) => ({ text: p.text, scene: p.scene, cast: p.cast }));
+    pages[0]!.text = "Pip had the shiniest sled!";
+    await m.updateStory(st.id, { pages });
+    await m.assessor.idle();
+    expect(calls.assess).toHaveLength(2);
+    // the second look was at the edited words
+    expect((calls.assess![1]![1] as { pages: { text: string }[] }).pages[0]!.text).toBe("Pip had the shiniest sled!");
+    await m.approveScript(st.id);
+    await until(() => m.getStory(st.id)!.status === "pages");
+    await m.render(st.id, "Samantha");
+    await until(() => !!m.getStory(st.id)!.assessments?.video);
+    expect(calls.tuneSeo!.at(-1)![0]).toMatchObject({ seeds: ["bedtime story for toddlers", "sharing story"] });
+  });
+
+  it("the assessor works one story at a time", async () => {
+    let running = 0;
+    let most = 0;
+    const { m, s } = await made({
+      assess: async (_s, _st, stage) => {
+        most = Math.max(most, ++running);
+        await new Promise((r) => setTimeout(r, 20));
+        running--;
+        return { stage, at: 1, overall: 80, scores: { hook: 80, retention: 80, search: 80, safety: 100, production: 60 }, verdict: "ready" as const, strengths: [], fixes: [] };
+      },
+    });
+    const a = await m.createStory(s.id, "a");
+    const b = await m.createStory(s.id, "b");
+    await until(() => !!m.getStory(a.id)!.assessments?.script && !!m.getStory(b.id)!.assessments?.script);
+    expect(most).toBe(1);
   });
 });
