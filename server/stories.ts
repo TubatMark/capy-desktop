@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgeBand, ContentReview, StoryCharacter, StoryPage, StorySeries, StoryState } from "../lib/types";
 import { run } from "../src/exec";
@@ -165,11 +165,15 @@ export class StoryManager {
       const c = s.characters.find((x) => x.id === id);
       if (!c) return;
       try {
-        c.svg = await this.deps.drawCharacter(s, c, ai);
-        const svgFile = path.join(dir, `${c.id}.svg`);
-        await writeFile(svgFile, characterCard(c.svg));
-        await this.deps.rasterize(svgFile, path.join(dir, `${c.id}.png`));
-        Object.assign(c, { status: "ready", error: undefined, imageUrl: `${toMediaUrl(path.join(dir, `${c.id}.png`))}?v=${Date.now()}` });
+        // drawn and rendered beside the old one, which stays until the new drawing is known to render
+        const svg = await this.deps.drawCharacter(s, c, ai);
+        const svgFile = path.join(dir, `${c.id}.new.svg`);
+        const png = path.join(dir, `${c.id}.png`);
+        await writeFile(svgFile, characterCard(svg));
+        await this.deps.rasterize(svgFile, path.join(dir, `${c.id}.new.png`));
+        await rename(svgFile, path.join(dir, `${c.id}.svg`));
+        await rename(path.join(dir, `${c.id}.new.png`), png);
+        Object.assign(c, { svg, status: "ready", error: undefined, imageUrl: `${toMediaUrl(png)}?v=${Date.now()}` });
       } catch (e) {
         Object.assign(c, { status: "error", error: errText(e) });
       }
@@ -199,10 +203,10 @@ export class StoryManager {
     void this.task(st, async () => {
       const ai = await this.deps.ai();
       const next = notes.length && st.pages.length ? await this.deps.reviseStory(s, st, notes, ai) : await this.deps.writeStory(s, st.brief, ai);
-      Object.assign(st, next, { video: undefined, contentReview: undefined, publish: undefined, queuedAt: undefined });
+      Object.assign(st, next, { review: undefined, video: undefined, contentReview: undefined, publish: undefined, queuedAt: undefined });
       this.log(st, notes.length ? "Rewritten with your notes" : "Written again");
-      st.review = await this.deps.reviewStory(s, st, ai);
       st.status = "script";
+      st.review = await this.tryReview(st, s, ai);
     });
     return st;
   }
@@ -211,22 +215,49 @@ export class StoryManager {
     const ai = await this.deps.ai();
     Object.assign(st, await this.deps.writeStory(s, st.brief, ai));
     this.log(st, `Written: ${st.pages.length} pages`);
-    let review = await this.deps.reviewStory(s, st, ai);
-    if (review.verdict === "fix" && review.notes.length) {
+    st.status = "script";
+    let review = await this.tryReview(st, s, ai);
+    if (review?.verdict === "fix" && review.notes.length) {
       // one automatic round with the reviewer's notes; anything left is for the user
       this.log(st, `Reviewer asked for changes: ${review.notes.join(" · ")}`);
       Object.assign(st, await this.deps.reviseStory(s, st, review.notes, ai));
-      review = await this.deps.reviewStory(s, st, ai);
+      review = await this.tryReview(st, s, ai);
     }
     st.review = review;
-    this.log(st, `Story reviewer: ${review.verdict}`);
-    st.status = "script";
+  }
+
+  /** The story reviewer's verdict, or undefined (logged) if it couldn't run: the script waits for a recheck. */
+  private async tryReview(st: StoryState, s: StorySeries, ai: AiOpts) {
+    try {
+      const review = await this.deps.reviewStory(s, st, ai);
+      this.log(st, `Story reviewer: ${review.verdict}`);
+      return review;
+    } catch (e) {
+      this.log(st, `The story reviewer couldn't check it (${errText(e)}). Check it again before approving.`);
+      return undefined;
+    }
+  }
+
+  /** Run the story reviewer again on the current words (after it failed, or after the user's own edits). */
+  async recheck(id: string) {
+    const { st, s } = this.ready(id, ["script", "pages", "done"]);
+    const prev = st.status;
+    st.status = "writing";
+    await this.saveStory(st);
+    void this.task(st, async () => {
+      st.review = await this.tryReview(st, s, await this.deps.ai());
+      st.status = prev;
+    });
+    return st;
   }
 
   /** The user's edits to the script. A changed scene or cast means that page's picture is drawn again. */
   async updateStory(id: string, patch: { title?: string; pages?: Pick<StoryPage, "text" | "scene" | "cast">[] }) {
     const { st } = this.ready(id, ["script", "pages", "done"]);
-    if (patch.title?.trim()) st.title = patch.title.trim();
+    if (patch.title?.trim() && patch.title.trim() !== st.title) {
+      st.title = patch.title.trim();
+      if (st.status === "done") st.status = "pages"; // the title card shows the old one
+    }
     if (patch.pages) {
       st.pages = patch.pages.map((p, i) => {
         const old = st.pages[i];
@@ -244,7 +275,8 @@ export class StoryManager {
   async approveScript(id: string) {
     const { st, s } = this.ready(id, ["script", "pages", "done"]);
     if (!st.pages.length) throw new Error("The story has no pages");
-    if (st.review?.verdict === "block") throw Object.assign(new Error("The story reviewer blocked this story. Rewrite it first."), { status: 409 });
+    if (!st.review) throw Object.assign(new Error("The story reviewer hasn't checked this story yet. Check it first."), { status: 409 });
+    if (st.review.verdict === "block") throw Object.assign(new Error("The story reviewer blocked this story. Rewrite it first."), { status: 409 });
     if (s.characters.some((c) => c.status !== "ready")) throw Object.assign(new Error("Wait for the characters to be drawn (or draw the failed ones again)"), { status: 409 });
     st.status = "illustrating";
     await this.saveStory(st);
@@ -305,6 +337,7 @@ export class StoryManager {
   async render(id: string, voice = DEFAULT_VOICE) {
     const { st, s } = this.ready(id, ["pages", "done"]);
     if (st.pages.some((p) => p.status !== "ready")) throw Object.assign(new Error("Every page needs its picture first"), { status: 409 });
+    if (s.characters.some((c) => c.status !== "ready")) throw Object.assign(new Error("Wait for the characters to be drawn (or draw the failed ones again)"), { status: 409 });
     st.status = "rendering";
     st.voice = voice;
     await this.saveStory(st);
@@ -321,7 +354,9 @@ export class StoryManager {
       }
       const tl = storyTimeline(st.pages.map((p, i) => ({ text: p.text, duration: durations[i]! })), 0.7, LEAD);
       const base = `${slug(st.title).slice(0, 40) || "story"}`;
+      // made beside the current video and swapped in only once it all worked, so a failure leaves the old one whole
       const out = path.join(dir, `${base}.mp4`);
+      const tmp = path.join(dir, `${base}.tmp.mp4`);
       const { duration } = await this.deps.assemble({
         pages: st.pages.map((_, i) => path.join(dir, "pages", `${pad2(i + 1)}.png`)),
         narration,
@@ -331,11 +366,18 @@ export class StoryManager {
         title: st.title,
         lead: LEAD,
         assFile: path.join(dir, "story.ass"),
-        out,
+        out: tmp,
       });
       const jpg = path.join(dir, `${base}.jpg`);
-      await this.deps.cover(out, jpg).catch(() => {});
-      st.video = { url: `${toMediaUrl(out)}?v=${Date.now()}`, file: out, duration, coverUrl: existsSync(jpg) ? `${toMediaUrl(jpg)}?v=${Date.now()}` : undefined };
+      const tmpJpg = path.join(dir, `${base}.tmp.jpg`);
+      const hasCover = await this.deps.cover(tmp, tmpJpg).then(() => existsSync(tmpJpg), () => false);
+      const old = st.video?.file;
+      await rename(tmp, out);
+      if (hasCover) await rename(tmpJpg, jpg);
+      else await rm(jpg, { force: true });
+      if (old && old !== out) await rm(old, { force: true }).then(() => rm(old.replace(/\.mp4$/, ".jpg"), { force: true }));
+      const renderedAt = Date.now();
+      st.video = { url: `${toMediaUrl(out)}?v=${renderedAt}`, file: out, duration, coverUrl: hasCover ? `${toMediaUrl(jpg)}?v=${renderedAt}` : undefined, renderedAt };
       this.log(st, `Rendered ${Math.round(duration)}s with ${voice}`);
       const ai = await this.deps.ai();
       st.publish = await this.deps.storyPublish(s, st, ai).catch(() => ({ ytTitle: `${st.title} | Bedtime Story #shorts`.slice(0, 100), description: st.moral, hashtags: ["bedtimestory", "kidsstories", "readaloud", "shorts"] }));
@@ -383,6 +425,8 @@ export class StoryManager {
           n: 1,
           start: 0,
           end: st.video!.duration,
+          fp: storyFp(st),
+          link: `/stories/${st.seriesId}/${st.id}`,
           clipTitle: st.title,
           videoTitle: s.title,
           videoUrl: st.video!.url,
@@ -406,8 +450,10 @@ export class StoryManager {
   async deleteStory(id: string) {
     const st = this.stories.get(id);
     if (!st) throw notFound("Story");
-    if (this.busy.has(id)) throw busyError();
+    if (this.busy.has(id) || ["writing", "illustrating", "rendering"].includes(st.status)) throw busyError();
     this.stories.delete(id);
+    // a queued copy would point at a file that's gone
+    queue().mutate((e) => e.filter((x) => x.jobId !== `story-${id}`));
     await rm(this.storyDir(st), { recursive: true, force: true });
   }
 
@@ -444,22 +490,46 @@ export class StoryManager {
 
   private async saveSeries(s: StorySeries) {
     s.updatedAt = Date.now();
-    await mkdir(this.seriesDir(s.id), { recursive: true });
-    await writeFile(path.join(this.seriesDir(s.id), "series.json"), JSON.stringify(s, null, 2));
+    await saveJsonAtomic(path.join(this.seriesDir(s.id), "series.json"), s);
   }
 
   private async saveStory(st: StoryState) {
     st.updatedAt = Date.now();
-    await mkdir(this.storyDir(st), { recursive: true });
-    await writeFile(path.join(this.storyDir(st), "story.json"), JSON.stringify(st, null, 2));
+    await saveJsonAtomic(path.join(this.storyDir(st), "story.json"), st);
   }
+}
+
+/** Identity of a story's current video: every render is a new cut, even one of the same length. */
+export function storyFp(st: StoryState): string {
+  return st.video?.renderedAt ? `r${st.video.renderedAt}` : fingerprint(0, st.video?.duration ?? 0);
+}
+
+const saving = new Map<string, Promise<void>>();
+
+/**
+ * Write JSON so a reader (or a crash) never sees half a file: a temp file renamed over the old one. Saves of one
+ * file run in call order, so the last call's data is what stays.
+ */
+export function saveJsonAtomic(file: string, data: unknown): Promise<void> {
+  const body = JSON.stringify(data, null, 2);
+  const next = (saving.get(file) ?? Promise.resolve())
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+      await writeFile(tmp, body);
+      await rename(tmp, file);
+    });
+  saving.set(file, next);
+  void next.finally(() => saving.get(file) === next && saving.delete(file)).catch(() => {});
+  return next;
 }
 
 /** The file the poster posts for a story's queue entry; "changed" if it was re-rendered after the approval. */
 export function storyClipFile(st: StoryState | undefined, e: { fp?: string }, exists: (f: string) => boolean = existsSync): { file: string; thumbFile?: string } | "missing" | "changed" | "rendering" {
   if (st?.status === "rendering") return "rendering"; // the mp4 is being rewritten: post it on a later tick
   if (!st?.video || !exists(st.video.file)) return "missing";
-  if (e.fp && fingerprint(0, st.video.duration) !== e.fp) return "changed";
+  if (e.fp && storyFp(st) !== e.fp) return "changed";
   const jpg = st.video.file.replace(/\.mp4$/, ".jpg");
   return { file: st.video.file, thumbFile: exists(jpg) ? jpg : undefined };
 }

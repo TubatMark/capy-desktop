@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { buildAss, STYLES, type CaptionStyle } from "../ass";
 import { run } from "../exec";
-import { detectEncoder } from "../render";
+import { detectEncoder, escapeFilterPath } from "../render";
+import path from "node:path";
 import type { Word } from "../types";
 
 /**
@@ -71,52 +72,56 @@ export function storyGraph(starts: number[], total: number, o: { fade?: number; 
   return { lengths, offsets, duration: r3(end), video: video.join(";"), lastVideo: last, audio };
 }
 
-/** Render the story to `out` (mp4). Pages are PNGs, narration one AIFF per page. */
-export async function assembleStory(o: {
+export interface AssembleInput {
   pages: string[];
   narration: string[];
   starts: number[];
   total: number;
-  words: Word[];
-  title: string;
-  lead: number;
   assFile: string;
   out: string;
-}): Promise<{ duration: number }> {
+}
+
+/**
+ * The ffmpeg command for a story. It runs in the captions file's folder and names that file bare, so no folder
+ * name (an apostrophe, a colon) has to survive filter-string escaping; inputs and output are plain arguments.
+ */
+export function assembleArgs(o: AssembleInput, enc: string): { args: string[]; cwd: string; duration: number } {
   const g = storyGraph(o.starts, o.total);
-  await writeFile(o.assFile, buildAss(o.words, storyCaptionStyle(), { text: o.title, seconds: o.lead, keepCase: true }));
-  const enc = await detectEncoder("auto");
-  const assPath = o.assFile.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
-  const filter = `${g.video};[${g.lastVideo}]ass='${assPath}'[vout];${g.audio}`;
+  const filter = `${g.video};[${g.lastVideo}]ass=filename=${escapeFilterPath(path.basename(o.assFile))}[vout];${g.audio}`;
   const encArgs = enc === "h264_videotoolbox" ? ["-c:v", enc, "-b:v", "8M", "-allow_sw", "1"] : ["-c:v", "libx264", "-preset", "medium", "-crf", "19"];
-  await run(
-    "ffmpeg",
-    [
-      "-y",
-      "-hide_banner",
-      ...o.pages.flatMap((p) => ["-i", p]),
-      ...o.narration.flatMap((a) => ["-i", a]),
-      "-filter_complex",
-      filter,
-      "-map",
-      "[vout]",
-      "-map",
-      "[aout]",
-      ...encArgs,
-      "-pix_fmt",
-      "yuv420p",
-      "-r",
-      String(FPS),
-      "-c:a",
-      "aac",
-      "-b:a",
-      "160k",
-      "-t",
-      String(g.duration),
-      "-movflags",
-      "+faststart",
-      o.out,
-    ],
-  );
-  return { duration: g.duration };
+  const args = [
+    "-y",
+    "-hide_banner",
+    ...o.pages.flatMap((p) => ["-i", p]),
+    ...o.narration.flatMap((a) => ["-i", a]),
+    "-filter_complex",
+    filter,
+    "-map",
+    "[vout]",
+    "-map",
+    "[aout]",
+    ...encArgs,
+    "-pix_fmt",
+    "yuv420p",
+    "-r",
+    String(FPS),
+    "-c:a",
+    "aac",
+    "-b:a",
+    "160k",
+    "-t",
+    String(g.duration),
+    "-movflags",
+    "+faststart",
+    o.out,
+  ];
+  return { args, cwd: path.dirname(o.assFile), duration: g.duration };
+}
+
+/** Render the story to `out` (mp4). Pages are PNGs, narration one AIFF per page. */
+export async function assembleStory(o: AssembleInput & { words: Word[]; title: string; lead: number }): Promise<{ duration: number }> {
+  await writeFile(o.assFile, buildAss(o.words, storyCaptionStyle(), { text: o.title, seconds: o.lead, keepCase: true }));
+  const { args, cwd, duration } = assembleArgs(o, await detectEncoder("auto"));
+  await run("ffmpeg", args, { cwd });
+  return { duration };
 }

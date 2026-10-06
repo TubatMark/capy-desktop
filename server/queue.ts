@@ -27,6 +27,9 @@ export interface ClipInfo {
   aiReview?: ContentReview;
   /** A kids' story: YouTube marks it "made for kids". */
   madeForKids?: boolean;
+  /** Identity of this cut when start/end can't tell (a story's render); default fingerprint(start, end). */
+  fp?: string;
+  link?: string;
 }
 
 const MIN = 60_000;
@@ -50,10 +53,10 @@ export function patch(entries: QueueEntry[], key: string, fn: (e: QueueEntry) =>
 export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: Platform[], now: Date): QueueEntry[] {
   const out = [...entries];
   const publish = c.publish ?? { ytTitle: c.clipTitle, description: "", hashtags: [] };
-  const fp = fingerprint(c.start, c.end);
+  const fp = c.fp ?? fingerprint(c.start, c.end);
   const fresh = (key: string, p: Platform): QueueEntry =>
     note({ key, jobId: c.jobId, n: c.n, platform: p, fp, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now);
-  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}) };
+  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}), ...(c.link ? { link: c.link } : {}) };
   for (const p of platforms) {
     const key = keyOf(c.jobId, c.n, p);
     const i = out.findIndex((e) => e.key === key);

@@ -24,7 +24,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   const ext = abs.slice(abs.lastIndexOf(".")).toLowerCase();
   const type = TYPES[ext] ?? "application/octet-stream";
   const range = req.headers.get("range");
-  const headers: Record<string, string> = { "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": "no-cache" };
+  const headers: Record<string, string> = { "Content-Type": type, "Accept-Ranges": "bytes", "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" };
 
   if (range) {
     const m = range.match(/bytes=(\d*)-(\d*)/);

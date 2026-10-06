@@ -178,6 +178,14 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
           )}
         </div>
       )}
+      {!st.review && editable && st.pages.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900">
+          <ShieldCheck className="size-4" /> Not reviewed yet: the story reviewer has to check it before the pages are drawn.
+          <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act("recheck", `/api/stories/story/${id}/recheck`)}>
+            {busy === "recheck" ? <Loader2 className="animate-spin" /> : <RefreshCw />} Check it
+          </Button>
+        </div>
+      )}
 
       {st.pages.length > 0 && (
         <section className="space-y-3">
@@ -190,7 +198,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
                 </Button>
               )}
               {(st.status === "script" || (st.status === "pages" && !allPictures)) && !dirty && (
-                <Button size="sm" onClick={() => act("approve", `/api/stories/story/${id}/approve`)} disabled={busy !== null || st.review?.verdict === "block"}>
+                <Button size="sm" onClick={() => act("approve", `/api/stories/story/${id}/approve`)} disabled={busy !== null || !st.review || st.review.verdict === "block"}>
                   {busy === "approve" ? <Loader2 className="animate-spin" /> : <Check />} {st.status === "script" ? "Approve script & draw the pages" : "Draw the missing pages"}
                 </Button>
               )}
@@ -265,7 +273,7 @@ export function StoryStudio({ seriesId, id }: { seriesId: string; id: string }) 
         </section>
       )}
 
-      {editable && (
+      {(editable || (!working && st.status === "error")) && (
         <section className="space-y-2 rounded-xl border bg-card p-4">
           <Label htmlFor="notes">Want changes? Tell the writer</Label>
           <div className="flex flex-col gap-2 sm:flex-row">

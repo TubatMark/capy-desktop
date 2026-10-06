@@ -11,7 +11,7 @@ vi.hoisted(() => {
   process.env.CAPY_DATA_DIR = p.join(root, "data");
 });
 
-import { StoryManager, storyClipFile, type StoryDeps } from "../server/stories";
+import { saveJsonAtomic, StoryManager, storyClipFile, storyFp, type StoryDeps } from "../server/stories";
 import { saveAccount, resetAccountsCache } from "../server/accounts";
 import { queue, resetQueueCache } from "../server/queue";
 import type { StoryState } from "../lib/types";
@@ -206,5 +206,129 @@ describe("storyClipFile (what the poster posts for a story entry)", () => {
     expect(storyClipFile(undefined, entry("0-412"), () => true)).toBe("missing");
     expect(storyClipFile(st, entry("0-412"), () => false)).toBe("missing");
     expect(storyClipFile({ ...st, status: "rendering" } as StoryState, entry("0-412"), () => true)).toBe("rendering");
+  });
+});
+
+describe("review fixes", () => {
+  const made = async (over: Partial<StoryDeps> = {}) => {
+    const { deps, calls } = fakes(over);
+    const m = new StoryManager(deps);
+    const s = await newSeries(m);
+    await until(() => m.getSeries(s.id)!.characters.every((c) => c.status !== "drawing"));
+    return { m, s, deps, calls };
+  };
+  const toDone = async (m: StoryManager, seriesId: string) => {
+    const st = await m.createStory(seriesId, "x");
+    await until(() => m.getStory(st.id)!.status === "script");
+    await m.approveScript(st.id);
+    await until(() => m.getStory(st.id)!.status === "pages");
+    await m.render(st.id, "Samantha");
+    await until(() => m.getStory(st.id)!.status === "done");
+    return st.id;
+  };
+
+  it("a re-render of a queued story (same length) is a new cut: the poster won't post it without a new review", async () => {
+    const { m, s } = await made();
+    const id = await toDone(m, s.id);
+    saveAccount("youtube", { clientId: "a", clientSecret: "b", tokens: { accessToken: "t", expiresAt: Date.now() + 3600_000 }, account: { id: "c", name: "C" } });
+    await m.sendToQueue(id);
+    const entry = queue().list().find((e) => e.jobId === `story-${id}`)!;
+    expect(entry.fp).toBe(storyFp(m.getStory(id)!));
+    await new Promise((r) => setTimeout(r, 5));
+    await m.render(id, "Samantha");
+    await until(() => m.getStory(id)!.status === "done");
+    expect(storyClipFile(m.getStory(id), entry, () => true)).toBe("changed");
+  });
+
+  it("a failed re-render leaves the previous video and its file untouched", async () => {
+    let n = 0;
+    const { m, s } = await made({
+      assemble: async (o: { out: string; total: number }) => {
+        writeFileSync(o.out, n === 0 ? "good mp4" : "half");
+        if (n++ > 0) throw new Error("disk full");
+        return { duration: o.total + 1.2 };
+      },
+    });
+    const id = await toDone(m, s.id);
+    const before = m.getStory(id)!.video!;
+    await m.render(id, "Samantha");
+    await until(() => m.getStory(id)!.status !== "rendering");
+    expect(m.getStory(id)!.video).toEqual(before);
+    expect(readFileSync(before.file, "utf8")).toBe("good mp4");
+  });
+
+  it("an unreviewed script can't be approved until the reviewer has looked at it", async () => {
+    let fail = true;
+    const { m, s } = await made({
+      reviewStory: async () => {
+        if (fail) throw new Error("AI timed out");
+        return { verdict: "ok" as const, notes: [] };
+      },
+    });
+    const st = await m.createStory(s.id, "x");
+    await until(() => m.getStory(st.id)!.status === "script");
+    expect(m.getStory(st.id)!.review).toBeUndefined();
+    await expect(m.approveScript(st.id)).rejects.toMatchObject({ status: 409 });
+    fail = false;
+    await m.recheck(st.id);
+    await until(() => !!m.getStory(st.id)!.review);
+    await expect(m.approveScript(st.id)).resolves.toBeTruthy();
+  });
+
+  it("a rewrite drops the old verdict (it was about the old words)", async () => {
+    let reviews = 0;
+    const { m, s } = await made({
+      reviewStory: async () => {
+        if (reviews++ > 0) throw new Error("AI timed out");
+        return { verdict: "ok" as const, notes: [] };
+      },
+    });
+    const st = await m.createStory(s.id, "x");
+    await until(() => m.getStory(st.id)!.status === "script");
+    await m.rewrite(st.id, ["make it rhyme"]);
+    await until(() => m.getStory(st.id)!.status === "script");
+    expect(m.getStory(st.id)!.review).toBeUndefined();
+  });
+
+  it("a character redraw that won't render keeps the previous drawing, and renders wait for the characters", async () => {
+    let charRenders = 0;
+    const { m, s } = await made({
+      rasterize: async (svg: string, png: string) => {
+        if (svg.includes("/chars/") && charRenders++ >= 2) throw new Error("rsvg-convert exited with code 1");
+        writeFileSync(png, "png");
+      },
+      drawCharacter: async () => (charRenders >= 2 ? "<broken" : '<circle r="50"/>'),
+    });
+    const id = await toDone(m, s.id);
+    await m.redrawCharacter(s.id, "pip");
+    await until(() => m.getSeries(s.id)!.characters[0]!.status === "error");
+    expect(m.getSeries(s.id)!.characters[0]!.svg).toBe('<circle r="50"/>');
+    await expect(m.render(id, "Samantha")).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("changing the title of a finished story asks for a new render (the title card shows the old one)", async () => {
+    const { m, s } = await made();
+    const id = await toDone(m, s.id);
+    await m.updateStory(id, { title: "A New Title" });
+    expect(m.getStory(id)!.status).toBe("pages");
+  });
+
+  it("deleting a story takes it out of the queue, and isn't allowed mid-step", async () => {
+    const { m, s } = await made();
+    const id = await toDone(m, s.id);
+    saveAccount("youtube", { clientId: "a", clientSecret: "b", tokens: { accessToken: "t", expiresAt: Date.now() + 3600_000 }, account: { id: "c", name: "C" } });
+    await m.sendToQueue(id);
+    await m.deleteStory(id);
+    expect(queue().list().filter((e) => e.jobId === `story-${id}`)).toHaveLength(0);
+    const busy = await m.createStory(s.id, "y");
+    await expect(m.deleteStory(busy.id)).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe("saveJsonAtomic", () => {
+  it("leaves valid JSON (the last write) when many saves overlap", async () => {
+    const f = path.join(process.env.CAPY_OUTPUT!, "atomic.json");
+    await Promise.all(Array.from({ length: 40 }, (_, i) => saveJsonAtomic(f, { i, pad: "x".repeat(i % 2 ? 5000 : 10) })));
+    expect(JSON.parse(readFileSync(f, "utf8")).i).toBe(39);
   });
 });

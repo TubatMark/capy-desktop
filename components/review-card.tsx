@@ -52,9 +52,10 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
       <video src={first.videoUrl} poster={first.thumbUrl} controls preload="metadata" className="aspect-[9/16] w-full max-w-[200px] rounded-lg bg-black object-contain" />
       <div className="min-w-0 space-y-3">
         <div>
-          <Link href={`/v/${first.jobId}/clip/${first.n}`} className="font-semibold hover:underline">
+          <Link href={first.link ?? `/v/${first.jobId}/clip/${first.n}`} className="font-semibold hover:underline">
             {first.clipTitle}
           </Link>
+          {first.madeForKids && <span className="ml-2 inline-block rounded-md bg-sky-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-800">Made for kids</span>}
         </div>
         {aiReview && (
           <AiReview

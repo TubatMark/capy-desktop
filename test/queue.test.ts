@@ -194,3 +194,10 @@ describe("AI content review on queue entries", () => {
     expect(e[0]!.aiReview).toMatchObject({ verdict: "ok", summary: "Fixed" });
   });
 });
+
+describe("story entries", () => {
+  it("carry their own fingerprint, link and made-for-kids flag", () => {
+    const e = upsertForRender([], { ...clip(1), jobId: "story-st1", fp: "r123", link: "/stories/ser1/st1", madeForKids: true }, ["youtube"], now);
+    expect(e[0]).toMatchObject({ fp: "r123", link: "/stories/ser1/st1", madeForKids: true });
+  });
+});

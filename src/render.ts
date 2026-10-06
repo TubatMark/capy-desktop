@@ -82,7 +82,7 @@ export function upscaleFactor(src: { width: number; height: number }, layout: Re
   return layout === "blur" ? fit : cover;
 }
 
-function escapeFilterPath(p: string): string {
+export function escapeFilterPath(p: string): string {
   // ffmpeg filter option escaping: backslash, colon, single quote
   return p.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }

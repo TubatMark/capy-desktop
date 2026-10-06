@@ -35,6 +35,8 @@ export interface QueueEntry {
   aiReview?: ContentReview;
   /** A kids' story: YouTube marks it "made for kids". */
   madeForKids?: boolean;
+  /** Where the review card's title links (default: the clip page). */
+  link?: string;
   videoTitle?: string;
   videoUrl?: string;
   thumbUrl?: string;
@@ -187,7 +189,7 @@ export interface StoryState {
   /** The kid-safety story reviewer's verdict on the script. */
   review?: StoryReview;
   voice?: string;
-  video?: { url: string; file: string; duration: number; coverUrl?: string };
+  video?: { url: string; file: string; duration: number; coverUrl?: string; renderedAt?: number };
   /** The AI content reviewer on the finished video (kids profile). */
   contentReview?: ContentReview;
   /** Upload text, written for parents. */

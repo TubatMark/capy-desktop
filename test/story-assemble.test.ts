@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { storyCaptionStyle, storyGraph } from "../src/story/assemble";
+import { assembleArgs, storyCaptionStyle, storyGraph } from "../src/story/assemble";
 
 describe("storyGraph", () => {
   // title card 2s, page 0 narrates 2..5, page 1 from 5.6..8, page 2 from 8.6..10
@@ -40,5 +40,15 @@ describe("story title card", () => {
   it("keeps the title's case", () => {
     expect(buildAss([], storyCaptionStyle(), { text: "Pip Learns to Share", seconds: 2, keepCase: true })).toContain("Pip Learns to Share");
     expect(buildAss([], storyCaptionStyle(), { text: "Pip", seconds: 2 })).toContain("PIP");
+  });
+});
+
+describe("assembleArgs", () => {
+  it("runs ffmpeg in the story folder and names the captions file bare (an apostrophe in the path can't break it)", () => {
+    const a = assembleArgs({ pages: ["/o/Mark's out/p/01.png"], narration: ["/o/Mark's out/a/01.aiff"], starts: [2], total: 4, assFile: "/o/Mark's out/story.ass", out: "/o/Mark's out/x.tmp.mp4" }, "libx264");
+    expect(a.cwd).toBe("/o/Mark's out");
+    const filter = a.args[a.args.indexOf("-filter_complex") + 1]!;
+    expect(filter).toContain("ass=filename=story.ass");
+    expect(filter).not.toContain("Mark");
   });
 });

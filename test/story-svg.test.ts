@@ -9,6 +9,12 @@ describe("sanitizeSvg", () => {
     expect(clean).toContain('<use href="#ok"/>');
     expect(clean).toContain('<circle r="2"/>');
   });
+  it("survives the bypasses a single pass misses", () => {
+    expect(sanitizeSvg("<scr<script></script>ipt>alert(1)</scr<script></script>ipt>")).not.toMatch(/<script/i);
+    expect(sanitizeSvg('<use l:href="other.svg#a"/><use xlink:href="#ok"/>')).toBe('<use/><use xlink:href="#ok"/>');
+    expect(sanitizeSvg('<style>@import "evil.css"; .a{fill:red}</style>')).not.toContain("@import");
+    expect(sanitizeSvg('<animate attributeName="href" to="javascript:alert(1)"/><set attributeName="onclick" to="x"/><rect/>')).toBe("<rect/>");
+  });
   it("unwraps an <svg> wrapper the AI added anyway", () => {
     expect(sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="1"/></svg>')).toBe('<rect width="1"/>');
   });

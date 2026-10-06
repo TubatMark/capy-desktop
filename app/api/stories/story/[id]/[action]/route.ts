@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 const Body = z.object({ notes: z.array(z.string().trim().min(1).max(300)).max(10).optional(), page: z.number().int().min(0).max(11).optional(), voice: z.string().trim().min(1).max(80).optional() });
 
-/** POST = approve | rewrite { notes } | redraw { page } | render { voice } | queue */
+/** POST = approve | recheck | rewrite { notes } | redraw { page } | render { voice } | queue */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string; action: string }> }) {
   const { id, action } = await ctx.params;
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
@@ -19,6 +19,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string; ac
     switch (action) {
       case "approve":
         return NextResponse.json(await m.approveScript(id));
+      case "recheck":
+        return NextResponse.json(await m.recheck(id));
       case "rewrite":
         return NextResponse.json(await m.rewrite(id, b.notes ?? []));
       case "redraw":

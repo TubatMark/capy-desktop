@@ -131,7 +131,7 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
           <img src={first.thumbUrl} alt="" className="h-14 w-8 shrink-0 rounded object-cover" />
         )}
         <div className="min-w-0 flex-1">
-          <Link href={`/v/${first.jobId}/clip/${first.n}`} className="block truncate text-sm font-medium hover:underline">
+          <Link href={first.link ?? `/v/${first.jobId}/clip/${first.n}`} className="block truncate text-sm font-medium hover:underline">
             {first.clipTitle}
           </Link>
           <p className="text-xs text-muted-foreground">{first.slotAt ? fmtSlot(first.slotAt, tz) : "No time set"}</p>

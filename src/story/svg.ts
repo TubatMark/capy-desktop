@@ -23,24 +23,41 @@ export interface CastPlacement {
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const n = (v: number) => String(Math.round(v * 100) / 100);
 
-/** Make AI-written SVG safe to render: no scripts, embedded HTML, images, handlers or outside references. */
-export function sanitizeSvg(raw: string): string {
-  let s = raw.trim().replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "");
-  s = s
+/** One cleaning pass (see sanitizeSvg). */
+function clean(raw: string): string {
+  return raw
     .replace(/<\?xml[\s\S]*?\?>/gi, "")
     .replace(/<!DOCTYPE[\s\S]*?>/gi, "")
     .replace(/<!ENTITY[\s\S]*?>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<script[\s\S]*?<\/script\s*>/gi, "")
-    .replace(/<script[^>]*\/>/gi, "")
+    .replace(/<script[^>]*\/?>/gi, "")
     .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, "")
     .replace(/<image[\s\S]*?(\/>|<\/image\s*>)/gi, "")
+    // still pictures need no animation, and <animate>/<set> can rewrite href or handlers
+    .replace(/<(animate\w*|set)\b[\s\S]*?(\/>|<\/\1\s*>)/gi, "")
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*')/gi, "")
-    // only same-document references (#id) survive
-    .replace(/\s(?:xlink:)?href\s*=\s*("(?!#)[^"]*"|'(?!#)[^']*')/gi, "")
-    .replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, "none");
-  // the AI was asked for a fragment: drop any <svg> wrapper or stray <svg>/</svg> tag (one would close the page early)
-  return s.replace(/<svg\b[^>]*>/gi, "").replace(/<\/svg\s*>/gi, "").trim();
+    // only same-document references (#id) survive, whatever namespace prefix the href uses
+    .replace(/\s(?:[\w-]+:)?href\s*=\s*("(?!#)[^"]*"|'(?!#)[^']*')/gi, "")
+    .replace(/@import[^;>]*;?/gi, "")
+    .replace(/url\(\s*['"]?(?!#)[^)]*\)/gi, "none")
+    // the AI was asked for a fragment: drop any <svg> wrapper or stray <svg>/</svg> tag (one would close the page early)
+    .replace(/<svg\b[^>]*>/gi, "")
+    .replace(/<\/svg\s*>/gi, "");
+}
+
+/**
+ * Make AI-written SVG safe to render: no scripts, embedded HTML, images, animation, handlers or outside references.
+ * Repeated until nothing changes, so a tag split around a removed one (`<scr<script></script>ipt>`) can't reassemble.
+ */
+export function sanitizeSvg(raw: string): string {
+  let s = raw.trim().replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "");
+  for (let i = 0; i < 8; i++) {
+    const next = clean(s);
+    if (next === s) break;
+    s = next;
+  }
+  return s.trim();
 }
 
 /** SVG transform that stands a character's feet on the placement point (clamped onto the page). */
