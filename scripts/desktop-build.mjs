@@ -19,6 +19,9 @@ function run(cmd, args, env = {}) {
 
 const standalone = path.join(root, ".next/standalone");
 
+// next build doesn't empty .next/standalone: after a dependency update the old package versions would stay
+// next to the new ones (and the checks below could pick the stale copy)
+fs.rmSync(standalone, { recursive: true, force: true });
 run("pnpm", ["exec", "next", "build"]);
 
 if (!fs.existsSync(path.join(standalone, "server.js"))) {
@@ -56,7 +59,9 @@ console.log(`standalone server: ${mb} MB`);
 // native `claude` binary it resolves from its sibling package. pnpm lays these out under node_modules/.pnpm/<pkg>@<ver>/.
 // (archiver is bundled into the route chunk, so it needs no node_modules entry.)
 const pnpmDir = path.join(standalone, "node_modules/.pnpm");
-const sdkParent = fs.existsSync(pnpmDir) ? fs.readdirSync(pnpmDir).find((d) => d.startsWith("@anthropic-ai+claude-agent-sdk@")) : undefined;
+// the version the project resolves (pnpm can leave an older copy in .pnpm after an update until it is pruned)
+const sdkReal = fs.realpathSync(path.join(root, "node_modules/@anthropic-ai/claude-agent-sdk"));
+const sdkParent = path.basename(path.resolve(sdkReal, "../../.."));
 const sdkScope = sdkParent ? path.join(pnpmDir, sdkParent, "node_modules/@anthropic-ai") : undefined;
 for (const rel of ["claude-agent-sdk/sdk.mjs", `claude-agent-sdk-${process.platform}-${process.arch}/claude`]) {
   const p = sdkScope && path.join(sdkScope, rel);
