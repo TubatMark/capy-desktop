@@ -30,7 +30,13 @@ import {
   resolveThumbnailSource,
   type ThumbnailDependencies,
 } from "./thumbnails";
-import { composeThumbnail, thumbnailLayers } from "../src/thumbnails/compose";
+import {
+  composeOriginalThumbnail,
+  composeThumbnail,
+  originalThumbnailLayers,
+  thumbnailLayers,
+  type SourceThumbnailAsset,
+} from "../src/thumbnails/compose";
 import {
   hashManifest,
   buildPublishPackage,
@@ -115,8 +121,10 @@ export async function approveThumbnail(
   revision(editRevision);
   const doc = getThumbnail(id, editRevision, deps);
   await resolveThumbnailSource(doc.sourceIdentity, deps);
-  const frame = frameFor(doc, deps);
-  await verified(frame.path, frame.checksum, deps);
+  const picture = doc.sourceThumbnail
+    ? sourceThumbnailFor(doc, deps)
+    : frameFor(doc, deps);
+  await verified(picture.path, picture.checksum, deps);
   const bg = doc.layers.find((l) => l.id === "background");
   if (bg?.kind === "image") {
     const asset = deps.store.get<{ path: string; checksum: string }>(
@@ -240,7 +248,48 @@ function frameFor(
     throw fail("Source frame does not belong to exact thumbnail footage");
   return frame;
 }
+/** "original" designs: the cached source-video thumbnail they were built from. */
+function sourceThumbnailFor(
+  doc: ThumbnailDesign,
+  deps: ThumbnailDependencies,
+): SourceThumbnailAsset {
+  const ref = doc.sourceThumbnail;
+  const asset = ref
+    ? deps.store.get<{ path: string; checksum: string }>(
+        "thumbnail-assets",
+        ref.checksum,
+      )?.value
+    : undefined;
+  if (!ref || !asset || asset.checksum !== ref.checksum)
+    throw fail("The original video's thumbnail is no longer available");
+  return { assetId: ref.checksum, path: asset.path, checksum: ref.checksum };
+}
+/** An "original" design in another aspect: its default layout there, keeping the headline's text and look. */
+function reflowOriginal(
+  doc: ThumbnailDesign,
+  aspect: ThumbnailExportOptions["aspect"],
+): ThumbnailLayer[] {
+  const text = doc.layers.find((l) => l.kind === "text"),
+    accent = doc.layers.find((l) => l.id === "accent");
+  return originalThumbnailLayers(
+    aspect,
+    text?.text ?? "",
+    doc.sourceThumbnail!.checksum,
+  ).map((layer) =>
+    layer.kind === "text" && text
+      ? {
+          ...layer,
+          color: text.color ?? layer.color,
+          fontFamily: text.fontFamily ?? layer.fontFamily,
+        }
+      : layer.id === "accent" && accent?.color
+        ? { ...layer, color: accent.color }
+        : layer,
+  );
+}
 function briefFor(doc: ThumbnailDesign, aspect = doc.aspectPreset) {
+  if (doc.layout === "original")
+    throw fail("The original-thumbnail design has no frame layout");
   return {
     version: 1 as const,
     layout: doc.layout,
@@ -292,6 +341,28 @@ async function compose(
   options: ThumbnailExportOptions,
   deps: ThumbnailDependencies,
 ) {
+  if (doc.sourceThumbnail) {
+    const image = sourceThumbnailFor(doc, deps);
+    return composeOriginalThumbnail(
+      {
+        aspect: options.aspect,
+        headline: doc.layers.find((l) => l.kind === "text")?.text ?? "",
+        image: { ...image, path: await verified(image.path, image.checksum, deps) },
+        directory: path.join(
+          deps.root,
+          "studio",
+          "thumbnail-edits",
+          randomUUID(),
+        ),
+        layers:
+          options.aspect === doc.aspectPreset
+            ? structuredClone(doc.layers)
+            : reflowOriginal(doc, options.aspect),
+        textFree: !options.text,
+      },
+      new AbortController().signal,
+    );
+  }
   const frame = frameFor(doc, deps);
   await verified(frame.path, frame.checksum, deps);
   const bg = doc.layers.find((l) => l.id === "background");
@@ -383,13 +454,23 @@ async function prepareThumbnailSave(
     aspectPreset: aspect,
     layers,
   };
-  const frame = frameFor(next, deps);
-  if (aspect !== coordinateAspect)
-    next.layers = reflowThumbnail(
-      { ...next, aspectPreset: coordinateAspect },
-      aspect,
-      frame,
+  if (
+    next.sourceThumbnail &&
+    layers.find((l) => l.id === "source")?.assetId !==
+      next.sourceThumbnail.checksum
+  )
+    throw fail(
+      "This design is built from the original video's thumbnail. To use a frame instead, pick one of the frame designs.",
     );
+  const frame = next.sourceThumbnail ? undefined : frameFor(next, deps);
+  if (aspect !== coordinateAspect)
+    next.layers = frame
+      ? reflowThumbnail(
+          { ...next, aspectPreset: coordinateAspect },
+          aspect,
+          frame,
+        )
+      : reflowOriginal(next, aspect);
   const composed = await compose(
     next,
     { aspect, format: "png", text: true },
@@ -398,13 +479,15 @@ async function prepareThumbnailSave(
   const saved = {
     ...next,
     layers: composed.layers,
-    sourceFrames: [
-      {
-        assetId: frame.assetId,
-        sourceUs: frame.sourceUs,
-        checksum: frame.checksum,
-      },
-    ],
+    sourceFrames: frame
+      ? [
+          {
+            assetId: frame.assetId,
+            sourceUs: frame.sourceUs,
+            checksum: frame.checksum,
+          },
+        ]
+      : [],
     versions: [...current.versions, ...composed.versions],
     editRevision: expectedRevision + 1,
     reviewState:
@@ -571,7 +654,9 @@ async function attachToEntry(
   } = {},
 ): Promise<PublishPackage> {
   const doc = getThumbnail(thumbnailId, editRevision, deps);
-  const frame = frameFor(doc, deps);
+  // "original" designs carry the source video's thumbnail as provenance instead of a clip frame.
+  const frame = doc.sourceThumbnail ? undefined : frameFor(doc, deps);
+  if (doc.sourceThumbnail) sourceThumbnailFor(doc, deps);
   const seen = deps.store
     .get<QueueEntry[]>("legacy-state", "queue")
     ?.value.find(match);
@@ -630,13 +715,17 @@ async function attachToEntry(
       designId: thumbnailId,
       versionId,
       sourceIdentity: source,
-      sourceFrame: {
-        id: frame.id,
-        assetId: frame.assetId,
-        sourceUs: frame.sourceUs,
-        renderUs: frame.renderUs,
-        checksum: frame.checksum,
-      },
+      ...(frame
+        ? {
+            sourceFrame: {
+              id: frame.id,
+              assetId: frame.assetId,
+              sourceUs: frame.sourceUs,
+              renderUs: frame.renderUs,
+              checksum: frame.checksum,
+            },
+          }
+        : { sourceThumbnail: doc.sourceThumbnail }),
     };
     const attached = buildPublishPackage({
       ...manifest,
@@ -791,6 +880,10 @@ export async function regenerateThumbnail(
   const doc = getThumbnail(id, undefined, deps);
   if (doc.editRevision !== expectedRevision)
     throw fail("Thumbnail revision conflict", 409);
+  if (doc.sourceThumbnail)
+    throw fail(
+      "This design uses the original video's thumbnail, so there's nothing to regenerate. Edit its headline instead.",
+    );
   if (
     !["variation", "background"].includes(kind) ||
     !requestId ||

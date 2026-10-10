@@ -32,7 +32,7 @@ export interface PostText {
 export interface QueueThumbnailOption {
   designId: string;
   url: string;
-  layout: "bold" | "editorial" | "minimal";
+  layout: "original" | "bold" | "editorial" | "minimal";
   headline?: string;
   /** "ai" when the AI chose its frame and headline. */
   pickedBy?: "ai" | "heuristic";
