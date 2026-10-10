@@ -4,7 +4,7 @@ import {
   updateDelivery,
 } from "./delivery-store";
 import { queueGroup } from "../lib/queue-source";
-import { legacyState, mutateLegacy } from "./db/runtime";
+import { legacyState, mutateLegacy, runtimeStore } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
 import { allocateSlot, fmtIn } from "../lib/post-time";
 import type {
@@ -667,9 +667,9 @@ export function queue() {
 }
 
 /** A local edit cannot revoke or repeat an already-started remote operation. */
-export function deliveryMutationReason(e: QueueEntry): string | undefined {
+export function deliveryMutationReason(e: QueueEntry, store = runtimeStore()): string | undefined {
   const d = e.publishPackage
-    ? deliveryForPackage(e.publishPackage.packageHash)
+    ? deliveryForPackage(e.publishPackage.packageHash, store)
     : undefined;
   if (
     d &&

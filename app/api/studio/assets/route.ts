@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import {
   importAsset,
+  adoptLegacyAsset,
   listAssets,
   relinkAsset,
   retryAsset,
@@ -31,7 +32,10 @@ export async function POST(req: Request) {
       const filename = path.join(temporary, path.basename(file.name));
       await writeFile(filename, new Uint8Array(await file.arrayBuffer()));
       const id = form.get("relinkId");
-      const asset = id
+      const recoverId = form.get("recoverLegacyId");
+      const asset = recoverId
+        ? await adoptLegacyAsset(String(recoverId), filename)
+        : id
         ? await relinkAsset(String(id), filename)
         : await importAsset({
             path: filename,
@@ -50,6 +54,8 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
+    if (typeof body.id === "string" && body.action === "adopt")
+      return Response.json(await adoptLegacyAsset(body.id, body.path));
     if (typeof body.id === "string" && body.action === "retry")
       return Response.json(await retryAsset(body.id));
     if (typeof body.id !== "string" || typeof body.path !== "string")

@@ -14,6 +14,7 @@ export function AssetBin({
   onRefresh: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const recoverLegacy = useRef<string | undefined>(undefined);
   const relink = useRef<string | undefined>(undefined);
   const [localPath, setLocalPath] = useState("");
   const [kind, setKind] = useState<AssetRef["kind"]>("video");
@@ -31,6 +32,7 @@ export function AssetBin({
           ? "image"
           : "video";
       form.set("kind", inferred);
+      if (recoverLegacy.current) form.set("recoverLegacyId", recoverLegacy.current);
       if (relink.current) form.set("relinkId", relink.current);
       const response = await fetch("/api/studio/assets", {
         method: "POST",
@@ -44,6 +46,7 @@ export function AssetBin({
     } finally {
       setBusy(false);
       relink.current = undefined;
+      recoverLegacy.current = undefined;
       if (fileRef.current) fileRef.current.value = "";
     }
   }
@@ -63,12 +66,12 @@ export function AssetBin({
       setBusy(false);
     }
   }
-  async function retry(id: string) {
+  async function retry(id: string, action = "retry") {
     setError("");
     try {
       await api("/api/studio/assets", {
         method: "PATCH",
-        body: JSON.stringify({ id, action: "retry" }),
+        body: JSON.stringify({ id, action }),
       });
       onRefresh();
     } catch (error) {
@@ -88,6 +91,7 @@ export function AssetBin({
           disabled={busy}
           onClick={() => {
             relink.current = undefined;
+      recoverLegacy.current = undefined;
             fileRef.current?.click();
           }}
         >
@@ -161,7 +165,7 @@ export function AssetBin({
                   {asset.status}
                 </p>
               </div>
-              {asset.status === "ready" && asset.kind !== "font" ? (
+              {asset.status === "ready" && !!asset.checksum && !!asset.mediaUrl && asset.kind !== "font" ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -172,7 +176,18 @@ export function AssetBin({
                 </Button>
               ) : null}
             </div>
-            {asset.status === "failed" && (
+            {asset.legacy && !asset.checksum && (
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => {
+                if (asset.status === "missing") {
+                  recoverLegacy.current = asset.id;
+                  relink.current = undefined;
+                  fileRef.current?.click();
+                } else void retry(asset.id, "adopt");
+              }}>
+                {asset.status === "missing" ? "Recover as new media" : "Prepare legacy media"}
+              </Button>
+            )}
+            {asset.status === "failed" && !asset.legacy && (
               <Button
                 size="sm"
                 variant="outline"

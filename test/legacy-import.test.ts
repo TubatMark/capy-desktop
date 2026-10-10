@@ -93,7 +93,7 @@ describe("legacy import", () => {
     expect(existsSync(path.join(first.backupLocation!, "before.sqlite"))).toBe(
       true,
     );
-    expect(f.store.get<any>("assets", "j:clip:1")?.value.status).toBe("ready");
+    expect(f.store.get<any>("assets", "j:clip:1")?.value.status).toBe("waiting");
     expect(
       readFileSync(path.join(f.outputRoot, "moved", "clip.mp4"), "utf8"),
     ).toBe("unchanged");

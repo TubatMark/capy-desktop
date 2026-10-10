@@ -26,6 +26,11 @@ export interface DiscoveryState {
   lastSuccessAt?: number;
   watermark?: number;
   cursor?: string;
+  /** Only completed scans establish a boundary. In-progress watermarks never imply success. */
+  boundaryIds?: string[];
+  scope?: { accountId?: string; cutoff?: number };
+  scan?: { accountId: string; cutoff?: number; watermark?: number; headIds: string[]; complete?: boolean };
+
   failures: number;
   nextAttemptAt?: number;
   reason?: string;
@@ -206,7 +211,7 @@ function summary(channelId: string, state: DiscoveryState, now: Date) {
     })),
   );
 }
-/** Restart from the first page after failure: provider page tokens are not stable historical cursors. */
+/** Resume committed pages across deadlines; invalid provider cursors explicitly restart the scan. */
 export async function reconcileCreator(
   channelId: string,
   signal: AbortSignal,
@@ -226,16 +231,27 @@ export async function reconcileCreator(
       reason: previous.reason,
     };
   const store = runtimeStore();
-  const stateRevision = store.get("discovery-state", channelId)?.revision ?? 0;
+  let stateRevision = store.get("discovery-state", channelId)?.revision ?? 0;
   const accountId = ch.sourceAccountId ?? loadReadingAccount().account?.id;
   const bounded = AbortSignal.any([
     signal,
     AbortSignal.timeout(deps.deadlineMs ?? 30_000),
   ]);
   let discovered = 0;
-  let cursor: string | undefined;
-  let watermark = previous.watermark;
-  let method: DiscoveryState["method"] = accountId
+  const scope = { accountId, cutoff: discoveryCutoff(ch) };
+  const sameScope =
+    previous.scope?.accountId === accountId && previous.scope?.cutoff === scope.cutoff;
+  const resumable =
+    previous.scan?.accountId === accountId && previous.scan?.cutoff === scope.cutoff;
+  let cursor = resumable ? previous.cursor : undefined;
+  let scan = resumable ? previous.scan : undefined;
+  let watermark = scan?.watermark ?? previous.watermark;
+  const saveProgress = () => {
+    const current = { ...previous, cursor, scan, method, scope };
+    const saved = store.save("discovery-state", channelId, current, stateRevision);
+    stateRevision = saved.revision;
+  };
+  const method: DiscoveryState["method"] = accountId
     ? "uploads-playlist"
     : "videos-tab";
   try {
@@ -289,8 +305,30 @@ export async function reconcileCreator(
       const playlistId =
         channel.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
       if (!playlistId) throw Error("Channel uploads playlist is unavailable");
-      const cursors = new Set<string>();
-      do {
+      // A completeness boundary must not hide premieres or records with unknown publication dates.
+      const deferred = store.list<DiscoveryRecord>("discovery-videos")
+        .map((r) => r.value)
+        .filter((r) => r.channelId === channelId && !r.accepted && r.status !== "excluded" && (deps.force || (r.retryAt ?? 0) <= now.getTime()))
+        .sort((a, b) => a.checkedAt - b.checkedAt).slice(0, 50);
+      if (deferred.length && !scan?.complete) {
+        const recheckSignal = AbortSignal.any([
+          bounded, AbortSignal.timeout(Math.max(1, Math.floor((deps.deadlineMs ?? 30_000) / 4))),
+        ]);
+        try {
+          const details = await readYoutube(accountId, "videos", {
+            part: "snippet,contentDetails,status,liveStreamingDetails", id: deferred.map((r) => r.videoId).join(","),
+          }, { ...apiDeps, signal: recheckSignal });
+          const videos = new Map(parseDiscoveryVideos(details as Record<string, unknown>).map((v) => [v.id, v]));
+          discovered += recordDiscoveryPage(channelId, deferred.map((r) => ({ id: r.videoId,
+            readiness: classifyReadiness(videos.get(r.videoId), { channelId, minVideoSec: ch.settings.minVideoSec, now: deps.now }),
+          })), now, bounded, accountId);
+        } catch (error) {
+          // Slow readiness checks retain their durable records and must not starve pagination.
+          if (!recheckSignal.aborted || bounded.aborted) throw error;
+        }
+      }
+      const cursors = new Set<string>(cursor ? [cursor] : []);
+      if (!scan?.complete) do {
         const page = await readYoutube(
           accountId,
           "playlistItems",
@@ -334,25 +372,32 @@ export async function reconcileCreator(
         for (const video of videos.values())
           if (Number.isFinite(video.publishedAt))
             watermark = Math.max(watermark ?? 0, video.publishedAt!);
-        discovered += recordDiscoveryPage(
-          channelId,
-          ids.map((id) => ({
-            id,
-            readiness: classifyReadiness(videos.get(id), {
-              channelId,
-              minVideoSec: ch.settings.minVideoSec,
-              now: deps.now,
-            }),
-          })),
-          now,
-          bounded,
-          accountId,
-        );
-        cursor = page.nextPageToken;
-        if (cursor && cursors.has(cursor))
-          throw Error(
-            "YouTube repeated an uploads page; reconciliation is incomplete",
+        // A prior fully visited head is a safe stopping point in the newest-first uploads playlist.
+        // Deferred entries below it have their own explicit readiness rechecks above.
+        const reachedBoundary = sameScope && !!previous.lastSuccessAt && ids.some((id) => previous.boundaryIds?.includes(id));
+        if (!scan) scan = { accountId, cutoff: discoveryCutoff(ch), headIds: ids, watermark };
+        discovered += store.transaction(() => {
+          const added = recordDiscoveryPage(
+            channelId,
+            ids.map((id) => ({
+              id,
+              readiness: classifyReadiness(videos.get(id), {
+                channelId,
+                minVideoSec: ch.settings.minVideoSec,
+                now: deps.now,
+              }),
+            })),
+            now,
+            bounded,
+            accountId,
           );
+          cursor = reachedBoundary ? undefined : page.nextPageToken;
+          scan = { ...scan!, watermark, complete: !cursor };
+          saveProgress();
+          return added;
+        });
+        if (cursor && cursors.has(cursor))
+          throw Object.assign(Error("YouTube repeated an uploads page; reconciliation is incomplete"), { providerReason: "invalidPageToken" });
         if (cursor) cursors.add(cursor);
         if (cursors.size >= 10_000)
           throw Error(
@@ -367,6 +412,8 @@ export async function reconcileCreator(
           failures: 0,
           lastSuccessAt: now.getTime(),
           watermark,
+          boundaryIds: scan?.headIds ?? previous.boundaryIds,
+          scope,
           method,
         };
         store.save("discovery-state", channelId, state, stateRevision);
@@ -381,7 +428,9 @@ export async function reconcileCreator(
       (signal.reason as Error | undefined)?.name !== "TimeoutError"
     )
       signal.throwIfAborted();
-    const reason = error instanceof Error ? error.message : String(error);
+    const invalidCursor = (error as { providerReason?: string })?.providerReason === "invalidPageToken";
+    if (invalidCursor) { cursor = undefined; scan = undefined; }
+    const reason = invalidCursor ? "Uploads cursor expired; restarting safely with video-ID deduplication" : error instanceof Error ? error.message : String(error);
     fence(() =>
       store.transaction(() => {
         const failures = previous.failures + 1;
@@ -389,6 +438,8 @@ export async function reconcileCreator(
           ...previous,
           failures,
           cursor,
+          scan,
+          scope,
           reason,
           method,
           nextAttemptAt:

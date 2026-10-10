@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/hooks/use-job";
 import { ago, num } from "@/components/channel/format";
-import { toneOf } from "@/components/gauge";
 import type { Keyword, KeywordResearch } from "@/lib/types";
 
 const SOURCE: Record<Keyword["sources"][number], string> = { autocomplete: "People type it", ranking: "In what ranks", yours: "Finds you now" };
@@ -23,7 +22,8 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
     setBusy(true);
     setErr(null);
     try {
-      setRes(await api<KeywordResearch>(`/api/channel/keywords?q=${encodeURIComponent(topic.trim())}`));
+      const result = await api<KeywordResearch>(`/api/channel/keywords?q=${encodeURIComponent(topic.trim())}`);
+      setRes({ ...result, keywords: result.rawVersion === 1 ? result.keywords : [], tags: [] });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -63,8 +63,7 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
       {err && <p className="text-sm text-red-700">{err}</p>}
       {!res && !busy && (
         <p className="max-w-prose text-sm text-pretty text-muted-foreground">
-          Type what a video is about. capy asks YouTube what people type after it, looks at the videos that rank for it, and adds the searches that already bring your channel viewers. New
-          uploads use the same research automatically.
+          View raw autocomplete suggestions and YouTube search results. Automatic drafts use separate local editorial checks.
         </p>
       )}
 
@@ -73,7 +72,7 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
           {res.notes.length > 0 && <p className="text-xs text-muted-foreground">{res.notes.join(" ")}</p>}
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
             <section className="space-y-2">
-              <h3 className="font-semibold">Searches to target</h3>
+              <h3 className="font-semibold">Autocomplete suggestions</h3>
               {res.keywords.length ? (
                 <ol className="divide-y rounded-xl border bg-card">
                   {res.keywords.slice(0, 20).map((k) => (
@@ -82,14 +81,7 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
                         <p className="truncate text-sm font-medium">{k.term}</p>
                         <p className="text-xs text-muted-foreground">
                           {k.sources.map((s) => SOURCE[s]).join(" · ")}
-                          {k.views ? ` · ${num(k.views)} views to you` : ""}
                         </p>
-                      </div>
-                      <div className="flex w-28 shrink-0 items-center gap-2" title={`Strength ${k.score} of 100`}>
-                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--gauge-track)]">
-                          <div className="h-full rounded-full" style={{ width: `${k.score}%`, background: `var(--gauge-${toneOf(k.score)})` }} />
-                        </div>
-                        <span className="w-6 text-right text-xs tabular-nums text-muted-foreground">{k.score}</span>
                       </div>
                       <button type="button" onClick={() => void copy(k.term, k.term)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`Copy ${k.term}`}>
                         {copied === k.term ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -103,25 +95,8 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
             </section>
 
             <div className="space-y-6">
-              {res.tags.length > 0 && (
-                <section className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-semibold">Tags the top videos share</h3>
-                    <Button size="sm" variant="ghost" onClick={() => void copy(res.tags.join(", "), "tags")}>
-                      {copied === "tags" ? <Check /> : <Copy />} Copy all
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {res.tags.slice(0, 24).map((t) => (
-                      <span key={t} className="rounded-md bg-secondary px-2 py-0.5 text-xs">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </section>
-              )}
               <section className="space-y-2">
-                <h3 className="font-semibold">What ranks for “{res.seed}”</h3>
+                <h3 className="font-semibold">YouTube results for “{res.seed}”</h3>
                 {res.ranking.length ? (
                   <ol className="space-y-2.5">
                     {res.ranking.map((v, i) => (
@@ -134,7 +109,7 @@ export function KeywordsPanel({ initial, hint }: { initial?: string; hint?: stri
                             {v.title}
                           </a>
                           <p className="text-xs text-muted-foreground">
-                            {v.channel} · {num(v.views)} views{v.publishedAt ? ` · ${ago(v.publishedAt)}` : ""}
+                            {v.channel} · {v.views === undefined ? "Views unavailable" : `${num(v.views)} views`}{v.publishedAt ? ` · ${ago(v.publishedAt)}` : ""}
                           </p>
                         </div>
                       </li>

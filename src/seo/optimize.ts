@@ -100,20 +100,8 @@ export function rewritePrompt(i: {
   channelTerms?: string[];
   keep?: string;
 }): string {
-  const kws =
-    i.research?.keywords
-      .slice(0, 15)
-      .map(
-        (k) =>
-          `- ${k.term} (score ${k.score}; ${k.sources.join(", ")}${k.views ? `; already brought ${k.views} views` : ""})`,
-      ) ?? [];
-  const ranking =
-    i.research?.ranking
-      .slice(0, 6)
-      .map(
-        (v) =>
-          `- "${v.title}"${v.views !== undefined ? ` (${v.views.toLocaleString("en-US")} views)` : ""}`,
-      ) ?? [];
+  // Ignore even historical persisted research/channelTerms passed by older callers.
+  // All rewrite input and scoring is confined to the supplied editorial draft.
   return `Tune the upload text of ${AUDIENCE[i.kind]} for YouTube search, without changing what the video is.
 
 Current title: ${i.text.title}
@@ -123,7 +111,7 @@ Current hashtags: ${i.text.hashtags.join(", ") || "(none)"}
 Current tags: ${i.text.tags.join(", ") || "(none)"}
 
 What it is: ${i.about.slice(0, 1500)}
-${kws.length ? `\nKeywords people search (best first):\n${kws.join("\n")}\n` : ""}${ranking.length ? `\nWhat ranks for "${i.research!.seed}" now:\n${ranking.join("\n")}\n` : ""}${i.research?.tags.length ? `\nTags those videos share: ${i.research.tags.slice(0, 15).join(", ")}\n` : ""}${i.channelTerms?.length ? `\nSearches that already bring this channel viewers: ${i.channelTerms.slice(0, 10).join(", ")}\n` : ""}
+
 Rules:
 - Pick the keyword this video can honestly rank for (it must describe the video). Put it near the start of the title and in the first sentence of the description.
 - Keep the title true to the video: no promises it doesn't keep, no all caps, at most one emoji.${i.kind === "video" ? "" : "\n- Include #shorts in the hashtags."}${i.kind === "kids" ? "\n- Made for kids: no requests to subscribe, like, comment or turn on notifications; nothing aimed at children. Write for parents." : ""}${i.keep ? `\n- Keep this line in the description: ${i.keep}` : ""}`;

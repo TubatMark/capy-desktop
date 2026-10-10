@@ -29,13 +29,13 @@ const PlanSchema = z.object({
 
 export function planPrompt(series: StorySeries, brief: string, research?: KeywordResearch): string {
   const [lo, hi] = pageRange(series);
-  const kws = research?.keywords.slice(0, 12).map((k) => `- ${k.term} (score ${k.score}${k.views ? `, already brings this channel ${k.views} views` : ""})`) ?? [];
+  const kws = research?.rawVersion === 1 ? research.keywords.slice(0, 12).map((k) => `- ${k.term}`) : [];
   const ranks = research?.ranking.slice(0, 6).map((v) => `- "${v.title}"${v.views !== undefined ? ` (${v.views.toLocaleString("en-US")} views)` : ""}`) ?? [];
   return `Plan a 1-minute animated read-aloud Short for the kids' series "${series.title}" (ages ${series.ageBand}; tone: ${series.tone}; values: ${series.values.join(", ") || "kindness"}).
 Characters: ${series.characters.map((c) => `${c.name} (${c.description})`).join("; ")}
 
 Story idea: ${brief}
-${kws.length ? `\nWhat parents search (best first):\n${kws.join("\n")}\n` : ""}${ranks.length ? `\nWhat ranks for "${research!.seed}" now:\n${ranks.join("\n")}\n` : ""}
+${kws.length ? `\nRaw autocomplete suggestions:\n${kws.join("\n")}\n` : ""}${ranks.length ? `\nWhat ranks for "${research!.seed}" now:\n${ranks.join("\n")}\n` : ""}
 It is posted as made for kids: no comments, no notifications, narrower recommendations. Plan for what still works:
 - search: a title and keyword parents actually type;
 - the first two seconds: page 1 must stop the scroll with a bold picture and an opening line that promises a story;

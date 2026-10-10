@@ -223,7 +223,9 @@ export async function importLegacy(
               kind: "video",
               location,
               originalLocation: original,
-              status: ready ? "ready" : "missing",
+              status: ready ? "waiting" : "missing",
+              checksum: "",
+              name: path.basename(original),
               legacy: true,
             });
             if (!ready) report.unresolved.push({ id, location: original });

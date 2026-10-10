@@ -472,3 +472,47 @@ test("speaker confirmation is invalidated by selection and source trims", async 
   await page.getByLabel("Speaker region x", { exact: true }).fill("0.1");
   await expect(confirm).not.toBeChecked();
 });
+
+test("speaker proposal inputs invalidate both returned crops and late responses", async ({ page, request }) => {
+  const imported = await (await request.post("/api/studio/assets", { data: { path: source, kind: "video" } })).json();
+  await expect.poll(async () => (await (await request.get("/api/studio/assets")).json()).find((a: any) => a.id === imported.id)?.status).toBe("ready");
+  const doc = await (await request.post("/api/studio/projects", { data: { name: "Proposal epoch fixture", sources: [{ assetId: imported.id }] } })).json();
+  await page.goto(`/studio/${doc.id}`);
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  const confirm = page.getByRole("checkbox", { name: "I confirmed a speaker region for this entire source span" });
+  const suggest = page.getByRole("button", { name: "Suggest reframe", exact: true });
+  const accept = page.getByRole("button", { name: "Accept suggested edit", exact: true });
+  await confirm.check();
+  await suggest.click();
+  await expect(accept).toBeVisible();
+  await page.getByLabel("Speaker region x", { exact: true }).fill("0.1");
+  await expect(confirm).not.toBeChecked();
+  await expect(accept).toHaveCount(0);
+  for (const input of ["geometry", "fallback", "confirmation"]) {
+    let release!: () => void;
+    let intercepted!: () => void;
+    const captured = new Promise<void>((resolve) => { intercepted = resolve; });
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/suggestions", async (route) => {
+      const response = await route.fetch();
+      intercepted();
+      await wait;
+      await route.fulfill({ response });
+    });
+    await suggest.click();
+    await captured;
+    if (input === "geometry") await page.getByLabel("Speaker region width", { exact: true }).fill("0.4");
+    if (input === "fallback") await page.getByLabel("Reframe fallback", { exact: true }).selectOption("cover");
+    if (input === "confirmation") await confirm.check();
+    const received = page.waitForResponse((r) => r.url().endsWith("/suggestions"));
+    release();
+    await received;
+    await expect(suggest).toBeEnabled();
+    await expect(accept).toHaveCount(0);
+    await page.unroute("**/suggestions");
+  }
+  await suggest.click();
+  await expect(accept).toBeVisible();
+  await confirm.uncheck();
+  await expect(accept).toHaveCount(0);
+});

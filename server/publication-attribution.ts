@@ -107,8 +107,9 @@ export function capturePublicationAttribution(
 }
 export function getPublicationAttribution(
   packageHash: string,
+  store = runtimeStore(),
 ): PublicationAttributionSnapshot | undefined {
-  const row = runtimeStore().get("publication-attributions", packageHash);
+  const row = store.get("publication-attributions", packageHash);
   if (!row) return;
   const value = PublicationAttributionSchema.parse(row.value),
     { attributionHash, ...body } = value;

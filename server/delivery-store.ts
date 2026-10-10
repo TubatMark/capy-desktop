@@ -67,12 +67,12 @@ export function createDelivery(entry: QueueEntry): DeliveryRecord {
     }),
   );
 }
-export function readDelivery(id: string): DeliveryRecord | undefined {
-  const row = runtimeStore().get("deliveries", id);
+export function readDelivery(id: string, store = runtimeStore()): DeliveryRecord | undefined {
+  const row = store.get("deliveries", id);
   if (!row) return;
   const d = DeliveryRecordSchema.parse(row.value);
   const { packageHash, ...manifest } = d.package;
-  const attribution = getPublicationAttribution(packageHash);
+  const attribution = getPublicationAttribution(packageHash, store);
   if (
     d.id !== id ||
     packageDigest(manifest) !== packageHash ||
@@ -107,13 +107,13 @@ export function updateDelivery(
     }),
   );
 }
-export function deliveryForPackage(packageHash: string) {
-  const ref = runtimeStore().get<{ id: string }>(
+export function deliveryForPackage(packageHash: string, store = runtimeStore()) {
+  const ref = store.get<{ id: string }>(
     "delivery-identities",
     packageHash,
   );
   if (!ref) return;
-  const found = readDelivery(ref.value.id);
+  const found = readDelivery(ref.value.id, store);
   if (!found || found.package.packageHash !== packageHash)
     throw Error("Delivery identity index is missing or mismatched");
   return found;

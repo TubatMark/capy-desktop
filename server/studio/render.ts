@@ -1,4 +1,5 @@
 import path from "node:path";
+import { deliveryMutationReason } from "../queue";
 import { randomUUID, createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import type {
@@ -299,6 +300,8 @@ export async function prepareRenderReview(
     });
   queue().mutate((all) => {
     const old = all.find((e) => e.key === entry.key);
+    const reason = old && deliveryMutationReason(old, deps.store);
+    if (reason) throw Error(reason);
     if (old && ["posting", "posted"].includes(old.status))
       throw Error("This render is already posting or posted");
     return [...all.filter((e) => e.key !== entry.key), entry];

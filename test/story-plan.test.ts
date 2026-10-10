@@ -67,6 +67,7 @@ describe("story plan", () => {
 
   it("the planner sees the research; the writer follows the plan", () => {
     const prompt = planPrompt(series, "Pip learns to share", {
+      rawVersion: 1,
       seed: "bedtime story",
       keywords: [{ term: "bedtime story for toddlers", score: 80, sources: ["autocomplete"] }],
       ranking: [{ id: "r", title: "Calm Bedtime Stories for Kids", channel: "X", views: 1000 }],
@@ -75,6 +76,7 @@ describe("story plan", () => {
       at: 0,
     });
     expect(prompt).toContain("bedtime story for toddlers");
+    expect(prompt).not.toMatch(/score 80|best first/);
     expect(prompt).toContain("Calm Bedtime Stories for Kids");
     expect(prompt).toMatch(/never.*children/i);
     const w = storyWriterPrompt(series, "Pip learns to share", {

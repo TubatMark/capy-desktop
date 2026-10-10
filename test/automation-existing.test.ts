@@ -390,3 +390,20 @@ it("a manual job created after watcher preflight is rejected by Jobs.create with
   ).toEqual([id]);
   expect(watch().get().channels[0]!.history).toEqual([]);
 });
+
+it("ready manual re-import persists settings through get, list, and manager reopen without changing selections or approvals", async () => {
+  const { manual } = setup();
+  persist(manual);
+  const approval = { untouched: "historical approval" };
+  runtimeStore().put("publication-history", "manual", approval);
+  const returned = await jobs().create(manual.url, { lang: "en", count: 5 });
+  expect(returned.settings).toMatchObject({ lang: "en", count: 5 });
+  expect(jobs().get(manual.id)?.settings).toEqual(returned.settings);
+  expect(jobs().list().find((j) => j.id === manual.id)?.settings).toEqual(returned.settings);
+  expect(runtimeStore().get<JobState>("legacy-jobs", manual.id)?.value.settings).toEqual(returned.settings);
+  globalThis.__capyJobs = undefined;
+  await jobs().init();
+  expect(jobs().get(manual.id)?.settings).toEqual(returned.settings);
+  expect(jobs().get(manual.id)?.clips).toEqual(manual.clips);
+  expect(runtimeStore().get("publication-history", "manual")?.value).toEqual(approval);
+});

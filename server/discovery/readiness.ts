@@ -32,7 +32,7 @@ export interface YoutubePage {
       relatedPlaylists?: { uploads?: string };
     };
   }[];
-  error?: { message?: string };
+  error?: { message?: string; errors?: { reason?: string }[] };
 }
 /** Bound both fetch and body reads; a transport ignoring abort cannot hold a worker indefinitely. */
 export async function abortable<T>(
@@ -107,9 +107,9 @@ export async function readYoutube(
     );
   if (!response.ok || data.error) {
     if (response.status === 401) saveReadingAccount({ needsReconnect: true });
-    throw Error(
-      data.error?.message ?? `YouTube discovery failed (${response.status})`,
-    );
+    throw Object.assign(Error(data.error?.message ?? `YouTube discovery failed (${response.status})`), {
+      providerReason: data.error?.errors?.[0]?.reason,
+    });
   }
   return data;
 }

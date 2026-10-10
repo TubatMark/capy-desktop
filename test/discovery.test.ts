@@ -392,3 +392,53 @@ it("repeated catch-up creates exactly one real durable media work item per sourc
   expect(runtimeStore().list("ai-reservation")).toEqual([]);
   expect(runtimeStore().list("ai-cache")).toEqual([]);
 });
+
+it("deadline passes make durable pagination progress and expired cursors restart without duplicates", async () => {
+  creator();
+  const deps = api(75), transport = deps.fetch;
+  const pageStarts: string[] = [];
+  let expire = false;
+  deps.fetch = (async (input, init) => {
+    const u = new URL(String(input));
+    if (u.pathname.endsWith("playlistItems")) {
+      const token = u.searchParams.get("pageToken") ?? "0";
+      pageStarts.push(token);
+      if (expire && token !== "0") {
+        expire = false;
+        return Response.json({ error: { message: "expired", errors: [{ reason: "invalidPageToken" }] } }, { status: 400 });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const response = await transport(input, init);
+    const body = await response.json();
+    if (u.pathname.endsWith("playlistItems") && u.searchParams.has("pageToken"))
+      body.items.push({ contentDetails: { videoId: video(74).id } }); // provider page overlap
+    if (u.pathname.endsWith("videos"))
+      for (const item of body.items) item.snippet.title += " edited";
+    return Response.json(body);
+  }) as typeof fetch;
+  const pass = () => reconcileCreator(id, new AbortController().signal, { ...deps, force: true, deadlineMs: 260 });
+  expect((await pass()).complete).toBe(false);
+  expect(discoveryState(id).watermark).toBeUndefined();
+  expect(discoveryState(id).lastSuccessAt).toBeUndefined();
+  const firstCursor = discoveryState(id).cursor;
+  expect(firstCursor).toBeTruthy();
+  const before = pageStarts.length;
+  await pass();
+  expect(pageStarts[before]).toBe(firstCursor);
+  for (let n = 0; n < 8 && !discoveryState(id).lastSuccessAt; n++) await pass();
+  expect(watch().get().channels[0]!.pending).toHaveLength(75);
+  expect(discoveryState(id).lastSuccessAt).toBeTruthy();
+  expect(discoveryState(id).cursor).toBeUndefined();
+  const start = pageStarts.length;
+  expect((await pass()).complete).toBe(true);
+  expect(pageStarts.slice(start)).toEqual(["0"]); // prior complete boundary
+  // A provider token can expire; explicitly restart and dedupe accepted IDs.
+  runtimeStore().put("discovery-state", id, { failures: 0, cursor: "15", scan: { accountId: "reader", cutoff: now, headIds: [] } });
+  expire = true;
+  expect((await pass()).reason).toMatch(/cursor expired/);
+  expect(discoveryState(id).cursor).toBeUndefined();
+  for (let n = 0; n < 8 && !discoveryState(id).lastSuccessAt; n++) await pass();
+  expect(watch().get().channels[0]!.pending).toHaveLength(75);
+  expect(new Set(watch().get().channels[0]!.pending.map((p) => p.id)).size).toBe(75);
+});

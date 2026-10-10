@@ -121,7 +121,7 @@ describe("keyword research", () => {
     const r = await research("Bedtime Story", {}, d);
     expect(r.seed).toBe("bedtime story");
     expect(r.ranking[0]).toMatchObject({ id: "r1", channel: "Sleepy", views: 10 });
-    expect(r.keywords.find((k) => k.term === "bedtime story for kids")!.sources).toEqual(expect.arrayContaining(["autocomplete", "ranking"]));
+    expect(r.keywords.find((k) => k.term === "bedtime story for kids")!.sources).toEqual(["autocomplete"]);
     const n = calls.length;
     await research("bedtime story", {}, d);
     expect(calls.length).toBe(n); // all from the cache
@@ -192,4 +192,41 @@ describe("tuneSeo", () => {
     expect(out.seo.note).toMatch(/didn't run \(AI down\)/);
     expect(out.seo.score).toBeTypeOf("number");
   });
+});
+
+it("automatic draft tuning does not fetch or consume provider rankings, including historical injected results", async () => {
+  const external = vi.fn(async () => ({ seed: "remote", keywords: [{ term: "derived bait", score: 99, sources: ["ranking" as const] }], ranking: [{ id: "raw", title: "API title", channel: "provider", views: 0 }], tags: ["aggregate tag"], notes: [], at: 0 }));
+  const rewrite = vi.fn(async (input) => {
+    expect(input).not.toHaveProperty("research");
+    expect(input).not.toHaveProperty("channelTerms");
+    return { text: input.text, report: { score: 40, checks: [], at: 0 }, improved: false, rewrite: input.text, rewriteReport: { score: 40, checks: [], at: 0 } };
+  });
+  await tuneSeo({ kind: "short", publish: { ytTitle: "Local draft", description: "Local transcript", hashtags: [] }, about: "Local footage", seeds: ["seed"] }, { agent: "claude" }, { research: external, optimizeSeo: rewrite });
+  expect(external).not.toHaveBeenCalled();
+  expect(rewrite).toHaveBeenCalledOnce();
+  const { rewritePrompt } = await import("../src/seo/optimize");
+  const prompt = rewritePrompt({ kind: "short", text: { title: "Local", description: "Draft", tags: [], hashtags: [] }, about: "Footage", research: await external(), channelTerms: ["cached derived phrase"] });
+  expect(prompt).not.toMatch(/derived bait|aggregate tag|API title|cached derived phrase|best first/);
+  expect(prompt).toContain("Local");
+});
+
+it("historical research caches cannot revive derived results and raw views retain zero versus unavailable", async () => {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const file = path.join(process.env.CAPY_DATA_DIR!, "historical-derived.json");
+  await mkdir(path.dirname(file), { recursive: true });
+  const now = new Date("2026-10-06T12:00:00Z");
+  await writeFile(file, JSON.stringify({ day: "2026-10-06", searches: 2, suggest: { seed: { at: +now, terms: ["old derived phrase"] } }, search: { seed: { at: +now, ranking: [{ id: "old", title: "Old score", score: 99 }] } }, keywords: [{ term: "old", score: 99 }], tags: ["aggregate"] }));
+  globalThis.__capySeoCache = undefined;
+  const { f } = api([
+    [/suggestqueries/, () => ["seed", ["raw phrase"]]],
+    [/\/search\?/, () => ({ items: [{ id: { videoId: "zero" } }, { id: { videoId: "unknown" } }] })],
+    [/\/videos\?/, () => ({ items: [{ ...video("zero"), statistics: { viewCount: "0" } }, { ...video("unknown"), statistics: {} }] })],
+  ]);
+  const out = await research("seed", {}, { fetch: f, token: async () => "fixture", now: () => now, cacheFile: () => file });
+  expect(out.rawVersion).toBe(1);
+  expect(out.keywords).toEqual([{ term: "raw phrase", sources: ["autocomplete"] }]);
+  expect(out.tags).toEqual([]);
+  expect(out.ranking.map((r) => r.views)).toEqual([0, undefined]);
+  expect(JSON.stringify(out)).not.toMatch(/old derived|Old score|aggregate|"score"/);
+  await expect((await import("node:fs/promises")).readFile(file, "utf8").then(JSON.parse)).resolves.toMatchObject({ rawVersion: 1, searches: 3 });
 });

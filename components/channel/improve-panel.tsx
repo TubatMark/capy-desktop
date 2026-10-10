@@ -102,6 +102,7 @@ export function ImprovePanel({ video, canEdit, onUpdated, onClose }: { video: Ch
         </button>
       </div>
 
+      <p className="text-xs text-muted-foreground">Local editorial checks of this text; not provider performance rankings.</p>
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-3">
           <div className="flex items-center gap-4">

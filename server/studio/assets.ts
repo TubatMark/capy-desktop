@@ -123,6 +123,24 @@ export async function queueAsset(asset: AssetRef, deps: StudioDependencies) {
     throw error;
   }
 }
+/** Inventory is never evidence of historical approval. Copy and verify as a new identity. */
+export async function adoptLegacyAsset(id: string, replacement?: string, deps = studioDependencies()) {
+  const row = deps.store.get<AssetRef>("assets", id);
+  if (!row?.value.legacy || row.value.checksum)
+    throw Error("Choose unverified legacy media to prepare or recover");
+  if (row.value.adoptedAssetId) {
+    const adopted = deps.store.get<AssetRef>("assets", row.value.adoptedAssetId);
+    if (adopted) return adopted.value;
+  }
+  const asset = await importAsset({
+    path: replacement ?? row.value.location,
+    kind: row.value.kind,
+    name: row.value.name ?? path.basename(replacement ?? row.value.location),
+  }, deps);
+  // Keep the original inventory and original files, without transferring old approvals.
+  deps.store.save("assets", id, { ...row.value, adoptedAssetId: asset.id }, row.revision);
+  return asset;
+}
 export async function retryAsset(id: string, deps = studioDependencies()) {
   const row = deps.store.get<AssetRef>("assets", id);
   if (!row) throw Object.assign(Error("Asset not found"), { status: 404 });
@@ -158,8 +176,18 @@ export async function relinkAsset(
 }
 export async function listAssets(deps = studioDependencies()) {
   return Promise.all(
-    deps.store.list<AssetRef>("assets").map(async (row) => {
+    deps.store.list<AssetRef>("assets").filter((row) =>
+      !row.value.adoptedAssetId || !deps.store.get("assets", row.value.adoptedAssetId)
+    ).map(async (row) => {
       let asset = row.value;
+      if (asset.legacy && !asset.checksum) {
+        try {
+          await stat(asset.location);
+          return { ...asset, status: "waiting" as const, error: "Legacy media needs preparation before editing. Original files and old decisions are preserved." };
+        } catch {
+          return { ...asset, status: "missing" as const, error: "Original identity is unknown. Recover a file as new media; old approvals do not apply." };
+        }
+      }
       try {
         await stat(asset.location);
       } catch {

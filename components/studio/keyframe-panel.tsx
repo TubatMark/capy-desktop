@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AssetRef,
   ProjectDocument,
@@ -34,13 +34,19 @@ export function KeyframePanel({
       evidence: SpeakerRegion;
     }>(),
     [region, setRegion] = useState({ x: 0.25, y: 0, width: 0.5, height: 1 });
+  const inputEpoch = useRef(0);
+  function invalidateProposal() {
+    inputEpoch.current++;
+    setProposal([]);
+    setStatus("");
+    setBusy(false);
+  }
   const fingerprint = speakerSourceFingerprint(item, asset);
   const speaker = confirmation?.fingerprint === fingerprint;
   useEffect(() => {
     setConfirmation(undefined);
-    setProposal([]);
-    setStatus("");
-  }, [fingerprint]);
+    invalidateProposal();
+  }, [fingerprint, document]);
   const local = item
     ? Math.max(0, Math.min(item.durationFrames - 1, frame - item.startFrame))
     : 0;
@@ -49,6 +55,7 @@ export function KeyframePanel({
     : { x: 0, y: 0, scale: 1, rotation: 0 };
   async function suggest(kind: "silence" | "reframe") {
     if (!item) return;
+    const epoch = ++inputEpoch.current;
     setBusy(true);
     setProposal([]);
     setStatus("Analyzing selected item locally…");
@@ -75,6 +82,7 @@ export function KeyframePanel({
         },
       );
       const result = await response.json();
+      if (epoch !== inputEpoch.current) return;
       if (!response.ok) throw Error(result.error);
       setProposal(result.operations);
       setStatus(
@@ -82,9 +90,9 @@ export function KeyframePanel({
           "No leading or trailing silence of at least 250 ms below −40 dB was found.",
       );
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : String(e));
+      if (epoch === inputEpoch.current) setStatus(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (epoch === inputEpoch.current) setBusy(false);
     }
   }
   return (
@@ -194,7 +202,7 @@ export function KeyframePanel({
                   aria-label="Reframe fallback"
                   className="ml-2 rounded border p-1"
                   value={fit}
-                  onChange={(e) => setFit(e.target.value as typeof fit)}
+                  onChange={(e) => { invalidateProposal(); setFit(e.target.value as typeof fit); }}
                 >
                   <option value="contain">Fit</option>
                   <option value="cover">Fill</option>
@@ -204,7 +212,8 @@ export function KeyframePanel({
                 <input
                   type="checkbox"
                   checked={speaker}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    invalidateProposal();
                     setConfirmation(
                       e.target.checked && asset
                         ? {
@@ -218,8 +227,8 @@ export function KeyframePanel({
                             },
                           }
                         : undefined,
-                    )
-                  }
+                    );
+                  }}
                 />{" "}
                 I confirmed a speaker region for this entire source span
               </label>
@@ -237,6 +246,7 @@ export function KeyframePanel({
                         step="0.05"
                         value={region[k]}
                         onChange={(e) => {
+                          invalidateProposal();
                           setRegion({ ...region, [k]: Number(e.target.value) });
                           setConfirmation(undefined);
                         }}

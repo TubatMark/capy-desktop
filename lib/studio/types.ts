@@ -20,6 +20,10 @@ export interface AssetRef {
   proxyUrl?: string;
   error?: string;
   workId?: string;
+  /** Preserved migration inventory; adoption always creates a new managed identity. */
+  legacy?: boolean;
+  originalLocation?: string;
+  adoptedAssetId?: string;
   request?: { jobId: string; videoId: string; startUs: number; endUs: number };
 }
 /** JSON-safe exact microseconds; numerator and denominator are decimal BigInt strings. */

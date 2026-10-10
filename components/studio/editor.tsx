@@ -429,7 +429,11 @@ export function StudioEditor({ id }: { id: string }) {
   }
   function addAsset(a: AssetRef) {
     if (!latest.current || a.kind === "font") return;
-    const durationUs = a.durationUs ?? 3000000;
+    if (a.status !== "ready" || !a.checksum || !a.mediaUrl || !a.durationUs) {
+      setError("Prepare this media before adding it to the timeline.");
+      return;
+    }
+    const durationUs = a.durationUs;
     const duration = Math.max(1, Math.round((durationUs * fps) / 1000000));
     const trackId = a.kind === "audio" ? "audio" : "video";
     const start = Math.max(

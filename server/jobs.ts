@@ -770,6 +770,8 @@ class JobManager extends EventEmitter {
       if (existing.status === "analyzing" || existing.status === "preparing")
         return existing;
       existing.settings = settings;
+      this.jobs.set(existing.id, existing);
+      await this.update(existing);
       if (existing.status === "error" || existing.clips.length === 0) {
         await this.enqueue(existing, "analyze", [true]);
       }

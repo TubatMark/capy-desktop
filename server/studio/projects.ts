@@ -40,6 +40,8 @@ async function sourceAsset(
   if (source.assetId) {
     const asset = deps.store.get<AssetRef>("assets", source.assetId)?.value;
     if (!asset) throw Error("Asset not found");
+    if (asset.legacy && (!asset.checksum || asset.status !== "ready"))
+      throw Error("Prepare legacy media before adding it to the timeline");
     const start = source.startUs ?? 0;
     const end = source.endUs ?? asset.durationUs;
     if (end === undefined)

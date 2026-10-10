@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { ChannelVideo, KeywordResearch, RankVideo, SeoReport, SeoText, VideoSeoSuggestion } from "../lib/types";
-import { mergeKeywords, pacificDay, parseSuggest, suggestedTags } from "../src/seo/keywords";
+import { mergeKeywords, pacificDay, parseSuggest } from "../src/seo/keywords";
 import { optimizeSeo, seedPhrases, type AiOpts } from "../src/seo/optimize";
 import { scoreSeo, type SeoKind } from "../src/seo/score";
 import { parseVideoItems } from "../src/youtube-api";
@@ -19,6 +19,7 @@ const SUGGEST_TTL = 3 * 86400_000;
 const SEARCH_TTL = 7 * 86400_000;
 
 interface Cache {
+  rawVersion: 1;
   day: string;
   searches: number;
   suggest: Record<string, { at: number; terms: string[] }>;
@@ -49,8 +50,12 @@ declare global {
 async function cache(d: SeoDeps): Promise<Cache> {
   const file = d.cacheFile();
   // one load per file, shared by concurrent callers, so no one's counts or entries get lost
-  if (globalThis.__capySeoCache?.file !== file) globalThis.__capySeoCache = { file, data: readJsonFile<Cache>(file).then((d) => d ?? { day: "", searches: 0, suggest: {}, search: {} }) };
+  if (globalThis.__capySeoCache?.file !== file) globalThis.__capySeoCache = { file, data: readJsonFile<Cache>(file).then((old) => ({
+    rawVersion: 1 as const, day: old?.day ?? "", searches: old?.searches ?? 0,
+    suggest: old?.rawVersion === 1 ? old.suggest : {}, search: old?.rawVersion === 1 ? old.search : {},
+  })) };
   const c = await globalThis.__capySeoCache.data;
+  if (c.rawVersion !== 1) Object.assign(c, { rawVersion: 1, suggest: {}, search: {} });
   const today = pacificDay(d.now());
   if (c.day !== today) Object.assign(c, { day: today, searches: 0 });
   // drop expired entries so the file stays small
@@ -112,7 +117,7 @@ async function searchOnce(d: SeoDeps, c: Cache, q: string, token: string): Promi
   return videos;
 }
 
-/** Local text heuristics, not observed publication lift. Scored keywords for a topic from autocomplete, what ranks, and the channel's own search terms. */
+/** Raw provider results for explicit research. Never a ranking or automatic rewrite input. */
 export async function research(seedRaw: string, o: { search?: boolean } = {}, d: SeoDeps = defaultDeps()): Promise<KeywordResearch> {
   const seed = norm(seedRaw);
   const c = await cache(d);
@@ -142,7 +147,7 @@ export async function research(seedRaw: string, o: { search?: boolean } = {}, d:
   }
   const yours = (await loadSnapshot())?.analytics?.searches ?? [];
   await saveJsonAtomic(d.cacheFile(), c).catch(() => {});
-  return { seed, keywords: mergeKeywords({ seed, suggest: sug, ranking: rank, yours }), ranking: rank, tags: suggestedTags(rank), notes, at: d.now().getTime() };
+  return { rawVersion: 1, seed, keywords: mergeKeywords({ seed, suggest: sug, ranking: [], yours: [] }), yours, ranking: rank, tags: [], notes, at: d.now().getTime() };
 }
 
 /** The channel's own top search terms (for the optimizer's context). */
@@ -167,8 +172,7 @@ export async function suggestForVideo(v: ChannelVideo, ai: AiOpts): Promise<Vide
     const more = await research(s, { search: false }).catch(() => null);
     if (res && more) for (const k of more.keywords) if (!res.keywords.some((x) => x.term === k.term)) res.keywords.push(k);
   }
-  res?.keywords.sort((a, b) => b.score - a.score);
-  const out = await optimizeSeo({ kind, text, about, research: res, channelTerms: await channelTerms() }, ai);
+  const out = await optimizeSeo({ kind, text, about }, ai);
   return { videoId: v.id, keyword: out.rewriteReport.keyword, current: text, suggested: out.rewrite, before: { ...scoreSeo(text, { kind, keyword: out.rewriteReport.keyword }), at: Date.now() }, after: out.rewriteReport, research: res };
 }
 
@@ -191,19 +195,12 @@ export async function tuneSeo(
 ): Promise<{ publish: Publish; seo: SeoReport }> {
   const text: SeoText = { title: i.publish.ytTitle, description: i.publish.description, hashtags: i.publish.hashtags, tags: i.publish.tags ?? [] };
   try {
-    const seeds = i.seeds?.length ? i.seeds : await (dep.seedPhrases ?? seedPhrases)({ kind: i.kind, text, about: i.about }, ai).catch(() => [] as string[]);
-    const res = seeds[0] ? await (dep.research ?? research)(seeds[0]) : undefined;
-    // the other seeds only add autocomplete terms (no search quota)
-    for (const s of seeds.slice(1)) {
-      const more = await (dep.research ?? research)(s, { search: false }).catch(() => null);
-      if (res && more) for (const k of more.keywords) if (!res.keywords.some((x) => x.term === k.term)) res.keywords.push(k);
-    }
-    res?.keywords.sort((a, b) => b.score - a.score);
-    const out = await (dep.optimizeSeo ?? optimizeSeo)({ kind: i.kind, text, about: i.about, research: res, channelTerms: await channelTerms(), keep: i.keep }, ai);
+    // Editorial checks operate only on this draft. Provider research is display-only.
+    const out = await (dep.optimizeSeo ?? optimizeSeo)({ kind: i.kind, text, about: i.about, keep: i.keep }, ai);
     const t = out.text;
     return {
       publish: { ytTitle: t.title, description: t.description, hashtags: t.hashtags, tags: t.tags },
-      seo: { ...out.report, note: [out.improved ? undefined : "The rewrite didn't score higher, so the original text stays.", ...(res?.notes ?? [])].filter(Boolean).join(" ") || undefined },
+      seo: { ...out.report, note: [out.improved ? undefined : "The rewrite didn't score higher, so the original text stays.", "Local editorial checks only; no provider performance ranking."].filter(Boolean).join(" ") || undefined },
     };
   } catch (e) {
     const s = scoreSeo(text, { kind: i.kind });

@@ -1,3 +1,4 @@
+import { deliveryMutationReason } from "./queue";
 import { randomUUID } from "node:crypto";
 import { realpath, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -561,6 +562,8 @@ export async function attachThumbnail(
       ["posting", "posted", "needs_action"].includes(entry.status)
     )
       throw fail("Publish package unavailable for attachment", 409);
+    const reason = deliveryMutationReason(entry, deps.store);
+    if (reason) throw fail(reason, 409);
     const source = doc.sourceIdentity,
       pkg = entry.publishPackage;
     if (

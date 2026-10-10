@@ -672,3 +672,38 @@ it("explicit review binds immutable historical design without provider, document
     approveThumbnail(f.design.id, saved.editRevision, f.deps),
   ).rejects.toThrow(/stale/);
 });
+
+it("thumbnail writer refuses ambiguous and unprojected durable intent without replacing package or history", async () => {
+  const f = await fixture();
+  const { runtimeStore } = await import("../server/db/runtime");
+  const { publicationFixture } = await import("./publication-fixtures");
+  const { upsertForRender } = await import("../server/queue");
+  const { decide } = await import("../server/publication-policy");
+  const { createDelivery, updateDelivery, readDeliveryHandles, saveDeliveryHandles } = await import("../server/delivery-store");
+  const beforeDir = process.env.CAPY_DATA_DIR;
+  process.env.CAPY_DATA_DIR = path.join(f.root, "delivery-data");
+  try {
+    publicationFixture();
+    const entry = decide(upsertForRender([], { publicationFiles: { file: f.file }, jobId: "job", n: 1, start: 0, end: 2, clipTitle: "Original" }, ["youtube"], new Date())[0]!, false, new Date());
+    const d = createDelivery(entry);
+    saveDeliveryHandles(d, { session: "https://fixture/retained", videoId: "remote" });
+    updateDelivery(d.id, (value) => ({ ...value, phase: "session-create-intent", state: "delivery-unknown" }));
+    for (const collection of ["deliveries", "delivery-identities", "publication-attributions"])
+      for (const row of runtimeStore().list(collection)) f.store.put(collection, row.id, row.value);
+    const durable = f.store.list("deliveries"), handles = readDeliveryHandles(d);
+    for (const status of ["scheduled", "failed", "needs_action"] as const) {
+      f.store.put("legacy-state", "queue", [{ ...entry, status }]);
+      const before = f.store.get("legacy-state", "queue");
+      const history = f.store.list("publication-history");
+      await expect(attachThumbnail(entry.publishPackage!.id, f.design.id, f.design.editRevision, f.deps)).rejects.toThrow(/remote delivery has already started|unavailable for attachment/);
+      expect(f.store.get("legacy-state", "queue")).toEqual(before);
+      expect(f.store.list("deliveries")).toEqual(durable);
+      expect(f.store.list("publication-history")).toEqual(history);
+      expect(f.store.list("thumbnail-attachments")).toEqual([]);
+      expect(readDeliveryHandles(d)).toEqual(handles);
+    }
+  } finally {
+    if (beforeDir === undefined) delete process.env.CAPY_DATA_DIR;
+    else process.env.CAPY_DATA_DIR = beforeDir;
+  }
+}, 60000);

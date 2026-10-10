@@ -231,8 +231,8 @@ export interface SeoReport {
 }
 export interface Keyword {
   term: string;
-  /** 0–100. */
-  score: number;
+  /** Historical derived results only; never displayed or consumed. */
+  score?: number;
   sources: ("autocomplete" | "ranking" | "yours")[];
   /** Views this search brought the channel (last 28 days). */
   views?: number;
@@ -248,6 +248,9 @@ export interface RankVideo {
   thumb?: string;
 }
 export interface KeywordResearch {
+  /** Unscored provider results; older derived research is not reusable. */
+  rawVersion?: 1;
+  yours?: { term: string; views?: number }[];
   seed: string;
   keywords: Keyword[];
   ranking: RankVideo[];
