@@ -120,20 +120,20 @@ describe("approve / reject", () => {
     expect(new Set(entries.map((x) => x.slotAt)).size).toBe(1);
     expect(entries.every((x) => x.status === "scheduled")).toBe(true);
   });
-  it("approving a whole video spaces clips 2/day/platform, 4h apart", () => {
+  it("approving a whole video spaces clips 3/day/platform, 5h apart", () => {
     let e: QueueEntry[] = [];
     for (let n = 1; n <= 6; n++)
       e = upsertForRender(e, clip(n), ["youtube"], now);
     const { entries } = approve(e, "J", undefined, { audienceTz: tz, now });
     const slots = entries.map((x) => x.slotAt!).sort((a, b) => a - b);
     for (let i = 1; i < slots.length; i++)
-      expect(slots[i]! - slots[i - 1]!).toBeGreaterThanOrEqual(4 * H);
+      expect(slots[i]! - slots[i - 1]!).toBeGreaterThanOrEqual(5 * H);
     const days = new Set(
       slots.map((t) =>
         new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t)),
       ),
     );
-    expect(days.size).toBe(3);
+    expect(days.size).toBe(2);
   });
   it("platforms not chosen at approval are rejected", () => {
     const { entries } = approve(

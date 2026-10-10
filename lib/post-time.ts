@@ -109,22 +109,24 @@ export function audienceTz(id?: string) {
   return AUDIENCES.find((a) => a.id === (id ?? "us-east"))?.tz ?? "America/New_York";
 }
 
-/** Candidate posting hours per weekday (audience local); each day has two at least 4h apart. 0 = Sunday. */
+/** Candidate posting hours per weekday (audience local); each day has three at least 5h apart. 0 = Sunday. */
 export const CANDIDATE_HOURS: Record<number, number[]> = {
-  5: [17, 15, 19, 12],
-  4: [17, 15, 19, 12],
-  6: [16, 11, 19, 20],
-  3: [16, 12, 20, 15],
-  0: [12, 16, 19, 20],
-  2: [15, 11, 19, 18],
-  1: [15, 11, 19, 18],
+  5: [17, 12, 22, 15, 19],
+  4: [17, 12, 22, 15, 19],
+  6: [16, 11, 21, 19, 20],
+  3: [16, 11, 21, 12, 20],
+  0: [12, 17, 22, 16, 19],
+  2: [15, 10, 20, 19, 18],
+  1: [15, 10, 20, 19, 18],
 };
-const GAP_MS = 4 * 3_600_000;
-const PER_DAY = 2;
+/** 1–3 Shorts a day, hours apart, is the common advice; more than ~5 risks looking like spam. */
+const GAP_MS = 5 * 3_600_000;
+export const POSTS_PER_DAY = 3;
+const PER_DAY = POSTS_PER_DAY;
 
 /**
- * Earliest good slot (at least 30 min away) where every platform has fewer than 2 posts that
- * audience-local day and none within 4h. `taken` holds scheduled, posting and recently posted entries.
+ * Earliest good slot (at least 30 min away) where every platform has fewer than 3 posts that
+ * audience-local day and none within 5h. `taken` holds scheduled, posting and recently posted entries.
  */
 export function allocateSlot(taken: { platform: Platform; at: number }[], platforms: Platform[], audienceTz: string, now = new Date(), horizonDays = 14): Date | null {
   const dayKey = (t: number) => {

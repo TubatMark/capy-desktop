@@ -12,7 +12,7 @@ const SEEN_MAX = 500;
 const HISTORY_MAX = 50;
 
 export const DEFAULT_CHANNEL_SETTINGS: WatchedChannel["settings"] = {
-  clips: 3,
+  clips: 1, // the best moment; 3 posts a day then come from 3 different uploads
   minVideoSec: 240,
   perDay: 2,
 };

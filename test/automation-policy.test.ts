@@ -23,6 +23,9 @@ const policy = {
   mode: "automatic_drafts" as const,
   destinationAccountIds: ["dest"],
   clips: 3,
+  // capacity math below is written for 2 posts a day and 6 new clips a day
+  destinationDailySlots: 2,
+  dailyClipCap: 6,
 };
 const input = (id: string, priority = 0) => ({
   candidate: {

@@ -45,32 +45,33 @@ describe("allocateSlot", () => {
     expect(d.getTime()).toBeGreaterThan(now.getTime() + 30 * 60_000);
     expect(dayET(d.getTime())).toBe(dayET(now.getTime()));
   });
-  it("puts at most 2 per platform per local day, 4h apart, so 6 clips span 3 days", () => {
+  it("puts at most 3 per platform per local day, 5h apart, so 6 clips span 2 days", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
     for (let i = 0; i < 6; i++) taken.push({ platform: "youtube", at: allocateSlot(taken, ["youtube"], tz, now)!.getTime() });
     const days = new Map<string, number[]>();
     for (const t of taken) days.set(dayET(t.at), [...(days.get(dayET(t.at)) ?? []), t.at]);
-    expect(days.size).toBe(3);
+    expect(days.size).toBe(2);
     for (const ts of days.values()) {
-      expect(ts.length).toBe(2);
-      expect(Math.abs(ts[1]! - ts[0]!)).toBeGreaterThanOrEqual(4 * 3600_000);
+      expect(ts.length).toBe(3);
+      ts.sort((a, b) => a - b);
+      for (let i = 1; i < ts.length; i++) expect(ts[i]! - ts[i - 1]!).toBeGreaterThanOrEqual(5 * 3600_000);
     }
   });
   it("needs every chosen platform free at the shared time", () => {
     const first = allocateSlot([], ["youtube", "tiktok"], tz, now)!;
     const second = allocateSlot([{ platform: "tiktok", at: first.getTime() }], ["youtube", "tiktok"], tz, now)!;
-    expect(second.getTime() - first.getTime()).toBeGreaterThanOrEqual(4 * 3600_000);
+    expect(second.getTime() - first.getTime()).toBeGreaterThanOrEqual(5 * 3600_000);
     expect(allocateSlot([{ platform: "tiktok", at: first.getTime() }], ["youtube"], tz, now)!.getTime()).toBe(first.getTime());
   });
   it("only uses candidate hours in the audience zone", () => {
     const d = allocateSlot([], ["instagram"], tz, now)!;
-    expect([11, 12, 15, 16, 17, 18, 19, 20]).toContain(hourET(d));
+    expect([10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22]).toContain(hourET(d));
   });
   it("returns null when the horizon is full", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
     let d: Date | null;
     while ((d = allocateSlot(taken, ["youtube"], tz, now, 2))) taken.push({ platform: "youtube", at: d.getTime() });
-    expect(taken.length).toBeLessThanOrEqual(4);
+    expect(taken.length).toBeLessThanOrEqual(6);
     expect(taken.length).toBeGreaterThan(0);
   });
   it("survives the spring-forward DST change without duplicate slots", () => {

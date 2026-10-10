@@ -14,7 +14,7 @@ describe("addChannel", () => {
   it("records current uploads as seen (no backfill)", () => {
     const f = addChannel(emptyWatch(), info(), [up("a", 600), up("b", 900)], { now });
     expect(f.channels[0]).toMatchObject({ id: "UC1", enabled: true, seen: ["a", "b"], pending: [] });
-    expect(f.channels[0]!.settings).toEqual({ clips: 3, minVideoSec: 240, perDay: 2 });
+    expect(f.channels[0]!.settings).toEqual({ clips: 1, minVideoSec: 240, perDay: 2 });
   });
   it("with clipLatest, the newest clippable upload goes to pending", () => {
     const f = addChannel(emptyWatch(), info(), [up("short", 50), up("b", 900), up("c", 700)], { now, clipLatest: true });
