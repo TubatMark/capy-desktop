@@ -314,7 +314,8 @@ describe("read-only subscription import", () => {
         title: `Regular ${n}`,
         live: false,
         duration: 600,
-        publishedAt: cutoff - (n + 1) * 86400000,
+        // older than the 24-hour look-back before the import
+        publishedAt: cutoff - (n + 2) * 86400000,
       }));
       const f = vi.fn(async (input: string | URL | Request) => {
         const url = new URL(String(input));
@@ -367,8 +368,8 @@ describe("read-only subscription import", () => {
                       id === "new-regular"
                         ? cutoff + 1
                         : id === "at-cutoff"
-                          ? cutoff
-                          : cutoff - 86400000,
+                          ? cutoff - 86400000 // exactly the look-back boundary: still too old
+                          : cutoff - 2 * 86400000,
                     ).toISOString(),
                   },
                 })),

@@ -176,7 +176,7 @@ it("preserves import cutoff across every page, defers missing exact dates, and p
           ...v.snippet,
           publishedAt:
             Number(v.id.slice(1)) < 20
-              ? new Date(now).toISOString()
+              ? new Date(now - 24 * 3600_000).toISOString() // the look-back boundary: too old
               : undefined,
         },
       }));
@@ -462,7 +462,7 @@ it("a channel added by link without a reading account queues only uploads that a
   );
   expect(watch().get().channels[0]!.discoveryAfter).toBe(now);
   let page = [1, 2, 3, 4, 5].map(upload);
-  const deps = { now: () => new Date(now + 60_000), legacyList: async () => page };
+  const deps = { now: () => new Date(now + 60_000), legacyList: async () => page, feed: async () => new Map<string, number>() };
   expect((await reconcileCreator(id, new AbortController().signal, deps)).complete).toBe(true);
   expect(watch().get().channels[0]!.pending).toEqual([]);
   page = [upload(6), ...page];
@@ -496,4 +496,31 @@ it("a channel added by link before start dates existed drops its wrongly queued 
   expect(ch.pending.map((p) => p.id)).toEqual(["picked"]);
   expect(ch.seen).toEqual(expect.arrayContaining([1, 2, 3].map((n) => upload(n).id)));
   expect(adoptStartDate(id)).toBe(0);
+});
+
+it("uploads from the 24 hours before a channel was added count, dated by the public feed; older ones stay out", async () => {
+  saveReadingAccount({ account: null, tokens: null });
+  watch().mutate((f) =>
+    addChannel(
+      f,
+      { id, name: "Fresh", url: `https://www.youtube.com/channel/${id}/videos` },
+      [],
+      { now: new Date(now) },
+    ),
+  );
+  const page = [1, 2, 3].map(upload);
+  let dates = new Map<string, number>();
+  const deps = () => ({ now: () => new Date(now + 60_000), legacyList: async () => page, feed: async () => dates, force: true });
+  // first scan without dates (feed down): everything is the baseline
+  await reconcileCreator(id, new AbortController().signal, deps());
+  expect(watch().get().channels[0]!.pending).toEqual([]);
+  // the feed answers: one upload from 2h before adding, one from 30h before
+  dates = new Map([
+    [upload(1).id, now - 2 * 3600_000],
+    [upload(2).id, now - 30 * 3600_000],
+  ]);
+  await reconcileCreator(id, new AbortController().signal, deps());
+  const ch = watch().get().channels[0]!;
+  expect(ch.pending.map((p) => p.id)).toEqual([upload(1).id]);
+  expect(ch.seen).toContain(upload(2).id);
 });

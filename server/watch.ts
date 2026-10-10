@@ -65,8 +65,12 @@ export function addChannel(
 }
 
 /** C1 imports predating the explicit field retain their original addedAt boundary without rewriting preferences. */
-export const discoveryCutoff = (ch: WatchedChannel): number | undefined =>
-  ch.discoveryAfter ?? (ch.sourceAccountId ? ch.addedAt : undefined);
+/** Uploads from this long before a channel was added still count as new. */
+export const DISCOVERY_LOOKBACK_MS = 24 * 3600_000;
+export const discoveryCutoff = (ch: WatchedChannel): number | undefined => {
+  const start = ch.discoveryAfter ?? (ch.sourceAccountId ? ch.addedAt : undefined);
+  return start === undefined ? undefined : start - DISCOVERY_LOOKBACK_MS;
+};
 /** The bounded-feed seam can only date uploads through the creator's reading account; without one it keeps
  *  the seen-list baseline taken when the channel was added. */
 const datedCutoff = (ch: WatchedChannel) =>

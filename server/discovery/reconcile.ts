@@ -8,6 +8,7 @@ import { loadAccounts, loadReadingAccount } from "../accounts";
 import { runtimeStore } from "../db/runtime";
 import { fence } from "../worker/context";
 import { watch, mapChannel, discoveryCutoff } from "../watch";
+import { feedDates } from "./feed";
 import {
   abortable,
   classifyReadiness,
@@ -49,6 +50,8 @@ export interface DiscoveryDeps extends ReadinessDeps {
     channel: WatchedChannel,
     signal: AbortSignal,
   ) => Promise<Upload[]>;
+  /** Upload times for account-free channels (the public uploads feed by default). */
+  feed?: (channelId: string, signal: AbortSignal) => Promise<Map<string, number>>;
 }
 export const discoveryState = (id: string): DiscoveryState =>
   runtimeStore().get<DiscoveryState>("discovery-state", id)?.value ?? {
@@ -151,21 +154,27 @@ export function recordDiscoveryPage(
           for (const candidate of candidates) {
             const key = recordKey(channelId, candidate.id);
             const old = store.get<DiscoveryRecord>("discovery-videos", key);
-            if (old?.value.accepted || old?.value.status === "excluded")
-              continue;
             let readiness = candidate.readiness;
+            const dated = Number.isFinite(readiness.video?.publishedAt);
+            // a baseline skip made without a date is judged again once the upload has one
+            const redo =
+              dated &&
+              old?.value.status === "excluded" &&
+              old.value.reason === ALREADY_THERE;
+            if (old?.value.accepted || (old?.value.status === "excluded" && !redo))
+              continue;
+            if (redo) {
+              known.delete(candidate.id);
+              seen.delete(candidate.id);
+            }
             const cutoff = discoveryCutoff(ch);
-            if (dateless === "baseline" && !known.has(candidate.id)) {
+            if (dateless === "baseline" && !dated && !known.has(candidate.id)) {
               readiness = {
                 ...readiness,
                 status: "excluded",
                 reason: ALREADY_THERE,
               };
-            } else if (
-              !dateless &&
-              cutoff !== undefined &&
-              !Number.isFinite(readiness.video?.publishedAt)
-            ) {
+            } else if (!dateless && cutoff !== undefined && !dated) {
               // Private/deleted outcomes remain explicit; public videos without exact dates stay unseen.
               if (readiness.status !== "unavailable")
                 readiness = {
@@ -334,12 +343,17 @@ export async function reconcileCreator(
           "Connect a YouTube reading account for complete uploads discovery",
         );
       const uploads = await abortable(deps.legacyList(ch, bounded), bounded);
+      const dates = await (deps.feed ?? feedDates)(channelId, bounded);
       discovered += recordDiscoveryPage(
         channelId,
         uploads.map((video) => ({
           id: video.id,
           readiness: classifyReadiness(
-            { ...video, broadcast: video.live ? "live" : "none" },
+            {
+              ...video,
+              publishedAt: video.publishedAt ?? dates.get(video.id),
+              broadcast: video.live ? "live" : "none",
+            },
             { minVideoSec: ch.settings.minVideoSec, now: deps.now },
           ),
         })),
