@@ -158,6 +158,8 @@ function durableDirectory(dir: string, fs: DeliveryFs) {
     const stat = fs.lstatSync(dir);
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw Error("Unsafe delivery directory");
+    // A previous mkdir may have succeeded while its parent sync failed.
+    syncDirectory(path.dirname(dir), fs);
     return;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
@@ -234,12 +236,26 @@ export function readDeliveryHandles(
         throw Error("Delivery handle identity mismatch");
       const v = rawHandles(current, fs);
       if (!v) return {};
-      if (validateHandleCheckpoint(current, v))
+      if (validateHandleCheckpoint(current, v)) {
+        // A matching sidecar may exist because rename succeeded but fsync failed.
+        // Re-establish every durability barrier before accepting its acknowledgement.
+        const { file, dir } = privateFile(current.id, fs);
+        const fd = fs.openSync(
+          file,
+          nativeFs.constants.O_RDONLY | nativeFs.constants.O_NOFOLLOW,
+        );
+        try {
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        syncDirectory(dir, fs);
         updateDelivery(current.id, (x) => ({
           ...x,
           checkpoint: v.checkpoint.sequence,
           handleCheckpoint: v.checkpoint,
         }));
+      }
       return v.values;
     }),
   );

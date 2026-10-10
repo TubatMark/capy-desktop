@@ -239,8 +239,9 @@ it("first save syncs the new directory parent before writing, then file before r
     },
   };
   saveDeliveryHandles(d, { session: "https://saved/session" }, fs);
-  expect(events[0]).toBe(`mkdir:${path.join(root, "delivery-private")}`);
-  expect(events[1]).toBe(`sync:${root}`);
+  const mkdir = events.indexOf(`mkdir:${path.join(root, "delivery-private")}`);
+  expect(mkdir).toBeGreaterThanOrEqual(0);
+  expect(events[mkdir + 1]).toBe(`sync:${root}`);
   const write = events.indexOf("write"),
     rename = events.indexOf("rename");
   expect(events[write + 1]).toMatch(/sync:.*\.tmp$/);
@@ -248,4 +249,73 @@ it("first save syncs the new directory parent before writing, then file before r
   expect(events[rename + 1]).toBe(
     `sync:${path.join(root, "delivery-private")}`,
   );
+});
+
+it("failed rename-directory sync cannot be adopted until durability is retried successfully", () => {
+  const d = createDelivery(entry()),
+    fds = new Map<number, string>();
+  let renamed = false,
+    fail = true,
+    childSyncs = 0;
+  const fs = {
+    ...nativeFs,
+    openSync: (...args: Parameters<typeof nativeFs.openSync>) => {
+      const fd = nativeFs.openSync(...args);
+      fds.set(fd, String(args[0]));
+      return fd;
+    },
+    renameSync: (a: nativeFs.PathLike, b: nativeFs.PathLike) => {
+      nativeFs.renameSync(a, b);
+      renamed = true;
+    },
+    fsyncSync: (fd: number) => {
+      if (renamed && fds.get(fd) === path.join(root, "delivery-private")) {
+        childSyncs++;
+        if (fail) throw Error("directory sync failed");
+      }
+      nativeFs.fsyncSync(fd);
+    },
+  };
+  expect(() =>
+    saveDeliveryHandles(d, { session: "https://accepted/session" }, fs),
+  ).toThrow("directory sync failed");
+  expect(readDelivery(d.id)?.checkpoint).toBe(0);
+  expect(() => readDeliveryHandles(d, fs)).toThrow("directory sync failed");
+  expect(readDelivery(d.id)?.checkpoint).toBe(0);
+  fail = false;
+  expect(readDeliveryHandles(d, fs).session).toBe("https://accepted/session");
+  expect(childSyncs).toBeGreaterThanOrEqual(3);
+  expect(readDelivery(d.id)?.checkpoint).toBe(1);
+});
+it("an existing directory from failed mkdir-parent sync is synced again before saving", () => {
+  const d = createDelivery(entry()),
+    fds = new Map<number, string>();
+  let fail = true,
+    rootSyncs = 0;
+  const fs = {
+    ...nativeFs,
+    openSync: (...args: Parameters<typeof nativeFs.openSync>) => {
+      const fd = nativeFs.openSync(...args);
+      fds.set(fd, String(args[0]));
+      return fd;
+    },
+    fsyncSync: (fd: number) => {
+      if (fds.get(fd) === root) {
+        rootSyncs++;
+        if (fail) throw Error("parent sync failed");
+      }
+      nativeFs.fsyncSync(fd);
+    },
+  };
+  expect(() =>
+    saveDeliveryHandles(d, { session: "https://saved/session" }, fs),
+  ).toThrow("parent sync failed");
+  expect(() =>
+    saveDeliveryHandles(d, { session: "https://saved/session" }, fs),
+  ).toThrow("parent sync failed");
+  expect(readDelivery(d.id)?.checkpoint).toBe(0);
+  fail = false;
+  saveDeliveryHandles(d, { session: "https://saved/session" }, fs);
+  expect(rootSyncs).toBeGreaterThanOrEqual(3);
+  expect(readDelivery(d.id)?.checkpoint).toBe(1);
 });
