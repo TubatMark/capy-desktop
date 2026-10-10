@@ -96,31 +96,31 @@ it("fetches the best usable source thumbnail once, skipping 404s and YouTube's g
     path.join(env.root, "fixtures", "placeholder.jpg"),
     "120x90",
   );
-  const hq = await fixtureThumbnail(
-    path.join(env.root, "fixtures", "hq.jpg"),
-    "480x360",
+  const sd = await fixtureThumbnail(
+    path.join(env.root, "fixtures", "sd.jpg"),
+    "640x480",
   );
-  expect(jpegSize(hq)).toEqual({ width: 480, height: 360 });
+  expect(jpegSize(sd)).toEqual({ width: 640, height: 480 });
   expect(jpegSize(new Uint8Array([1, 2, 3]))).toBeUndefined();
   const asked: string[] = [];
   const fetcher: FetchImage = async (url) => {
     asked.push(url);
-    if (url.endsWith("/maxresdefault.jpg")) return undefined; // 404
-    if (url.endsWith("/sddefault.jpg")) return placeholder;
-    return hq;
+    // a missing maxres comes back as YouTube's grey 120×90 placeholder
+    if (url.endsWith("/maxresdefault.jpg")) return placeholder;
+    return sd;
   };
   const signal = new AbortController().signal;
   const found = await sourceThumbnail({ videoId: VIDEO, directory: dir }, signal, fetcher);
   expect(asked).toEqual(
-    ["maxresdefault", "sddefault", "hqdefault"].map((s) =>
+    ["maxresdefault", "sddefault"].map((s) =>
       sourceThumbnailUrl(VIDEO, s),
     ),
   );
   expect(found).toMatchObject({
     videoId: VIDEO,
-    url: `https://i.ytimg.com/vi/${VIDEO}/hqdefault.jpg`,
-    width: 480,
-    height: 360,
+    url: `https://i.ytimg.com/vi/${VIDEO}/sddefault.jpg`,
+    width: 640,
+    height: 480,
   });
   expect(found!.checksum).toBe(await checksum(found!.path));
   expect(path.dirname(found!.path)).toBe(dir);

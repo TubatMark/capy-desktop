@@ -5,18 +5,16 @@ import { randomUUID } from "node:crypto";
 import type { SourceThumbnailRef } from "../lib/thumbnails";
 import { checksum } from "./studio/assets";
 
-/** Best first. sd/hq are 4:3 with letterbox bars for 16:9 videos; composition crops them back to 16:9. */
-export const SOURCE_THUMBNAIL_SIZES = [
-  "maxresdefault",
-  "sddefault",
-  "hqdefault",
-] as const;
+/** Best first. sd is 4:3 with letterbox bars for 16:9 videos; composition crops it back to 16:9. (hq, 480
+ *  wide, is never sharp enough; see MIN_WIDTH.) */
+export const SOURCE_THUMBNAIL_SIZES = ["maxresdefault", "sddefault"] as const;
 export const sourceThumbnailUrl = (videoId: string, size: string) =>
   `https://i.ytimg.com/vi/${videoId}/${size}.jpg`;
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const MAX_BYTES = 8 * 1024 * 1024;
-/** YouTube answers a missing maxres with a 120×90 grey placeholder, so tiny images don't count. */
-const MIN_WIDTH = 320;
+/** YouTube answers a missing maxres with a 120×90 grey placeholder, and a 480×360 hq copy turns soft when
+ *  blown up to the card, so only sharp copies count; otherwise the clip's own frame designs lead. */
+const MIN_WIDTH = 640;
 
 /** Returns the image bytes, or undefined when the image doesn't exist. May throw on network errors. */
 export type FetchImage = (
