@@ -42,6 +42,8 @@ import {
 } from "./post-bits";
 import { sourceLine } from "./day-posts";
 import { ThumbnailChoices } from "./thumbnail-choices";
+import { SimilarClips } from "./similar-clips";
+import { looksSimilar } from "@/lib/similarity";
 
 const THUMB_WORDS: Record<string, string> = {
   "not-requested": "not sent",
@@ -73,6 +75,8 @@ export function PostDetail({
   schedulingVerified,
   onChange,
   onClose,
+  clips,
+  onOpenClip,
 }: {
   entries: QueueEntry[];
   tz: string;
@@ -86,6 +90,9 @@ export function PostDetail({
   schedulingVerified: boolean;
   onChange: (msg?: string) => void;
   onClose: () => void;
+  /** Live queue entries by queue group (for the similar clips' state and picture). */
+  clips?: Map<string, QueueEntry[]>;
+  onOpenClip?: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const first = entries[0]!;
@@ -103,6 +110,7 @@ export function PostDetail({
       : undefined;
   const source = sourceLine(first, channels);
   const aiReview = entries.find((e) => e.aiReview)?.aiReview;
+  const similarity = entries.find((e) => e.similarity)?.similarity;
   const history = entries
     .flatMap((e) => e.history.map((h) => ({ ...h, p: e.platform })))
     .sort((a, b) => b.t - a.t);
@@ -262,6 +270,12 @@ export function PostDetail({
             {aiReview && (
               <Section title="AI review">
                 <AiReview review={aiReview} />
+              </Section>
+            )}
+
+            {similarity && similarity.checkedAt > 0 && (
+              <Section title={looksSimilar(similarity) ? "Similar clips" : "Compared with your other clips"}>
+                <SimilarClips similarity={similarity} clips={clips} onOpen={onOpenClip} />
               </Section>
             )}
 

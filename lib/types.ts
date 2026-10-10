@@ -71,6 +71,8 @@ export interface QueueEntry {
   progress?: Record<string, string>;
   /** The AI content reviewer's verdict on this clip. */
   aiReview?: ContentReview;
+  /** Does it look like other waiting/scheduled/recent clips? (publicQueueEntry only; server/similarity.ts) */
+  similarity?: import("./similarity").ClipSimilarity;
   /** A kids' story: YouTube marks it "made for kids". */
   madeForKids?: boolean;
   /** Where the review card's title links (default: the clip page). */
