@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Queue · capy" };
 
 export default function QueuePage() {
   return (
-    <div className="mx-auto w-full max-w-4xl">
+    <div className="mx-auto w-full max-w-6xl">
       <QueueView />
     </div>
   );

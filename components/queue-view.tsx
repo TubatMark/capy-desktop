@@ -1,26 +1,17 @@
 "use client";
-import { queueGroup, queueCollection, queueLink } from "@/lib/queue-source";
-import { useMemo, useState } from "react";
+import { queueGroup, queueCollection } from "@/lib/queue-source";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  ExternalLink,
-  Loader2,
-  RotateCw,
-  Send,
-  Trash2,
-  XCircle,
-} from "lucide-react";
+import { ListChecks, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { CopyText } from "@/components/copy-text";
-import { PLATFORM_NAME } from "@/components/accounts-panel";
 import { ReviewCard } from "@/components/review-card";
+import { QueueCalendar } from "@/components/queue/queue-calendar";
+import { DayPosts } from "@/components/queue/day-posts";
+import { PostDetail } from "@/components/queue/post-detail";
 import { api } from "@/hooks/use-job";
-import { fmtSlot, useQueue } from "@/hooks/use-queue";
-import { zonedToUtc } from "@/lib/post-time";
+import { useQueue } from "@/hooks/use-queue";
+import { usePostResults, useSourceChannels } from "@/hooks/use-post-results";
+import { bucketByDay, dayKey, nearestDay } from "@/lib/queue-calendar";
 import type { QueueEntry } from "@/lib/types";
 
 const group = <T,>(xs: T[], key: (x: T) => string) => {
@@ -29,11 +20,32 @@ const group = <T,>(xs: T[], key: (x: T) => string) => {
   return m;
 };
 
-/** The posting queue: clips waiting for review, then everything scheduled or posted, by day. */
+/** "America/New_York" -> "New York" */
+const zoneCity = (tz: string) =>
+  (tz.split("/").pop() ?? tz).replace(/_/g, " ");
+
+/** The posting queue: clips waiting for review, then a calendar of everything scheduled or posted. */
 export function QueueView() {
   const { data, refresh } = useQueue();
+  const results = usePostResults();
+  const channels = useSourceChannels();
   const [toast, setToast] = useState<string | null>(null);
   const tz = data?.audienceTz ?? "America/New_York";
+  const tzLabel = zoneCity(tz);
+
+  const [today, setToday] = useState(() => dayKey(Date.now(), tz));
+  const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  // the audience zone arrives with the data; "today" (and the default selection) follow it
+  useEffect(() => {
+    const tick = () => setToday(dayKey(Date.now(), tz));
+    tick();
+    const t = setInterval(tick, 60_000);
+    return () => clearInterval(t);
+  }, [tz]);
+  const day = selected ?? today;
+  const month = view ?? day;
 
   const review = useMemo(
     () =>
@@ -50,25 +62,22 @@ export function QueueView() {
       ),
     [review],
   );
-  const planned = useMemo(() => {
-    const live =
-      data?.entries.filter(
-        (e) => e.status !== "review" && e.status !== "rejected",
-      ) ?? [];
-    const clips = group(live, (e) => queueGroup(e));
-    const rows = [...clips.values()].sort(
-      (a, b) =>
-        (a[0]!.slotAt ?? a[0]!.updatedAt) - (b[0]!.slotAt ?? b[0]!.updatedAt),
-    );
-    const day = (es: QueueEntry[]) =>
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      }).format(new Date(es[0]!.slotAt ?? es[0]!.updatedAt));
-    return group(rows, day);
-  }, [data, tz]);
+  const days = useMemo(
+    () => bucketByDay(data?.entries ?? [], tz),
+    [data, tz],
+  );
+  const openEntries = useMemo(
+    () =>
+      open
+        ? (data?.entries.filter(
+            (e) =>
+              queueGroup(e) === open &&
+              e.status !== "review" &&
+              e.status !== "rejected",
+          ) ?? [])
+        : [],
+    [data, open],
+  );
 
   const done = (msg?: string) => {
     if (msg) {
@@ -85,14 +94,25 @@ export function QueueView() {
       </p>
     );
 
+  const schedulingVerified = (es: QueueEntry[]) =>
+    data.capabilities?.some(
+      (c) =>
+        c.platform === "youtube" &&
+        c.accountId ===
+          es.find((e) => e.platform === "youtube")?.publishPackage?.accountId &&
+        c.scheduling === "verified",
+    ) ?? false;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Queue</h1>
-        <p className="text-sm text-muted-foreground">
-          Rendered clips wait here for your OK. Approved clips post at staggered
-          times (at most 2 a day per platform, 4 hours apart) in{" "}
-          {tz.replace("_", " ")} time.{" "}
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <ListChecks className="size-6 text-primary" /> Queue
+        </h1>
+        <p className="max-w-prose text-pretty text-sm text-muted-foreground">
+          New clips wait here for your OK. Once approved they post on their own
+          at spread-out times (at most 2 a day per app, 4 hours apart), in{" "}
+          {tzLabel} time.{" "}
           <Link
             href="/settings#accounts"
             className="underline underline-offset-2"
@@ -102,13 +122,18 @@ export function QueueView() {
         </p>
       </div>
       {toast && (
-        <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
+        <p
+          role="status"
+          className="fixed bottom-5 left-1/2 z-[60] max-w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-primary/40 bg-card px-4 py-2.5 text-sm shadow-[0_8px_24px_-8px_oklch(0.24_0.03_45/35%)]"
+        >
           {toast}
         </p>
       )}
 
       <section className="space-y-3">
-        <h2 className="font-semibold">Waiting for your OK ({review.size})</h2>
+        <h2 className="text-lg font-semibold">
+          Waiting for your OK ({review.size})
+        </h2>
         {review.size === 0 && (
           <p className="text-sm text-muted-foreground">
             Nothing to review. Render clips and they show up here (with
@@ -175,440 +200,62 @@ export function QueueView() {
         ))}
       </section>
 
-      <section className="space-y-4">
-        <h2 className="font-semibold">Scheduled &amp; posted</h2>
-        {planned.size === 0 && (
+      <section className="@container space-y-3" aria-label="Posting calendar">
+        <div className="space-y-0.5">
+          <h2 className="text-lg font-semibold">Scheduled &amp; posted</h2>
           <p className="text-sm text-muted-foreground">
-            Nothing scheduled yet.
-          </p>
-        )}
-        {[...planned.entries()].map(([day, rows]) => (
-          <div key={day} className="space-y-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {day}
-            </h3>
-            {rows.map((es) => (
-              <ScheduledRow
-                key={queueGroup(es[0]!)}
-                entries={es}
-                tz={tz}
-                onChange={done}
-                schedulingVerified={
-                  data.capabilities?.some(
-                    (c) =>
-                      c.platform === "youtube" &&
-                      c.accountId ===
-                        es.find((e) => e.platform === "youtube")?.publishPackage
-                          ?.accountId &&
-                      c.scheduling === "verified",
-                  ) ?? false
-                }
-              />
-            ))}
-          </div>
-        ))}
-      </section>
-    </div>
-  );
-}
-
-function ScheduledRow({
-  entries,
-  tz,
-  onChange,
-  schedulingVerified,
-}: {
-  entries: QueueEntry[];
-  tz: string;
-  onChange: (msg?: string) => void;
-  schedulingVerified: boolean;
-}) {
-  const first = entries[0]!;
-  const [moving, setMoving] = useState(false);
-  const [when, setWhen] = useState("");
-  const [open, setOpen] = useState(false);
-  const act = async (
-    e: QueueEntry,
-    action: "post-now" | "retry" | "reject" | "check-status",
-  ) => {
-    try {
-      await api(`/api/queue/${encodeURIComponent(e.key)}/${action}`, {
-        method: "POST",
-      });
-      onChange();
-    } catch (error) {
-      onChange(error instanceof Error ? error.message : String(error));
-    }
-  };
-  const pending = entries.filter(
-    (e) =>
-      !e.delivery &&
-      !e.remoteSchedule &&
-      (e.status === "scheduled" || e.status === "failed"),
-  );
-
-  return (
-    <div className="space-y-2 rounded-xl border bg-card p-3">
-      <div className="flex flex-wrap items-center gap-3">
-        {first.thumbUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={first.thumbUrl}
-            alt=""
-            className="h-14 w-8 shrink-0 rounded object-cover"
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <Link
-            href={queueLink(first)}
-            className="block truncate text-sm font-medium hover:underline"
-          >
-            {first.clipTitle}
-          </Link>
-          <p className="text-xs text-muted-foreground">
-            {first.slotAt ? fmtSlot(first.slotAt, tz) : "No time set"}
+            Pick a day to see what went out or is coming up, and how it&apos;s
+            doing.
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {entries.map((e) => (
-            <StatusChip key={e.key} e={e} />
-          ))}
-        </div>
-        {pending.length > 0 && (
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Post now"
-              onClick={() =>
-                Promise.all(pending.map((e) => act(e, "post-now")))
-              }
-            >
-              <Send />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Move"
-              onClick={() => setMoving(!moving)}
-            >
-              <Clock />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              title="Remove from the queue"
-              onClick={async () => {
-                for (const e of pending)
-                  await api(`/api/queue/${encodeURIComponent(e.key)}`, {
-                    method: "DELETE",
-                  }).catch(() => {});
-                onChange();
-              }}
-            >
-              <Trash2 />
-            </Button>
+        <div className="grid items-start gap-5 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+          <div className="@3xl:sticky @3xl:top-4">
+            <QueueCalendar
+              days={days}
+              view={month}
+              selected={day}
+              today={today}
+              tzLabel={tzLabel}
+              onView={setView}
+              onSelect={setSelected}
+            />
           </div>
-        )}
-      </div>
-      {moving && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="datetime-local"
-            value={when}
-            onChange={(e) => setWhen(e.target.value)}
-            className="w-auto"
-          />
-          <span className="text-xs text-muted-foreground">
-            {tz.replace("_", " ")} time
-          </span>
-          <Button
-            size="sm"
-            disabled={!when}
-            onClick={async () => {
-              const [d, t] = when.split("T");
-              const [y, m, day] = d!.split("-").map(Number);
-              const [h, min] = t!.split(":").map(Number);
-              const slotAt = zonedToUtc(y!, m!, day!, h!, min!, tz).getTime();
-              for (const e of pending)
-                await api(`/api/queue/${encodeURIComponent(e.key)}`, {
-                  method: "PATCH",
-                  body: JSON.stringify({ slotAt }),
-                }).catch(() => {});
-              setMoving(false);
-              onChange(`Moved to ${fmtSlot(slotAt, tz)}`);
+          <DayPosts
+            day={day}
+            today={today}
+            posts={days.get(day) ?? []}
+            tz={tz}
+            channels={channels}
+            publications={results.data?.publications ?? []}
+            resultsState={results.state}
+            prevDay={nearestDay(days.keys(), day, -1)}
+            nextDay={nearestDay(days.keys(), day, 1)}
+            onJump={(d) => {
+              setView(d);
+              setSelected(d);
             }}
-          >
-            Move
-          </Button>
-        </div>
-      )}
-      {entries.map((e) =>
-        e.status === "needs_action" || e.status === "failed" ? (
-          <div key={e.key} className="rounded-lg bg-muted/60 p-2 text-xs">
-            <p
-              className={
-                e.status === "failed" ? "text-red-700" : "text-amber-800"
-              }
-            >
-              <b>{PLATFORM_NAME[e.platform]}:</b> {e.result?.note ?? e.error}
-              {e.nextTryAt ? ` · retrying ${fmtSlot(e.nextTryAt, tz)}` : ""}
-            </p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {e.result?.url && (
-                <a
-                  href={e.result.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 underline underline-offset-2"
-                >
-                  Open <ExternalLink className="size-3" />
-                </a>
-              )}
-              {e.platform === "tiktok" &&
-                e.status === "needs_action" &&
-                e.text.caption && <CopyText text={e.text.caption} />}
-              {e.authBlocked && (
-                <Link
-                  href="/settings#accounts"
-                  className="underline underline-offset-2"
-                >
-                  Reconnect in Settings
-                </Link>
-              )}
-              {(!e.delivery || e.deliveryCanRetry) &&
-                !e.remoteSchedule &&
-                (e.status === "failed" ||
-                  (e.status === "needs_action" && !e.result?.id)) &&
-                !e.authBlocked && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7"
-                    onClick={() => act(e, "retry")}
-                  >
-                    <RotateCw /> Retry
-                  </Button>
-                )}
-            </div>
-          </div>
-        ) : null,
-      )}
-      {entries.map((e) =>
-        e.delivery ? (
-          <div
-            key={`delivery-${e.key}`}
-            className="rounded-lg border p-2 text-xs space-y-1"
-          >
-            <p>
-              {PLATFORM_NAME[e.platform]}: {e.delivery.state} · visibility:{" "}
-              {e.delivery.visibility}
-            </p>
-            <p>
-              Thumbnail: {e.delivery.thumbnail.status}
-              {e.delivery.thumbnail.status === "accepted"
-                ? " by upload API; display on Shorts is not verified"
-                : ""}
-            </p>
-            {e.delivery.observedAt && (
-              <p>
-                Last checked {new Date(e.delivery.observedAt).toLocaleString()}
-              </p>
-            )}
-            {e.delivery.nextTryAt && (
-              <p>
-                Next check {fmtSlot(e.delivery.nextTryAt, tz)}
-                {e.delivery.retryClass ? ` (${e.delivery.retryClass})` : ""}
-              </p>
-            )}
-            {e.delivery.visibility === "scheduled" && (
-              <p>
-                YouTube has accepted this schedule. Pausing capy does not cancel
-                it. Manage changes in YouTube Studio.
-              </p>
-            )}
-            {e.delivery.state !== "public" && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => act(e, "check-status")}
-              >
-                Check saved delivery status
-              </Button>
-            )}
-          </div>
-        ) : e.platform === "youtube" && e.status === "scheduled" ? (
-          <RemoteScheduleForm
-            key={`schedule-${e.key}`}
-            entry={e}
-            verified={schedulingVerified}
-            onChange={onChange}
+            onOpen={setOpen}
           />
-        ) : null,
-      )}
-      <button
-        type="button"
-        className="text-[11px] text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen(!open)}
-      >
-        {open ? "Hide history" : "History"}
-      </button>
-      {open && (
-        <ul className="space-y-0.5 text-[11px] text-muted-foreground">
-          {entries
-            .flatMap((e) => e.history.map((h) => ({ ...h, p: e.platform })))
-            .sort((a, b) => a.t - b.t)
-            .map((h, i) => (
-              <li key={i}>
-                {new Date(h.t).toLocaleString()} · {PLATFORM_NAME[h.p]} ·{" "}
-                {h.msg}
-              </li>
-            ))}
-        </ul>
+        </div>
+      </section>
+
+      {open && openEntries.length > 0 && (
+        <PostDetail
+          key={open}
+          entries={openEntries}
+          tz={tz}
+          tzLabel={tzLabel}
+          channels={channels}
+          publications={results.data?.publications ?? []}
+          resultsState={results.state}
+          resultsBusy={results.busy}
+          resultsError={results.error}
+          onRefreshResults={() => void results.refresh()}
+          schedulingVerified={schedulingVerified(openEntries)}
+          onChange={done}
+          onClose={() => setOpen(null)}
+        />
       )}
     </div>
-  );
-}
-
-function StatusChip({ e }: { e: QueueEntry }) {
-  const name = PLATFORM_NAME[e.platform];
-  const base = "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs";
-  if (e.delivery)
-    return (
-      <span
-        className={`${base} ${e.delivery.state === "public" ? "bg-emerald-500/15 text-emerald-700" : "bg-secondary"}`}
-      >
-        {name} · {e.delivery.state}
-      </span>
-    );
-  if (e.status === "posted")
-    return e.result?.url ? (
-      <a
-        href={e.result.url}
-        target="_blank"
-        rel="noreferrer"
-        className={`${base} bg-emerald-500/15 text-emerald-700 hover:underline`}
-      >
-        <CheckCircle2 className="size-3" /> {name}
-      </a>
-    ) : (
-      <span className={`${base} bg-emerald-500/15 text-emerald-700`}>
-        <CheckCircle2 className="size-3" /> {name}
-      </span>
-    );
-  if (e.status === "posting")
-    return (
-      <span className={`${base} bg-secondary`}>
-        <Loader2 className="size-3 animate-spin" /> {name}
-      </span>
-    );
-  if (e.status === "needs_action")
-    return (
-      <span className={`${base} bg-amber-500/15 text-amber-800`}>
-        <AlertTriangle className="size-3" /> {name}
-      </span>
-    );
-  if (e.status === "failed")
-    return (
-      <span className={`${base} bg-destructive/15 text-red-700`}>
-        <XCircle className="size-3" /> {name}
-      </span>
-    );
-  return (
-    <span className={`${base} bg-secondary text-secondary-foreground`}>
-      <Clock className="size-3" /> {name}
-    </span>
-  );
-}
-
-function RemoteScheduleForm({
-  entry,
-  verified,
-  onChange,
-}: {
-  entry: QueueEntry;
-  verified: boolean;
-  onChange: (msg?: string) => void;
-}) {
-  const [when, setWhen] = useState("");
-  const [minutes, setMinutes] = useState(60);
-  const [ack, setAck] = useState(false);
-  const [busy, setBusy] = useState(false);
-  return (
-    <details className="text-xs">
-      <summary>YouTube upload ahead and remote schedule</summary>
-      <div className="space-y-2 py-2">
-        <p>
-          {verified
-            ? "Choose an exact publication time and approve a new package."
-            : "Unavailable until remote scheduling is verified for this exact publishing destination through a separately authorized upload."}
-        </p>
-        {entry.remoteSchedule && (
-          <p>
-            Approved for{" "}
-            {new Date(entry.remoteSchedule.publishAt).toLocaleString()},
-            uploading up to {entry.remoteSchedule.uploadAheadMinutes} minutes
-            ahead.
-          </p>
-        )}
-        <label className="block">
-          Publish at (this computer’s time zone)
-          <Input
-            type="datetime-local"
-            value={when}
-            onChange={(e) => setWhen(e.target.value)}
-            disabled={!verified}
-          />
-        </label>
-        <label className="block">
-          Upload ahead (minutes, 1–1440)
-          <Input
-            type="number"
-            min={1}
-            max={1440}
-            value={minutes}
-            onChange={(e) => setMinutes(Number(e.target.value))}
-            disabled={!verified}
-          />
-        </label>
-        <label className="flex items-start gap-2">
-          <input
-            type="checkbox"
-            checked={ack}
-            onChange={(e) => setAck(e.target.checked)}
-            disabled={!verified}
-          />
-          I approve uploading early and publication by YouTube at this time.
-          Pausing or closing capy cannot cancel an accepted remote schedule.
-        </label>
-        <Button
-          size="sm"
-          disabled={!verified || !ack || !when || busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await api(
-                `/api/queue/${encodeURIComponent(entry.key)}/schedule`,
-                {
-                  method: "POST",
-                  body: JSON.stringify({
-                    publishAt: new Date(when).getTime(),
-                    uploadAheadMinutes: minutes,
-                    acknowledgeRemoteSchedule: ack,
-                  }),
-                },
-              );
-              onChange("Remote schedule explicitly approved");
-            } catch (error) {
-              onChange(error instanceof Error ? error.message : String(error));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          Approve new remote schedule
-        </Button>
-      </div>
-    </details>
   );
 }
