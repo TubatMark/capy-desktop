@@ -173,6 +173,8 @@ export interface ChannelInfo {
   url: string;
 }
 export interface Upload {
+  /** Exact source publication time in Unix ms; approximate tab dates must not be used for import cutoffs. */
+  publishedAt?: number;
   id: string;
   title: string;
   /** Seconds; undefined while YouTube doesn't know yet (premieres) or for live streams. */

@@ -5,7 +5,15 @@ import type { JobSettings, JobState } from "../lib/types";
 import type { Upload } from "../src/youtube";
 import { takePosterLock } from "./poster-lock";
 import { dataDir, effective } from "./settings";
-import { applyCheck, checkFailed, markHistory, takeDue, watch } from "./watch";
+import { readUploadDates } from "./subscriptions";
+import {
+  discoveryCutoff,
+  applyCheck,
+  checkFailed,
+  markHistory,
+  takeDue,
+  watch,
+} from "./watch";
 
 /**
  * Creator automation: every so often list each watched channel's uploads, queue the new ones, and send them through
@@ -19,6 +27,7 @@ export interface WatcherDeps {
   /** One watcher per data folder (the packaged app and `pnpm dev` share it). */
   lock(): "acquired" | "held" | "busy";
   list(channelUrl: string): Promise<Upload[]>;
+  dateUploads?(accountId: string, uploads: Upload[]): Promise<Upload[]>;
   createJob(
     videoId: string,
     settings: Partial<JobSettings>,
@@ -90,7 +99,17 @@ export async function watcherTick(
       mutateWatch((f) => ({ ...f, lastCheckAt: now.getTime() }));
       for (const ch of file.channels.filter((c) => c.enabled)) {
         try {
-          const uploads = await deps.list(ch.url);
+          let uploads = await deps.list(ch.url);
+          if (discoveryCutoff(ch) !== undefined) {
+            if (!ch.sourceAccountId)
+              throw new Error(
+                "Reconnect the creator's original YouTube reading account to resolve publication dates",
+              );
+            uploads = await (deps.dateUploads ?? readUploadDates)(
+              ch.sourceAccountId,
+              uploads,
+            );
+          }
           mutateWatch((f) => applyCheck(f, ch.id, uploads, deps.now()));
         } catch (e) {
           mutateWatch((f) =>

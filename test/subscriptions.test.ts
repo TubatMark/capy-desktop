@@ -2,7 +2,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { importCreators, listSubscriptions } from "../server/subscriptions";
+import {
+  importCreators,
+  listSubscriptions,
+  readUploadDates,
+} from "../server/subscriptions";
 import {
   accountsFile,
   loadAccounts,
@@ -13,6 +17,7 @@ import {
   saveReadingAccount,
 } from "../server/accounts";
 import { startConnect, finishConnect, pendingConnect } from "../server/connect";
+import { watcherTick } from "../server/watcher";
 import { watch, mapChannel } from "../server/watch";
 import { runtimeStore } from "../server/db/runtime";
 import { SCOPES } from "../server/oauth";
@@ -292,6 +297,297 @@ describe("read-only subscription import", () => {
       ),
     ).rejects.toThrow(/reading account/i);
   });
+  it.each(["manual", "automatic_drafts"] as const)(
+    "no backfill survives a Shorts-heavy baseline in %s mode and allows later uploads",
+    async (mode) => {
+      reading();
+      const importedAt = new Date("2026-10-10T08:00:00Z");
+      const cutoff = importedAt.getTime();
+      const shorts = Array.from({ length: 60 }, (_, n) => ({
+        id: `short-${n}`,
+        title: `Short ${n}`,
+        live: false,
+        duration: 30,
+      }));
+      const regular = Array.from({ length: 12 }, (_, n) => ({
+        id: `regular-${n}`,
+        title: `Regular ${n}`,
+        live: false,
+        duration: 600,
+        publishedAt: cutoff - (n + 1) * 86400000,
+      }));
+      const f = vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        const resource = url.pathname.split("/").pop();
+        if (resource === "subscriptions")
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  snippet: {
+                    title: channel(1).name,
+                    resourceId: { channelId: channel(1).id },
+                  },
+                },
+              ],
+            }),
+          );
+        if (resource === "channels")
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  contentDetails: {
+                    relatedPlaylists: { uploads: "all-formats" },
+                  },
+                },
+              ],
+            }),
+          );
+        if (resource === "playlistItems")
+          return new Response(
+            JSON.stringify({
+              items: shorts
+                .slice(0, 50)
+                .map((u) => ({
+                  snippet: { title: u.title, resourceId: { videoId: u.id } },
+                })),
+            }),
+          );
+        if (resource === "videos" && url.searchParams.get("part") === "snippet")
+          return new Response(
+            JSON.stringify({
+              items: url.searchParams
+                .get("id")!
+                .split(",")
+                .map((id) => ({
+                  id,
+                  snippet: {
+                    publishedAt: new Date(
+                      id === "new-regular"
+                        ? cutoff + 1
+                        : id === "at-cutoff"
+                          ? cutoff
+                          : cutoff - 86400000,
+                    ).toISOString(),
+                  },
+                })),
+            }),
+          );
+        if (resource === "videos")
+          return new Response(
+            JSON.stringify({
+              items: shorts
+                .slice(0, 50)
+                .map((u) => ({
+                  id: u.id,
+                  contentDetails: { duration: "PT30S" },
+                })),
+            }),
+          );
+        throw new Error(`Unexpected fixture ${url}`);
+      }) as unknown as typeof fetch;
+      await importCreators(
+        {
+          accountId: "reader-a",
+          selectedIds: [channel(1).id],
+          backfill: false,
+          mode,
+        },
+        { fetch: f, now: () => importedAt },
+      );
+      expect(watch().get().channels[0]!.seen).toHaveLength(50);
+      expect(watch().get().channels[0]!.discoveryAfter).toBe(cutoff);
+      if (mode === "manual")
+        watch().mutate((w) =>
+          // A C1 creator saved before the explicit cutoff field still uses its original import time.
+          mapChannel(w, channel(1).id, (c) => ({ ...c, enabled: true, discoveryAfter: undefined })),
+        );
+      let feed = regular;
+      const created = vi.fn(async (_videoId: string) => {});
+      const deps = {
+        now: () => new Date(cutoff + 3600000),
+        lock: () => "held" as const,
+        list: vi.fn(async () => feed),
+        dateUploads: (accountId: string, uploads: typeof regular) =>
+          readUploadDates(accountId, uploads, f),
+        createJob: created,
+      };
+      await watcherTick(deps, { force: true });
+      const first = watch().get().channels[0]!;
+      expect(first.pending).toEqual([]);
+      expect(first.history).toEqual([]);
+      expect(created).not.toHaveBeenCalled();
+      feed = [
+        {
+          id: "at-cutoff",
+          title: "Existing at boundary",
+          live: false,
+          duration: 600,
+          publishedAt: cutoff,
+        },
+        ...regular,
+      ];
+      await watcherTick(deps, { force: true });
+      expect(created).not.toHaveBeenCalled();
+      feed = [
+        {
+          id: "new-regular",
+          title: "Genuinely new regular upload",
+          live: false,
+          duration: 600,
+          publishedAt: cutoff + 1,
+        },
+        ...regular,
+      ];
+      await watcherTick(deps, { force: true });
+      expect(created).toHaveBeenCalledTimes(1);
+      expect(created.mock.calls[0]![0]).toBe("new-regular");
+      expect(
+        watch()
+          .get()
+          .channels[0]!.history.map((h) => h.videoId),
+      ).toEqual(["new-regular"]);
+      expect(f).toHaveBeenCalledTimes(7);
+    },
+  );
+  it("defers unknown publication dates visibly without marking seen and resolves them on the next check", async () => {
+    reading();
+    const now = new Date("2026-10-10T08:00:00Z");
+    await importCreators(
+      {
+        accountId: "reader-a",
+        selectedIds: [channel(1).id],
+        mode: "automatic_drafts",
+        backfill: false,
+      },
+      { ...fixture(), now: () => now },
+    );
+    const upload = {
+      id: "undated",
+      title: "Undated regular upload",
+      duration: 600,
+      live: false,
+    };
+    let publishedAt: string | undefined;
+    const f = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            items: [{ id: upload.id, snippet: { publishedAt } }],
+          }),
+        ),
+    ) as unknown as typeof fetch;
+    const created = vi.fn(async (_videoId: string) => {});
+    const deps = {
+      now: () => new Date(now.getTime() + 60000),
+      lock: () => "held" as const,
+      list: async () => [upload],
+      dateUploads: (accountId: string, uploads: (typeof upload)[]) =>
+        readUploadDates(accountId, uploads, f),
+      createJob: created,
+    };
+    await watcherTick(deps, { force: true });
+    const deferred = watch().get().channels[0]!;
+    expect(deferred.lastError).toMatch(
+      /Waiting for exact publication dates: Undated regular upload.*deferred/,
+    );
+    expect(deferred.seen).not.toContain(upload.id);
+    expect(deferred.pending).toEqual([]);
+    expect(deferred.history).toEqual([]);
+    expect(created).not.toHaveBeenCalled();
+    publishedAt = new Date(now.getTime() + 1).toISOString();
+    await watcherTick(deps, { force: true });
+    expect(created).toHaveBeenCalledWith(
+      upload.id,
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(watch().get().channels[0]!.lastError).toBeUndefined();
+  });
+
+  it("publication date enrichment rejects a changed source principal and leaves existing pending work intact", async () => {
+    reading();
+    const now = new Date("2026-10-10T08:00:00Z");
+    await importCreators(
+      {
+        accountId: "reader-a",
+        selectedIds: [channel(1).id],
+        mode: "automatic_drafts",
+        backfill: true,
+      },
+      { ...fixture(), now: () => now },
+    );
+    // Preserve the explicitly requested old-upload pending entry while the source changes during enrichment.
+    const pending = watch().get().channels[0]!.pending;
+    const f = vi.fn(async () => {
+      reading("reader-b");
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "new",
+              snippet: {
+                publishedAt: new Date(now.getTime() + 1).toISOString(),
+              },
+            },
+          ],
+        }),
+      );
+    }) as unknown as typeof fetch;
+    await expect(
+      readUploadDates(
+        "reader-a",
+        [{ id: "new", title: "New", duration: 600, live: false }],
+        f,
+      ),
+    ).rejects.toMatchObject({ reconnect: true });
+    expect(watch().get().channels[0]!.pending).toEqual(pending);
+    expect(watch().get().channels[0]!.history).toEqual([]);
+    await expect(
+      readUploadDates(
+        "reader-a",
+        [{ id: "new", title: "New", duration: 600, live: false }],
+        f,
+      ),
+    ).rejects.toMatchObject({ reconnect: true });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("explicit pending backfill survives the cutoff, and refreshing never changes it or creator preferences", async () => {
+    reading();
+    const now = new Date("2026-10-10T08:00:00Z");
+    const input = {
+      accountId: "reader-a",
+      selectedIds: [channel(1).id],
+      mode: "automatic_drafts" as const,
+      backfill: true,
+    };
+    await importCreators(input, { ...fixture(), now: () => now });
+    const original = watch().get().channels[0]!;
+    await importCreators(
+      { ...input, backfill: false, mode: "manual" },
+      { ...fixture(), now: () => new Date(now.getTime() + 60000) },
+    );
+    expect(watch().get().channels[0]).toEqual(original);
+    const created = vi.fn(async (_videoId: string) => {});
+    await watcherTick(
+      {
+        now: () => now,
+        lock: () => "held",
+        list: async () => [],
+        createJob: created,
+      },
+      { force: true },
+    );
+    expect(created).toHaveBeenCalledWith(
+      "old-upload",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(watch().get().channels[0]!.history[0]!.videoId).toBe("old-upload");
+  });
+
   it("never recursively imports the YouTube publishing destination", async () => {
     reading();
     saveAccount("youtube", {

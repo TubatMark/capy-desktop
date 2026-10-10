@@ -116,6 +116,8 @@ export interface QueueSummary {
 
 /** A YouTube creator capy watches for new uploads (server/watch.ts owns these). */
 export interface WatchedChannel {
+  /** Only publication times strictly after this Unix-ms cutoff may be discovered; explicit pending backfill is exempt. */
+  discoveryAfter?: number;
   sourceAccountId?: string;
   thumbnail?: string;
   mode?: "manual" | "automatic_drafts";

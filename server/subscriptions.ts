@@ -43,6 +43,7 @@ interface YoutubeResponse {
     id?: string;
     snippet?: {
       title?: string;
+      publishedAt?: string;
       resourceId?: { channelId?: string; videoId?: string };
       thumbnails?: Record<string, { url?: string }>;
     };
@@ -188,6 +189,35 @@ async function recentUploads(
     duration: durations.get(i.snippet!.resourceId!.videoId!),
   }));
 }
+/** Exact dates for the bounded watcher feed, under the creator's original reading principal. */
+export async function readUploadDates(
+  accountId: string,
+  uploads: Upload[],
+  f: typeof fetch = fetch,
+): Promise<Upload[]> {
+  if (!uploads.length) return [];
+  const ids = [...new Set(uploads.map((u) => u.id))];
+  if (ids.length > 50)
+    throw new Error(
+      "Resolve publication dates in batches of at most 50 uploads",
+    );
+  const details = await readYoutube(
+    accountId,
+    "videos",
+    { part: "snippet", id: ids.join(",") },
+    f,
+  );
+  const dates = new Map<string, number>();
+  for (const item of details.items ?? []) {
+    const publishedAt = Date.parse(item.snippet?.publishedAt ?? "");
+    if (item.id && Number.isFinite(publishedAt))
+      dates.set(item.id, publishedAt);
+  }
+  return uploads.map((upload) => ({
+    ...upload,
+    publishedAt: dates.get(upload.id),
+  }));
+}
 export interface SubscriptionDeps {
   fetch?: typeof fetch;
   uploads?: (channelId: string) => Promise<Upload[]>;
@@ -253,6 +283,7 @@ export async function importCreators(
     ).channels[0]!;
     prepared.push({
       ...initial,
+      discoveryAfter: initial.addedAt,
       enabled: data.mode === "automatic_drafts",
       mode: data.mode,
       thumbnail: c.thumbnail,
@@ -293,6 +324,7 @@ export async function importCreators(
             mode: data.mode,
             backfill: data.backfill,
             importedAt: c.addedAt,
+            discoveryAfter: c.discoveryAfter,
           },
           store.get("creator-imports", id)?.revision ?? 0,
         );

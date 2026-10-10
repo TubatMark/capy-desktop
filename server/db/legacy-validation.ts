@@ -178,6 +178,7 @@ export const watchSchema = z
           url: string,
           enabled: z.boolean(),
           addedAt: number,
+          discoveryAfter: z.number().finite().nonnegative().optional(),
           handle: string.optional(),
           lastCheckedAt: number.optional(),
           lastError: string.optional(),

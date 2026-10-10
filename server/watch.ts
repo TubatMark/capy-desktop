@@ -34,15 +34,22 @@ export function addChannel(file: WatchFile, info: ChannelInfo, uploads: Upload[]
   return { ...file, channels: [...file.channels, channel] };
 }
 
+/** C1 imports predating the explicit field retain their original addedAt boundary without rewriting preferences. */
+export const discoveryCutoff = (ch: WatchedChannel): number | undefined =>
+  ch.discoveryAfter ?? (ch.sourceAccountId ? ch.addedAt : undefined);
+
 /** Sort a channel's latest uploads into new clippable ones, ones to skip for good, and ones to look at again later. */
 export function diffUploads(ch: WatchedChannel, uploads: Upload[]): { fresh: Upload[]; skipped: Upload[]; unknown: Upload[] } {
+  const cutoff = discoveryCutoff(ch);
   const known = new Set([...ch.seen, ...ch.pending.map((p) => p.id)]);
   const fresh: Upload[] = [];
   const skipped: Upload[] = [];
   const unknown: Upload[] = [];
   for (const u of uploads) {
     if (known.has(u.id)) continue;
-    if (u.live || u.duration === undefined) unknown.push(u); // live, upcoming, or a premiere without a length yet
+    if (cutoff !== undefined && !Number.isFinite(u.publishedAt)) unknown.push(u);
+    else if (cutoff !== undefined && u.publishedAt! <= cutoff) skipped.push(u);
+    else if (u.live || u.duration === undefined) unknown.push(u); // live, upcoming, or a premiere without a length yet
     else if (u.duration < ch.settings.minVideoSec) skipped.push(u);
     else fresh.push(u);
   }
@@ -52,11 +59,16 @@ export function diffUploads(ch: WatchedChannel, uploads: Upload[]): { fresh: Upl
 /** Record one check of a channel: new uploads join pending (oldest first), short ones are marked seen. */
 export function applyCheck(file: WatchFile, channelId: string, uploads: Upload[], now: Date): WatchFile {
   return mapChannel(file, channelId, (ch) => {
-    const { fresh, skipped } = diffUploads(ch, uploads);
+    const { fresh, skipped, unknown } = diffUploads(ch, uploads);
+    const waitingDates = discoveryCutoff(ch) === undefined
+      ? []
+      : unknown.filter(u => !Number.isFinite(u.publishedAt));
     return {
       ...ch,
       lastCheckedAt: now.getTime(),
-      lastError: undefined,
+      lastError: waitingDates.length
+        ? `Waiting for exact publication dates: ${waitingDates.map(u => u.title).join(", ")}. These uploads are deferred, not queued.`
+        : undefined,
       seen: [...ch.seen, ...skipped.map((u) => u.id)].slice(-SEEN_MAX),
       pending: [...ch.pending, ...[...fresh].reverse().map((u) => ({ id: u.id, title: u.title, duration: u.duration, foundAt: now.getTime() }))],
     };
