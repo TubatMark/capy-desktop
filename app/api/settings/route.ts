@@ -28,6 +28,7 @@ const Patch = z.strictObject({
   audience: z.enum(["original", "en-us"]).optional(),
   postingAudience: z.string().trim().max(40).optional(),
   postingPaused: z.boolean().optional(),
+  autoSchedule: z.boolean().optional(),
 });
 
 /** GET = saved settings (API key redacted) + every AI CLI found on this machine (?rescan=1 skips the cache). */

@@ -28,6 +28,7 @@ export function createTray(o: {
   };
   let health: AutomationHealth | undefined;
   let seenReview: number | undefined;
+  let seenAuto: number | undefined;
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   function render() {
@@ -120,8 +121,20 @@ export function createTray(o: {
       const r = await fetch(`${url}/api/queue/summary`);
       if (r.ok) {
         const prev = seenReview;
+        const prevAuto = summary.lastAuto?.at;
         summary = await r.json();
         seenReview = summary.review;
+        // a clip passed every check and was scheduled without waiting for approval: say so (it can still be removed)
+        const auto = summary.lastAuto;
+        if (auto && seenAuto !== undefined && auto.at > seenAuto && Notification.isSupported()) {
+          const n = new Notification({
+            title: "capy scheduled a clip",
+            body: `"${auto.title}" passed every check and is on the schedule. Open Queue to change or remove it.`,
+          });
+          n.on("click", () => o.show("/queue"));
+          n.show();
+        }
+        seenAuto = auto?.at ?? prevAuto ?? 0;
         // automation finished clips while the user was elsewhere: say so (clicking opens the review list)
         const text = newReviewNotice(prev, summary.review);
         if (text && Notification.isSupported()) {

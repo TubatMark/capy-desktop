@@ -199,6 +199,8 @@ function clean(
     out.postingAudience = obj.postingAudience;
   if (typeof obj.postingPaused === "boolean")
     out.postingPaused = obj.postingPaused;
+  if (typeof obj.autoSchedule === "boolean")
+    out.autoSchedule = obj.autoSchedule;
   return out;
 }
 
@@ -289,6 +291,7 @@ export interface EffectiveSettings {
   /** AUDIENCES id whose time zone posting slots use. */
   postingAudience: string;
   postingPaused: boolean;
+  autoSchedule: boolean;
 }
 
 function env(...names: string[]): string | undefined {
@@ -320,6 +323,7 @@ export function effective(): EffectiveSettings {
     audience: s.audience ?? "en-us",
     postingAudience: s.postingAudience ?? "us-east",
     postingPaused: s.postingPaused ?? false,
+    autoSchedule: s.autoSchedule ?? true,
   };
 }
 

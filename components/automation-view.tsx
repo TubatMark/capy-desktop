@@ -281,12 +281,48 @@ function StatusBar({
         </Select>
         <span>videos a day in total.</span>
       </div>
+      <AutoSchedule />
       {!stopped && !health.online && (
         <p className="text-xs text-muted-foreground">
           capy only checks while it&apos;s open (or running in the menu bar).
         </p>
       )}
     </section>
+  );
+}
+
+/** The owner's switch for scheduling clips that pass every check without waiting for approval (on by default). */
+function AutoSchedule() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    void api<{ settings: { autoSchedule?: boolean } }>("/api/settings")
+      .then((r) => setOn(r.settings.autoSchedule ?? true))
+      .catch(() => {});
+  }, []);
+  if (on === null) return null;
+  return (
+    <label className="flex items-start gap-2 border-t pt-2 text-sm">
+      <input
+        type="checkbox"
+        className="mt-0.5 size-4 accent-[var(--primary)]"
+        checked={on}
+        onChange={async (e) => {
+          const next = e.target.checked;
+          setOn(next);
+          await api("/api/settings", { method: "PUT", body: JSON.stringify({ autoSchedule: next }) }).catch(() =>
+            setOn(!next),
+          );
+        }}
+      />
+      <span>
+        <span className="font-medium">Schedule clips that pass every check without asking me</span>
+        <span className="block text-xs text-muted-foreground">
+          At least one AI says it&apos;s OK and none says don&apos;t post, it isn&apos;t a near-copy of your recent
+          clips, and it has a designed thumbnail. It still waits for its time slot, so you can remove it from Queue
+          before it posts. Turning this off also holds back clips it already scheduled.
+        </span>
+      </span>
+    </label>
   );
 }
 

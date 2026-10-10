@@ -94,6 +94,8 @@ export interface QueueEntry {
   thumbAt?: number;
   /** Unix ms. */
   slotAt?: number;
+  /** Scheduled by auto-scheduling (every check passed) rather than by the user's approval. */
+  autoScheduledAt?: number;
   text: PostText;
   attempts: number;
   nextTryAt?: number;
@@ -156,6 +158,8 @@ export interface QueueSummary {
   nextPost?: { at: number; platforms: Platform[] };
   /** scheduled + posting */
   activeCount: number;
+  /** The latest clip auto-scheduling put on the schedule (the menu bar announces each new one). */
+  lastAuto?: { at: number; title: string };
 }
 
 /** A YouTube creator capy watches for new uploads (server/watch.ts owns these). */
@@ -220,6 +224,10 @@ export interface ContentReview {
   /** A better YouTube title, when the reviewer has one. */
   title?: string;
   at: number;
+  /** The reviewer couldn't run; the verdict is only a placeholder asking for a human look. */
+  unavailable?: boolean;
+  /** Each AI's own review when more than one looked (the fields above are then the combined result). */
+  opinions?: ({ by: AgentId } & Omit<ContentReview, "opinions">)[];
 }
 
 // ---------- YouTube SEO and the user's channel ----------
@@ -741,6 +749,8 @@ export interface AppSettings {
   postingAudience?: string;
   /** Stop the poster without touching the queue. */
   postingPaused?: boolean;
+  /** Schedule Monitor clips that pass every check without waiting for approval (on unless turned off). */
+  autoSchedule?: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {

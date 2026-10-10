@@ -198,6 +198,8 @@ export function approve(
     now: Date;
     override?: boolean;
     group?: string;
+    /** Auto-scheduling: no human decision is recorded; the automatic policy authorizes it instead. */
+    automatic?: boolean;
   },
 ): { entries: QueueEntry[]; scheduled: QueueEntry[] } {
   let out = [...entries];
@@ -226,6 +228,11 @@ export function approve(
     );
     const chosen = selected
       .map((e) => decide(e, !!o.override, o.now))
+      .map((e) =>
+        o.automatic
+          ? { ...e, publicationDecision: undefined, autoScheduledAt: o.now.getTime() }
+          : e,
+      )
       .filter((e) => eligibility(e).allowed);
     for (const e of mine)
       if (!selected.includes(e))
@@ -247,12 +254,13 @@ export function approve(
                 ...x,
                 publishPackage: e.publishPackage,
                 publicationDecision: e.publicationDecision,
+                autoScheduledAt: e.autoScheduledAt,
                 status: "scheduled",
                 slotAt: slot.getTime(),
                 attempts: 0,
                 error: undefined,
               },
-              `${o.override ? "Explicit human override approved" : "Approved"} for ${fmtIn(slot, o.audienceTz)}`,
+              `${o.automatic ? "Scheduled automatically (every check passed)" : o.override ? "Explicit human override approved" : "Approved"} for ${fmtIn(slot, o.audienceTz)}`,
               o.now,
             )
           : note(x, "No free slot in the next 14 days", o.now),
@@ -601,6 +609,12 @@ export function summary(entries: QueueEntry[], now: Date): QueueSummary {
       entries.filter((e) => e.status === "review").map((e) => queueGroup(e)),
     ).size,
     activeCount: active.length,
+    ...(() => {
+      const auto = entries
+        .filter((e) => e.autoScheduledAt)
+        .sort((a, b) => b.autoScheduledAt! - a.autoScheduledAt!)[0];
+      return auto ? { lastAuto: { at: auto.autoScheduledAt!, title: auto.clipTitle } } : {};
+    })(),
     nextPost: next
       ? {
           at: next.slotAt!,
@@ -721,6 +735,7 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
     thumbUrl: designed.thumbnailDesignUrl ?? e.thumbUrl,
     thumbAt: e.thumbAt,
     slotAt: e.slotAt,
+    autoScheduledAt: e.autoScheduledAt,
     nextTryAt: e.nextTryAt,
     authBlocked: e.authBlocked,
     result: e.result,

@@ -386,7 +386,9 @@ describe("automation jobs", () => {
         expect(watch().get().channels[0]!.history[0]!.status).toBe("rendered"),
       { timeout: 5000 },
     );
-    expect(reviewContent).toHaveBeenCalledTimes(1);
+    // Claude and Codex each review the clip
+    expect(reviewContent).toHaveBeenCalledTimes(2);
+    expect(reviewContent.mock.calls.map((c) => (c[1] as { agent: string }).agent).sort()).toEqual(["claude", "codex"]);
     expect(reviewContent.mock.calls[0]![0]).toMatchObject({
       clipTitle: "t1",
       transcript: expect.stringContaining("Olha"),

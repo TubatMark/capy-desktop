@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { askAgent } from "./agents";
+import type { AiTaskContext } from "../lib/ai-policy";
 import type { AgentId, ContentReview } from "../lib/types";
 
 /**
@@ -135,12 +136,46 @@ export function reviewUnavailable(reason: string, at: number): ContentReview {
     summary: `AI review unavailable: ${reason}. Check this clip yourself.`,
     issues: [],
     at,
+    unavailable: true,
+  };
+}
+
+/**
+ * Two AIs' reviews as one, by the owner's rule: OK when at least one reviewer that ran says OK and none says block;
+ * any block blocks. Issues from both stay visible either way.
+ */
+export function combineReviews(
+  reviews: { by: AgentId; review: ContentReview }[],
+): ContentReview {
+  const ran = reviews.filter((r) => !r.review.unavailable);
+  const first = ran[0]?.review ?? reviews[0]!.review;
+  const verdict: ContentReview["verdict"] = ran.some(
+    (r) => r.review.verdict === "block",
+  )
+    ? "block"
+    : ran.some((r) => r.review.verdict === "ok")
+      ? "ok"
+      : "caution";
+  const lead = ran.find((r) => r.review.verdict === verdict)?.review ?? first;
+  const seen = new Set<string>();
+  return {
+    verdict,
+    summary: lead.summary,
+    issues: ran
+      .flatMap((r) => r.review.issues)
+      .filter((i) => !seen.has(i.note) && !!seen.add(i.note)),
+    ...(ran.find((r) => r.review.title)?.review.title
+      ? { title: ran.find((r) => r.review.title)!.review.title }
+      : {}),
+    at: Math.max(...reviews.map((r) => r.review.at)),
+    ...(ran.length ? {} : { unavailable: true }),
+    opinions: reviews.map((r) => ({ by: r.by, ...r.review })),
   };
 }
 
 export async function reviewContent(
   i: ContentInput,
-  o: { agent: AgentId; model?: string },
+  o: { agent: AgentId; model?: string; context?: AiTaskContext },
 ): Promise<ContentReview> {
   const { $schema: _d, ...schema } = z.toJSONSchema(Schema, {
     target: "draft-7",
@@ -149,6 +184,7 @@ export async function reviewContent(
     const res = await askAgent(o.agent, buildContentPrompt(i), {
       task: "review",
       model: o.model,
+      ...(o.context ? { context: o.context } : {}),
       maxTurns: 2,
       effort: "low",
       // a hung call must not hold up the render line

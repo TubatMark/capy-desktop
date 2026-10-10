@@ -9,6 +9,9 @@ const TONE: Record<ContentReview["verdict"], { label: string; cls: string }> = {
   block: { label: "AI review: don't post as is", cls: "border-red-500/40 bg-red-500/10 text-red-800" },
 };
 
+const VERDICT: Record<ContentReview["verdict"], string> = { ok: "looks good", caution: "check this", block: "don't post" };
+const AGENT_NAME: Record<string, string> = { claude: "Claude", codex: "Codex" };
+
 /** The AI content reviewer's verdict on a finished clip; `onUseTitle` offers its suggested YouTube title. */
 export function AiReview({ review, onUseTitle }: { review: ContentReview; onUseTitle?: (title: string) => Promise<void> }) {
   const [used, setUsed] = useState(false);
@@ -20,6 +23,16 @@ export function AiReview({ review, onUseTitle }: { review: ContentReview; onUseT
         <Bot className="size-4 shrink-0" /> {t.label}
       </p>
       {review.summary && <p className="text-pretty">{review.summary}</p>}
+      {review.opinions && review.opinions.length > 1 && (
+        <ul className="space-y-0.5 text-xs">
+          {review.opinions.map((o) => (
+            <li key={o.by}>
+              <span className="font-medium">{AGENT_NAME[o.by] ?? o.by}:</span>{" "}
+              {o.unavailable ? "couldn't review this one" : `${VERDICT[o.verdict]}. ${o.summary}`}
+            </li>
+          ))}
+        </ul>
+      )}
       {review.issues.length > 0 && (
         <ul className="list-disc space-y-0.5 pl-5 text-xs">
           {review.issues.map((i, k) => (

@@ -7,6 +7,7 @@ export interface TraySummary {
   nextPost?: { at: number; platforms: TrayPlatform[] };
   /** Creators automation watches. */
   watching?: number;
+  lastAuto?: { at: number; title: string };
 }
 export interface TrayItem {
   label: string;

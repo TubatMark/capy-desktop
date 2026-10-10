@@ -61,7 +61,7 @@ test("saves channel options, separate pause controls, bounded policy and locked 
   await page.goto("/automation");
   await page.getByText("Behind the scenes", { exact: true }).click();
   const dashboard = page.getByRole("region", { name: "Behind the scenes" });
-  await expect(dashboard).toContainText("Automatic posting is off");
+  await expect(dashboard).toContainText("pass every check are scheduled on their own");
   await dashboard
     .getByRole("button", { name: "Pause making clips", exact: true })
     .click();
@@ -111,7 +111,7 @@ test("saves channel options, separate pause controls, bounded policy and locked 
   await page.getByText("Behind the scenes", { exact: true }).click();
   await expect(
     page.getByRole("region", { name: "Behind the scenes" }),
-  ).toContainText("Automatic posting is off");
+  ).toContainText("pass every check are scheduled on their own");
   await page.screenshot({
     path: path.join(root, "automation-policy.png"),
     fullPage: true,

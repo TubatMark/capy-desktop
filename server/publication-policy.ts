@@ -19,6 +19,7 @@ import {
 } from "../lib/publication";
 import type { QueueEntry, Platform } from "../lib/types";
 import { loadAccounts } from "./accounts";
+import { effective } from "./settings";
 export { evaluatePublication } from "../lib/publication";
 export const PUBLICATION_POLICY_VERSION = "publication-v2";
 /** Stable manifest encoding ignores object key order; array order remains meaningful. */
@@ -146,6 +147,12 @@ export function publicationContext(
       PUBLICATION_POLICY_VERSION,
     ),
     approval: e.publicationDecision,
+    // Auto-scheduled posts are authorized by the owner's auto-schedule setting while it stays on; turning it off
+    // holds back what it already scheduled too. evaluatePublication still requires an "ok" review for these.
+    automaticPolicy:
+      e.autoScheduledAt && pkg && effective().autoSchedule
+        ? { enabled: true, policyVersion: pkg.policyVersion, accountId: pkg.accountId }
+        : undefined,
     packageHash: packageDigest(snapshot),
   };
 }

@@ -59,7 +59,13 @@ export const DEFAULT_AI_ROUTING: AiRoutingSettings = {
   maxDayRequests: 40,
   maxDayTokens: 500000,
   retryLimit: 1,
-  tasks: {},
+  // The owner's split: Claude writes (with Codex stepping in if it fails), Codex summarizes numbers. Content review and
+  // similar clips ask both on their own. Picking moments keeps the model chosen in Settings, so it has no route here.
+  tasks: {
+    metadata: { agent: "claude", premium: false, escalation: { agent: "codex", model: "gpt-6-luna" } },
+    translation: { agent: "claude", premium: false, escalation: { agent: "codex", model: "gpt-6-luna" } },
+    "performance-summary": { agent: "codex", premium: false },
+  },
 };
 /** These are transport capabilities, independent of the provider's model marketing. */
 export const AI_ADAPTER_CAPABILITIES: Record<

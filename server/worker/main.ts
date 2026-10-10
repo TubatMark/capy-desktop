@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { runtimeStore } from "../db/runtime";
 import { OUTPUT_ROOT } from "../paths";
 import { tick } from "../poster";
+import { maybeAutoSchedule } from "../auto-schedule";
 import { watcherTick } from "../watcher";
 import { registerThumbnailWorkers } from "../thumbnails";
 import { registerStudioWorkers } from "../studio/worker-adapters";
@@ -88,6 +89,8 @@ export async function workerOnce(
       }).catch(() => {});
     // "Similar clips": a cheap pre-pass; AI work is queued only when a compared set changed
     await maybeSweepSimilarity();
+    // clips that pass every check go to the schedule without waiting for approval (owner's setting)
+    await maybeAutoSchedule();
   }
   const lease = await q.claim(owner);
   if (!lease) return false;

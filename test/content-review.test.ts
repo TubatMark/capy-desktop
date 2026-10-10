@@ -20,7 +20,7 @@ describe("normalizeContentReview", () => {
 
 describe("reviewUnavailable", () => {
   it("is a caution that says why, never a block", () => {
-    expect(reviewUnavailable("timeout", 3)).toEqual({ verdict: "caution", summary: "AI review unavailable: timeout. Check this clip yourself.", issues: [], at: 3 });
+    expect(reviewUnavailable("timeout", 3)).toEqual({ verdict: "caution", summary: "AI review unavailable: timeout. Check this clip yourself.", issues: [], at: 3, unavailable: true });
   });
 });
 

@@ -6,7 +6,8 @@ import { DEFAULT_CREATOR_POLICY } from "../lib/creator-policy";
 import type { QueueEntry } from "../lib/types";
 import { runtimeStore } from "../server/db/runtime";
 import { saveCreatorPolicy } from "../server/automation-policy";
-import { resetSettingsCache } from "../server/settings";
+import { resetSettingsCache, saveSettings } from "../server/settings";
+import { queueGroup } from "../lib/queue-source";
 import { publicationFixture } from "./publication-fixtures";
 import {
   buildPublishPackage,
@@ -17,7 +18,7 @@ import {
   hashManifest,
   PUBLICATION_POLICY_VERSION,
 } from "../server/publication-policy";
-import { queue, resetQueueCache } from "../server/queue";
+import { approve, queue, resetQueueCache } from "../server/queue";
 import { tick } from "../server/poster";
 import type { PostJob } from "../server/platforms/types";
 import {
@@ -259,4 +260,34 @@ it("source-frame fallback blocks filename-only thumbnails through the shared gat
   );
   expect(await upload(approved, files)).toEqual([]);
   expect(queue().list()[0]!.status).toBe("review");
+});
+it("auto-scheduling: a clip with an OK review is scheduled without a human decision, only while the owner's switch is on", async () => {
+  const { e } = fixture("none");
+  const review = { verdict: "ok" as const, summary: "Fine", issues: [], at: 1 };
+  const waiting = { ...e, aiReview: review };
+  const { entries, scheduled } = approve([waiting], "", undefined, {
+    group: queueGroup(waiting),
+    automatic: true,
+    audienceTz: "UTC",
+    now: new Date(),
+  });
+  expect(scheduled).toHaveLength(1);
+  const s = entries[0]!;
+  expect(s).toMatchObject({ status: "scheduled" });
+  expect(s.publicationDecision).toBeUndefined();
+  expect(s.autoScheduledAt).toBeTypeOf("number");
+  expect(s.history.at(-1)?.msg).toMatch(/Scheduled automatically/);
+  expect(eligibility(s).allowed).toBe(true);
+  // turning the switch off holds back what it already scheduled
+  saveSettings({ autoSchedule: false });
+  expect(eligibility(s).reasons).toContain("Publication decision missing or stale");
+  saveSettings({ autoSchedule: true });
+  // without an OK review the automatic path never authorizes
+  const caution = approve([{ ...e, aiReview: { ...review, verdict: "caution" as const } }], "", undefined, {
+    group: queueGroup(e),
+    automatic: true,
+    audienceTz: "UTC",
+    now: new Date(),
+  });
+  expect(caution.scheduled).toHaveLength(0);
 });

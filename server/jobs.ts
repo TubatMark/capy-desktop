@@ -71,7 +71,13 @@ import { onRendered } from "./poster";
 import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
 
-import { reviewContent, reviewUnavailable } from "../src/content-review";
+import {
+  combineReviews,
+  reviewContent,
+  reviewUnavailable,
+  type ContentInput,
+} from "../src/content-review";
+import { routingFor } from "./similarity";
 import { tuneSeo } from "./seo";
 import { scoreSeo } from "../src/seo/score";
 import { cleanCaptionWords } from "../src/ass";
@@ -2133,21 +2139,32 @@ class JobManager extends EventEmitter {
     const translated =
       c.captionsTranslated === true && this.needsTranslation(job);
     const { agent, model } = await this.ai(job);
-    return reviewContent(
-      {
-        videoTitle: job.title ?? "",
-        channel: job.channel,
-        clipTitle: c.title,
-        hook: c.hook,
-        transcript: text(captionWords),
-        original: translated ? text(await this.getWords(job)) : undefined,
-        sourceLang: translated ? job.sourceLang : undefined,
-        ytTitle: c.publish?.ytTitle,
-        caption: c.publish?.description,
-        hashtags: c.publish?.hashtags,
-      },
-      { agent, model },
-    );
+    const input: ContentInput = {
+      videoTitle: job.title ?? "",
+      channel: job.channel,
+      clipTitle: c.title,
+      hook: c.hook,
+      transcript: text(captionWords),
+      original: translated ? text(await this.getWords(job)) : undefined,
+      sourceLang: translated ? job.sourceLang : undefined,
+      ytTitle: c.publish?.ytTitle,
+      caption: c.publish?.description,
+      hashtags: c.publish?.hashtags,
+    };
+    // Claude and Codex each review on their own (the owner wants both); the routing override makes the second
+    // really be the other AI. Either one failing leaves the other's review standing.
+    const second = agent === "codex" ? "claude" : "codex";
+    const [main, other] = await Promise.all([
+      reviewContent(input, { agent, model }),
+      reviewContent(input, {
+        agent: second,
+        context: { settings: routingFor(second) },
+      }),
+    ]);
+    return combineReviews([
+      { by: agent, review: main },
+      { by: second, review: other },
+    ]);
   }
 }
 

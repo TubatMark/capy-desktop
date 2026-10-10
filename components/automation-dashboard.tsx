@@ -123,8 +123,9 @@ export function AutomationDashboard({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Automatic posting is off for now: every clip waits in Queue for your
-          OK.
+          Clips that pass every check are scheduled on their own while that
+          switch is on; everything else waits in Queue for your OK. Nothing
+          posts before its time slot.
         </p>
         <div className="text-xs">
           {health.accounts.map((a) => (
