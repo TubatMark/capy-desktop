@@ -287,6 +287,26 @@
   }
 }
 
+/* Queue post details: a sheet from the right edge (components/queue/post-detail.tsx) */
+.sheet-in[data-state="open"] {
+  animation: sheet-in 320ms var(--ease-out-expo);
+}
+.sheet-fade[data-state="open"] {
+  animation: fade-in 200ms ease-out;
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-in,
+  .sheet-fade {
+    animation: none !important;
+  }
+}
+
 /* ---- Desktop shell (Electron sets data-desktop on <html>; see app/layout.tsx) ---- */
 /* The sidebar top (or the narrow-window top bar) is the title bar: draggable, with room for the macOS traffic lights. */
 html[data-desktop] {
