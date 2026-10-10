@@ -8,6 +8,10 @@ import { tick } from "../poster";
 import { watcherTick } from "../watcher";
 import { registerThumbnailWorkers } from "../thumbnails";
 import { registerStudioWorkers } from "../studio/worker-adapters";
+import {
+  maybeSweepSimilarity,
+  registerSimilarityWorkers,
+} from "../similarity";
 import { enqueueWork, workQueue } from "./api";
 import { registerWork, stagesFor } from "./registry";
 import { registerMediaWorkers } from "./media";
@@ -19,6 +23,7 @@ export function registerWorkers() {
   registerMediaWorkers();
   registerStudioWorkers();
   registerThumbnailWorkers();
+  registerSimilarityWorkers();
   registerWork("poster", () => [
     {
       name: "posting",
@@ -81,6 +86,8 @@ export async function workerOnce(
         inputRevision: bucket,
         payload: {},
       }).catch(() => {});
+    // "Similar clips": a cheap pre-pass; AI work is queued only when a compared set changed
+    await maybeSweepSimilarity();
   }
   const lease = await q.claim(owner);
   if (!lease) return false;

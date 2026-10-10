@@ -1,8 +1,8 @@
 "use client";
-import { queueGroup, queueCollection } from "@/lib/queue-source";
+import { queueGroup, queueCollection, queueLink } from "@/lib/queue-source";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ListChecks, Loader2 } from "lucide-react";
+import { Copy, ListChecks, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReviewCard } from "@/components/review-card";
 import { QueueCalendar } from "@/components/queue/queue-calendar";
@@ -12,6 +12,7 @@ import { api } from "@/hooks/use-job";
 import { useQueue } from "@/hooks/use-queue";
 import { usePostResults, useSourceChannels } from "@/hooks/use-post-results";
 import { bucketByDay, dayKey, nearestDay } from "@/lib/queue-calendar";
+import { nearDuplicateClusters } from "@/lib/similarity";
 import type { QueueEntry } from "@/lib/types";
 
 const group = <T,>(xs: T[], key: (x: T) => string) => {
@@ -54,6 +55,21 @@ export function QueueView() {
       ),
     [data],
   );
+  const clips = useMemo(
+    () => group(data?.entries ?? [], (e) => queueGroup(e)),
+    [data],
+  );
+  // waiting clips the AIs called near-duplicates of each other
+  const dupes = useMemo(
+    () =>
+      nearDuplicateClusters(
+        [...review.entries()].map(([id, es]) => ({
+          id,
+          similarity: es.find((e) => e.similarity)?.similarity,
+        })),
+      ),
+    [review],
+  );
   const byVideo = useMemo(
     () =>
       group(
@@ -78,6 +94,23 @@ export function QueueView() {
         : [],
     [data, open],
   );
+
+  /** A linked similar clip: scroll to its review card, or open its post. */
+  const openClip = (id: string) => {
+    const es = clips.get(id) ?? [];
+    if (es.some((e) => e.status === "review")) {
+      setOpen(null);
+      const el = document.getElementById(`review-${id}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      el?.animate?.(
+        [{ boxShadow: "0 0 0 3px var(--primary)" }, { boxShadow: "0 0 0 0 transparent" }],
+        { duration: 1600, easing: "ease-out" },
+      );
+      return;
+    }
+    if (es.some((e) => e.status !== "rejected")) setOpen(id);
+    else if (es[0]) window.location.assign(queueLink(es[0]));
+  };
 
   const done = (msg?: string) => {
     if (msg) {
@@ -134,6 +167,45 @@ export function QueueView() {
         <h2 className="text-lg font-semibold">
           Waiting for your OK ({review.size})
         </h2>
+        {dupes.map((ids) => {
+          const firsts = ids.map((id) => review.get(id)![0]!);
+          const rec = ids
+            .map((id) => review.get(id)!.find((e) => e.similarity)?.similarity)
+            .flatMap((x) => x?.opinions ?? [])
+            .find((o) => o.level === "near-duplicate")?.recommendation;
+          return (
+            <div
+              key={ids.join("|")}
+              role="note"
+              className="space-y-1 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-950"
+            >
+              <p className="flex items-center gap-1.5 font-medium">
+                <Copy className="size-4 shrink-0" /> {ids.length} clips
+                waiting look nearly the same
+              </p>
+              <p className="text-pretty">
+                {firsts.map((f, i) => (
+                  <span key={queueGroup(f)}>
+                    {i > 0 && (i === firsts.length - 1 ? " and " : ", ")}
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() => openClip(queueGroup(f))}
+                    >
+                      “{f.clipTitle}”
+                    </button>
+                  </span>
+                ))}
+                . Posting all of them makes the channel look repetitive.
+              </p>
+              {rec && (
+                <p className="text-pretty">
+                  <span className="font-medium">AI recommends:</span> {rec}
+                </p>
+              )}
+            </div>
+          );
+        })}
         {review.size === 0 && (
           <p className="text-sm text-muted-foreground">
             Nothing to review. Render clips and they show up here (with
@@ -194,6 +266,8 @@ export function QueueView() {
                 nextFree={data.nextFree}
                 tz={tz}
                 onDone={done}
+                clips={clips}
+                onOpenClip={openClip}
               />
             ))}
           </div>
@@ -254,6 +328,8 @@ export function QueueView() {
           schedulingVerified={schedulingVerified(openEntries)}
           onChange={done}
           onClose={() => setOpen(null)}
+          clips={clips}
+          onOpenClip={openClip}
         />
       )}
     </div>

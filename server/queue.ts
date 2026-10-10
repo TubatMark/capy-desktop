@@ -4,6 +4,7 @@ import {
   updateDelivery,
 } from "./delivery-store";
 import { queueGroup } from "../lib/queue-source";
+import { SIMILARITY_STORE, type ClipSimilarity } from "../lib/similarity";
 import { legacyState, mutateLegacy, runtimeStore } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
 import { allocateSlot, fmtIn } from "../lib/post-time";
@@ -707,6 +708,10 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
     aiReview: e.aiReview,
+    similarity: runtimeStore().get<ClipSimilarity>(
+      SIMILARITY_STORE,
+      queueGroup(e),
+    )?.value,
     seo: e.seo,
     fp: e.fp,
     madeForKids: e.madeForKids,

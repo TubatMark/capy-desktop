@@ -11,12 +11,28 @@ import { PLATFORM_NAME } from "@/components/accounts-panel";
 import { AiReview } from "@/components/ai-review";
 import { SeoScore } from "@/components/seo-score";
 import { ThumbnailChoices } from "@/components/queue/thumbnail-choices";
+import { SimilarClips } from "@/components/queue/similar-clips";
 import { api } from "@/hooks/use-job";
 import { fmtSlot } from "@/hooks/use-queue";
 import type { Platform, PostText, QueueEntry } from "@/lib/types";
 
 /** One rendered clip waiting for the user's OK: watch it, pick platforms, tweak the text, approve or reject. */
-export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEntry[]; nextFree?: number; tz: string; onDone: (msg?: string) => void }) {
+export function ReviewCard({
+  entries,
+  nextFree,
+  tz,
+  onDone,
+  clips,
+  onOpenClip,
+}: {
+  entries: QueueEntry[];
+  nextFree?: number;
+  tz: string;
+  onDone: (msg?: string) => void;
+  /** Live queue entries by queue group (for the similar clips' state and picture). */
+  clips?: Map<string, QueueEntry[]>;
+  onOpenClip?: (id: string) => void;
+}) {
   const first = entries[0]!;
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(entries.map((e) => [e.platform, true])));
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
@@ -26,6 +42,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
   const aiReview = entries.find((e) => e.aiReview)?.aiReview;
   const seo = entries.find((e) => e.seo)?.seo;
   const youtube = entries.find((e) => e.platform === "youtube");
+  const similarity = entries.find((e) => e.similarity)?.similarity;
 
   async function approve() {
     if (aiReview?.verdict === "block" && !window.confirm("The AI reviewer flagged this clip as not safe to post as is. Post it anyway?")) return;
@@ -52,7 +69,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
   }
 
   return (
-    <div className="grid gap-4 rounded-xl border bg-card p-4 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
+    <div id={`review-${queueGroup(first)}`} className="grid scroll-mt-4 gap-4 rounded-xl border bg-card p-4 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
       <video src={first.videoUrl} poster={first.thumbUrl} controls preload="metadata" className="aspect-[9/16] w-full max-w-[200px] rounded-lg bg-black object-contain" />
       <div className="min-w-0 space-y-3">
         <div>
@@ -76,6 +93,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
             }
           />
         )}
+        {similarity && <SimilarClips similarity={similarity} recheckKey={first.key} clips={clips} onOpen={onOpenClip} onChange={onDone} />}
         {entries.map((e) => (
           // remount when the entry changes on the server (e.g. "Use it" on the AI title) so the fields show it
           <PlatformText key={`${e.key}:${e.updatedAt}`} entry={e} enabled={on[e.platform] ?? false} onToggle={(v) => setOn((s) => ({ ...s, [e.platform]: v }))} />

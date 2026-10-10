@@ -392,6 +392,8 @@ export function admissionReasons(job: {
   const s = loadSettings(),
     c = s.automationControls ?? DEFAULT_CONTROLS;
   if (c.globalStop) return ["Global stop: future worker stages are stopped"];
+  // comparing queue clips is a small text-only AI task, not media work
+  if (job.kind === "similarity") return [];
   if (job.kind === "watcher")
     return c.monitorPaused ? ["Creator monitoring is paused"] : [];
   if (job.kind === "poster")

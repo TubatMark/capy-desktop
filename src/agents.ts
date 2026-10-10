@@ -14,6 +14,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -362,6 +363,8 @@ function searchDirs(): string[] {
     path.join(home, ".opencode/bin"),
     path.join(home, ".factory/bin"),
     path.join(home, ".cargo/bin"),
+    // npm -g under nvm (codex is often installed this way); newest Node first
+    ...nvmBins(home),
     path.dirname(process.execPath),
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -372,6 +375,16 @@ function searchDirs(): string[] {
       ...extra,
     ]),
   ];
+}
+
+function nvmBins(home: string): string[] {
+  try {
+    return readdirSync(path.join(home, ".nvm/versions/node"))
+      .sort((x, y) => y.localeCompare(x, undefined, { numeric: true }))
+      .map((v) => path.join(home, ".nvm/versions/node", v, "bin"));
+  } catch {
+    return [];
+  }
 }
 
 /** PATH for child processes: node-based CLIs need `node` next to them. */
