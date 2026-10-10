@@ -32,20 +32,20 @@ export function autoScheduleBlockers(
   if (!similarity || similarity.checking !== undefined || !similarity.checkedAt)
     out.push("The similar-clips check hasn't finished");
   else if (!similarClear(similarity))
-    out.push("It looks like another of your clips");
+    out.push("An AI says it's a near-copy of another of your clips");
   const yt = entries.find((e) => e.platform === "youtube");
   if (yt && !yt.publishPackage?.thumbnail?.designId)
     out.push("No designed thumbnail is attached yet");
   return out;
 }
 
-/** Nothing close, or an AI judged it distinct and none called it a near-duplicate. */
+/**
+ * Not a near-copy: the check ran (or nothing was close) and no AI called it a near-duplicate. "Similar" is fine:
+ * clips of the same upload already go out on different days.
+ */
 export function similarClear(s: ClipSimilarity): boolean {
-  if (s.verdict.level === "distinct") return true;
-  return (
-    s.opinions.some((o) => o.level === "distinct") &&
-    !s.opinions.some((o) => o.level === "near-duplicate")
-  );
+  if (s.verdict.level === "unchecked") return false;
+  return s.verdict.level !== "near-duplicate" && !s.opinions.some((o) => o.level === "near-duplicate");
 }
 
 const automated = (e: QueueEntry) =>

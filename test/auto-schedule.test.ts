@@ -45,9 +45,11 @@ const op = (by: "claude" | "codex", level: "distinct" | "similar" | "near-duplic
   recommendation: "r",
 });
 
-it("similar clips: clear when nothing is close or one AI says distinct and none says near-copy", () => {
+it("similar clips: clear unless an AI calls it a near-copy (or no AI could check)", () => {
   expect(similarClear(sim({}))).toBe(true);
   expect(similarClear(sim({ verdict: { level: "similar", agreement: "differ", similarTo: [] }, opinions: [op("claude", "distinct"), op("codex", "similar")] }))).toBe(true);
+  // both say "similar" (different moments of one stream): still fine, they go out on different days
+  expect(similarClear(sim({ verdict: { level: "similar", agreement: "agree", similarTo: [] }, opinions: [op("claude", "similar"), op("codex", "similar")] }))).toBe(true);
   expect(similarClear(sim({ verdict: { level: "near-duplicate", agreement: "differ", similarTo: [] }, opinions: [op("claude", "distinct"), op("codex", "near-duplicate")] }))).toBe(false);
   expect(similarClear(sim({ verdict: { level: "unchecked", agreement: "none", similarTo: [] } }))).toBe(false);
 });
