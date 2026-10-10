@@ -41,6 +41,7 @@ import {
   noResultsReason,
 } from "./post-bits";
 import { sourceLine } from "./day-posts";
+import { ThumbnailChoices } from "./thumbnail-choices";
 
 const THUMB_WORDS: Record<string, string> = {
   "not-requested": "not sent",
@@ -187,6 +188,12 @@ export function PostDetail({
                 </div>
               </div>
             </div>
+
+            {entries.some((e) => e.thumbnailOptions?.length) && (
+              <Section title="Thumbnail">
+                <ThumbnailChoices entries={entries} onChange={onChange} />
+              </Section>
+            )}
 
             <Actions
               entries={entries}

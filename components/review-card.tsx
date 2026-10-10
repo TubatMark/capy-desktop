@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PLATFORM_NAME } from "@/components/accounts-panel";
 import { AiReview } from "@/components/ai-review";
 import { SeoScore } from "@/components/seo-score";
+import { ThumbnailChoices } from "@/components/queue/thumbnail-choices";
 import { api } from "@/hooks/use-job";
 import { fmtSlot } from "@/hooks/use-queue";
 import type { Platform, PostText, QueueEntry } from "@/lib/types";
@@ -60,6 +61,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
           </Link>
           {first.madeForKids && <span className="ml-2 inline-block rounded-md bg-sky-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-800">Made for kids</span>}
         </div>
+        <ThumbnailChoices entries={entries} onChange={onDone} />
         {seo && <SeoScore seo={seo} />}
         {aiReview && (
           <AiReview
