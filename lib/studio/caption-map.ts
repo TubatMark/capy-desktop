@@ -20,10 +20,12 @@ export function mapCaptionCues(
     )
       continue;
     const usedStart = sourceTimeUs(item, item.startFrame, doc);
-    const usedEnd = Math.min(
-      item.sourceOutUs!,
-      sourceTimeUs(item, item.startFrame + item.durationFrames, doc),
-    );
+    const usedEnd = item.freeze
+      ? usedStart + 1
+      : Math.min(
+          item.sourceOutUs!,
+          sourceTimeUs(item, item.startFrame + item.durationFrames, doc),
+        );
     const source = words.find((w) => w.assetId === item.assetId);
     for (const word of source?.words ?? []) {
       if (word.endUs <= usedStart || word.startUs >= usedEnd) continue;
@@ -32,15 +34,19 @@ export function mapCaptionCues(
       const mappedStart =
         item.startFrame +
         Math.round(
-          ((Math.max(word.startUs, usedStart) - usedStart) * fps) / 1000000,
+          ((Math.max(word.startUs, usedStart) - usedStart) * fps) /
+            (1000000 * item.speed),
         );
-      const mappedEnd = Math.min(
-        item.startFrame + item.durationFrames,
-        item.startFrame +
-          Math.round(
-            ((Math.min(word.endUs, usedEnd) - usedStart) * fps) / 1000000,
-          ),
-      );
+      const mappedEnd = item.freeze
+        ? item.startFrame + item.durationFrames
+        : Math.min(
+            item.startFrame + item.durationFrames,
+            item.startFrame +
+              Math.round(
+                ((Math.min(word.endUs, usedEnd) - usedStart) * fps) /
+                  (1000000 * item.speed),
+              ),
+          );
       const startFrame = Math.max(
         item.startFrame,
         Math.min(

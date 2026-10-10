@@ -28,8 +28,10 @@ function LayerMedia({
     const desired = sourceTimeUs(item, frame, document) / 1000000;
     if (Math.abs(video.currentTime - desired) > 0.05)
       video.currentTime = desired;
-    if (playing && video.paused) void video.play().catch(() => {});
-    else if (!playing) video.pause();
+    video.playbackRate = item.speed;
+    if (playing && !item.freeze && video.paused)
+      void video.play().catch(() => {});
+    else if (!playing || item.freeze) video.pause();
   }, [item, document, frame, playing]);
   const style = { objectFit: item.fit ?? "contain" } as const;
   return asset.kind === "image" ? (
@@ -93,7 +95,7 @@ export function LayerPreview({
           className="absolute inset-0"
           style={{
             opacity: progress,
-            transform: visualTransform(next, document.canvas),
+            transform: visualTransform(next, document.canvas, frame),
           }}
         >
           <LayerMedia
@@ -114,7 +116,7 @@ export function LayerPreview({
             className="absolute inset-0 flex items-center justify-center"
             style={{
               opacity: item.opacity ?? 1,
-              transform: visualTransform(item, document.canvas),
+              transform: visualTransform(item, document.canvas, frame),
             }}
           >
             {item.text ? (

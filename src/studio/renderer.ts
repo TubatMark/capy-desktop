@@ -55,7 +55,7 @@ export function compileProject(project: ProjectDocument, assets: AssetRef[]): Re
   const resolved: RenderPlan["assets"] = []; let end = 0;
   const clips = items.map(item => {
     if (!project.tracks.some(t => t.id === item.trackId && t.kind === "video")) reject("unknown video track");
-    if (item.speed !== 1 || item.transform || item.text || item.gain !== undefined || item.fadeInFrames || item.fadeOutFrames) reject("speed/transforms/text/audio envelopes");
+    if (item.speed !== 1 || item.freeze || item.keyframes || item.template || item.transform || item.text || item.gain !== undefined || item.fadeInFrames || item.fadeOutFrames) reject("speed/transforms/text/audio envelopes");
     if (item.startFrame !== end || !positive(item.durationFrames)) reject("gaps/overlaps or invalid duration");
     const asset = assets.find(a => a.id === item.assetId);
     if (!asset || asset.kind !== "video" || asset.status !== "ready" || !path.isAbsolute(asset.location) || !existsSync(asset.location)) reject("missing local video asset");

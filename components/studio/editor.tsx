@@ -25,6 +25,9 @@ import { AudioPanel } from "./audio-panel";
 import { CaptionsPanel } from "./captions-panel";
 import { sourceTimeUs } from "@/lib/studio/audio";
 import { ExportPanel } from "./export-panel";
+import { TemplateBrowser } from "./template-browser";
+import { KeyframePanel } from "./keyframe-panel";
+import { VoiceRecorder } from "./voice-recorder";
 import { LayersPanel } from "./layers-panel";
 import { AudioPreview } from "./audio-preview";
 import { LayerPreview } from "./layer-preview";
@@ -290,15 +293,18 @@ export function StudioEditor({ id }: { id: string }) {
   }, [selected, item?.durationFrames]);
   useEffect(() => {
     if (!active || !video.current) return;
-    const desired =
-      sourceTimeUs(active, frame, document!) / 1000000;
+    const desired = sourceTimeUs(active, frame, document!) / 1000000;
     if (Math.abs(video.current.currentTime - desired) > 0.075)
       video.current.currentTime = desired;
-    if (playing) void video.current.play().catch(() => setPlaying(false));
+    video.current.playbackRate = active.speed;
+    if (playing && !active.freeze)
+      void video.current.play().catch(() => setPlaying(false));
     else video.current.pause();
   }, [
     active?.id,
     active?.sourceInUs,
+    active?.speed,
+    active?.freeze,
     active?.startFrame,
     asset?.proxyUrl,
     asset?.mediaUrl,
@@ -587,7 +593,9 @@ export function StudioEditor({ id }: { id: string }) {
           className="min-w-0 rounded-xl border bg-card p-4"
           aria-label="Preview"
         >
-          <p className="mb-2 text-xs text-muted-foreground">Draft audition · render below for exact output</p>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Draft audition · render below for exact output
+          </p>
           <AudioPreview
             document={document}
             assets={assets}
@@ -609,7 +617,7 @@ export function StudioEditor({ id }: { id: string }) {
                   alt={asset.name ?? "Preview"}
                   className="h-full w-full object-contain"
                   style={{
-                    transform: visualTransform(active, document.canvas),
+                    transform: visualTransform(active, document.canvas, frame),
                   }}
                 />
               ) : (
@@ -619,7 +627,7 @@ export function StudioEditor({ id }: { id: string }) {
                   src={asset.proxyUrl ?? asset.mediaUrl}
                   className="h-full w-full object-contain"
                   style={{
-                    transform: visualTransform(active, document.canvas),
+                    transform: visualTransform(active, document.canvas, frame),
                   }}
                   muted
                   playsInline
@@ -849,7 +857,27 @@ export function StudioEditor({ id }: { id: string }) {
           onSelect={setSelected}
         />
       </div>
-      <ExportPanel document={document} saved={saveState === "saved"} item={item} onEdit={edit} />
+      <div className="grid items-start gap-5 lg:grid-cols-3">
+        <TemplateBrowser document={document} frame={frame} onEdit={edit} />
+        <KeyframePanel
+          document={document}
+          item={item}
+          asset={assets.find((a) => a.id === item?.assetId)}
+          frame={frame}
+          onEdit={edit}
+        />
+        <VoiceRecorder
+          onAccepted={(a) => {
+            setAssets((current) => [...current, a]);
+          }}
+        />
+      </div>
+      <ExportPanel
+        document={document}
+        saved={saveState === "saved"}
+        item={item}
+        onEdit={edit}
+      />
       <History
         entries={history}
         onRestore={(doc) => edit({ type: "restore", document: doc })}

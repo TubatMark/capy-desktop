@@ -67,6 +67,13 @@ export interface StudioTrack {
   muted?: boolean;
   solo?: boolean;
 }
+export interface TransformKeyframe {
+  frame: number;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+}
 export interface TimelineItem {
   id: string;
   trackId: string;
@@ -75,7 +82,15 @@ export interface TimelineItem {
   durationFrames: number;
   sourceInUs?: number;
   sourceOutUs?: number;
-  speed: 1;
+  speed: 0.5 | 1 | 2;
+  freeze?: { sourceUs: number; audioPolicy: "silence" };
+  keyframes?: TransformKeyframe[];
+  template?: {
+    id: "local-title";
+    version: 1;
+    instanceId: string;
+    font: "Arial";
+  };
   transform?: { x: number; y: number; scale: number; rotation: number };
   gain?: number;
   audioRole?: AudioRole;
@@ -125,6 +140,7 @@ export interface ProjectDocument {
   captionCues: CaptionCue[];
   sourceWords?: SourceWords[];
   safeArea?: { enabled: boolean; inset: number };
+  beatMarkers?: { frame: number; label: string }[];
   thumbnailIds: string[];
 }
 export interface ExportPreset {

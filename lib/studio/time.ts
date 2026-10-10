@@ -81,3 +81,12 @@ export function validExactUs(value: unknown): value is ExactUs {
     /^[1-9]\d{0,39}$/.test(exact.denominator)
   );
 }
+
+/** Scale exact clocks by a supported playback ratio, retaining fractional phase. */
+export function scaleUs(value: ExactUs, factor: number): ExactUs {
+  if (![0.5, 1, 2].includes(factor)) throw Error("Unsupported clock ratio");
+  return rational(
+    BigInt(value.numerator) * BigInt(factor === 2 ? 2 : 1),
+    BigInt(value.denominator) * BigInt(factor === 0.5 ? 2 : 1),
+  );
+}

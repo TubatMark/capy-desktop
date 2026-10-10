@@ -14,6 +14,7 @@ import {
   moduloUs,
   numberUs,
   subtractUs,
+  scaleUs,
 } from "../../lib/studio/time";
 export interface AudioSegment {
   /** Authoritative audio spans; derived frame/source numbers below may be fractional. */
@@ -28,6 +29,7 @@ export interface AudioSegment {
 }
 export interface AudioClipPlan {
   itemId: string;
+  speed: 0.5 | 1 | 2;
   assetId: string;
   role: string;
   enabled: boolean;
@@ -71,6 +73,7 @@ export function buildAudioPlan(
     const enabled =
       asset.status === "ready" &&
       !item.muted &&
+      !item.freeze &&
       !track?.muted &&
       (!solo || !!item.solo || !!track?.solo);
     const span = integerUs(item.sourceOutUs! - item.sourceInUs!);
@@ -83,9 +86,12 @@ export function buildAudioPlan(
     while (compareUs(elapsed, total) < 0) {
       const available = subtractUs(span, offset);
       if (compareUs(available, integerUs(0)) <= 0) break;
-      const count = minimumUs(subtractUs(total, elapsed), available);
+      const count = minimumUs(
+        subtractUs(total, elapsed),
+        scaleUs(available, 1 / item.speed),
+      );
       const sourceStartUs = addUs(integerUs(item.sourceInUs!), offset);
-      const sourceEndUs = addUs(sourceStartUs, count),
+      const sourceEndUs = addUs(sourceStartUs, scaleUs(count, item.speed)),
         timelineStartUs = addUs(start, elapsed);
       segments.push({
         timelineStartUs,
@@ -101,6 +107,54 @@ export function buildAudioPlan(
       offset = integerUs(0);
       if (!item.loop) break;
     }
+    if (item.speed !== 1) {
+      // Source-word boundaries are semantic timing anchors. Pitch stretching
+      // each bounded span keeps WSOLA's content-dependent latency from moving
+      // a spoken word into the preceding silence or the next caption.
+      const words =
+        doc.sourceWords?.find((s) => s.assetId === item.assetId)?.words ?? [];
+      const anchored = segments.flatMap((segment) => {
+        const edges = [
+          segment.sourceStartUs,
+          ...words
+            .flatMap((w) => [integerUs(w.startUs), integerUs(w.endUs)])
+            .filter(
+              (t) =>
+                compareUs(t, segment.sourceStartUs) > 0 &&
+                compareUs(t, segment.sourceEndUs) < 0,
+            ),
+          segment.sourceEndUs,
+        ].sort(compareUs);
+        return edges.slice(0, -1).flatMap((sourceStartUs, index) => {
+          const sourceEndUs = edges[index + 1]!;
+          if (compareUs(sourceStartUs, sourceEndUs) === 0) return [];
+          const timelineStartUs = addUs(
+            segment.timelineStartUs,
+            scaleUs(
+              subtractUs(sourceStartUs, segment.sourceStartUs),
+              1 / item.speed,
+            ),
+          );
+          const durationUs = scaleUs(
+            subtractUs(sourceEndUs, sourceStartUs),
+            1 / item.speed,
+          );
+          return [
+            {
+              timelineStartUs,
+              durationUs,
+              sourceStartUs,
+              sourceEndUs,
+              startFrame: (numberUs(timelineStartUs) * fps) / 1e6,
+              durationFrames: (numberUs(durationUs) * fps) / 1e6,
+              sourceInUs: numberUs(sourceStartUs),
+              sourceOutUs: numberUs(sourceEndUs),
+            },
+          ];
+        });
+      });
+      segments.splice(0, segments.length, ...anchored);
+    }
     const video = item.linkedVideoId
       ? doc.items.find((v) => v.id === item.linkedVideoId)
       : item;
@@ -115,6 +169,7 @@ export function buildAudioPlan(
       : undefined;
     clips.push({
       itemId: item.id,
+      speed: item.speed,
       assetId: asset.id,
       role: audioRole(doc, item),
       enabled,
@@ -233,6 +288,9 @@ export function audioSourceAtTime(
       compareUs(time, addUs(segment.timelineStartUs, segment.durationUs)) < 0,
   );
   return segment
-    ? addUs(segment.sourceStartUs, subtractUs(time, segment.timelineStartUs))
+    ? addUs(
+        segment.sourceStartUs,
+        scaleUs(subtractUs(time, segment.timelineStartUs), clip.speed),
+      )
     : undefined;
 }

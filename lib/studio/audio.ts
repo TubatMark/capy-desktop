@@ -13,6 +13,7 @@ import {
   numberUs,
   subtractUs,
   floorUs,
+  scaleUs,
 } from "./time";
 export const DEFAULT_DUCKING: DuckingSettings = {
   enabled: true,
@@ -54,7 +55,11 @@ export function sourceFrameTimeUs(
   frame: number,
   doc: Pick<ProjectDocument, "fps">,
 ): ExactUs {
-  const elapsed = frameTimeUs(Math.max(0, frame - item.startFrame), doc);
+  if (item.freeze) return integerUs(item.freeze.sourceUs);
+  const elapsed = scaleUs(
+    frameTimeUs(Math.max(0, frame - item.startFrame), doc),
+    item.speed,
+  );
   const offset = addUs(sourcePhaseUs(item), elapsed);
   return addUs(
     integerUs(item.sourceInUs!),
@@ -85,8 +90,10 @@ export function sourceTimeUs(
 ) {
   if (Number.isSafeInteger(frame))
     return numberUs(sourceFrameTimeUs(item, frame, doc));
+  if (item.freeze) return item.freeze.sourceUs;
   const elapsed =
-    (Math.max(0, frame - item.startFrame) * 1000000 * doc.fps.denominator) /
+    (item.speed *
+      (Math.max(0, frame - item.startFrame) * 1000000 * doc.fps.denominator)) /
     doc.fps.numerator;
   const offset = numberUs(sourcePhaseUs(item)) + elapsed;
   return (

@@ -44,6 +44,19 @@ export function Timeline({
       className="min-w-0 rounded-xl border bg-card p-4"
       aria-label="Project timeline"
     >
+      {!!document.beatMarkers?.length && (
+        <div className="mb-3 flex flex-wrap gap-2" aria-label="Beat markers">
+          {document.beatMarkers.map((m, i) => (
+            <button
+              key={i}
+              className="rounded border px-2 py-1 text-xs"
+              onClick={() => onFrame(m.frame)}
+            >
+              {m.label} · {m.frame}f
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-sm font-semibold">
           Timeline{" "}

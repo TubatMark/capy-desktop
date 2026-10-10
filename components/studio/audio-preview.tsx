@@ -26,6 +26,8 @@ export function AudioPreview({
         item = document.items.find((i) => i.id === clip.itemId);
       if (!media || !item) continue;
       const gain = audioGainAtFrame(plan, clip.itemId, frame);
+      media.playbackRate = item.speed;
+      media.preservesPitch = true;
       media.volume = Math.min(1, gain);
       const inRange =
         clip.enabled &&

@@ -15,6 +15,21 @@ import {
 } from "./time";
 import { copyCaptionEdits, mapCaptionCues } from "./caption-map";
 export type EditOperation =
+  | import("./retiming").EditProposal
+  | { type: "retime"; itemId: string; speed: number }
+  | {
+      type: "freeze";
+      itemId: string;
+      frame: number;
+      durationFrames: number;
+      audioPolicy: "silence";
+    }
+  | {
+      type: "keyframes";
+      itemId: string;
+      keyframes: NonNullable<TimelineItem["keyframes"]>;
+    }
+  | { type: "beat-marker"; frame: number; label: string }
   | { type: "split"; itemId: string; frame: number; newId: string }
   | { type: "trim"; itemId: string; inFrame: number; outFrame: number }
   | { type: "move"; itemId: string; startFrame: number; trackId?: string }
@@ -47,7 +62,10 @@ export type EditOperation =
   | {
       type: "layer";
       itemId: string;
-      changes: Pick<TimelineItem, "text" | "fit" | "opacity" | "crop" | "blur" | "colorPreset">;
+      changes: Pick<
+        TimelineItem,
+        "text" | "fit" | "opacity" | "crop" | "blur" | "colorPreset"
+      >;
     }
   | { type: "safe-area"; enabled: boolean; inset: number }
   | {
@@ -142,11 +160,69 @@ export function validateProject(
       !integer(i.startFrame) ||
       !integer(i.durationFrames, 1) ||
       !integer(i.startFrame + i.durationFrames) ||
-      i.speed !== 1 ||
+      ![0.5, 1, 2].includes(i.speed) ||
       (!i.assetId && !i.text)
     )
       throw Error("Invalid timeline span");
     ids.add(i.id);
+    if (i.speed !== 1 && i.loop)
+      throw Error("Remove audio looping before changing playback speed");
+    if (
+      i.freeze &&
+      (!i.assetId ||
+        Object.keys(i.freeze).some(
+          (k) => !["sourceUs", "audioPolicy"].includes(k),
+        ) ||
+        !integer(i.freeze.sourceUs) ||
+        i.freeze.sourceUs < i.sourceInUs! ||
+        i.freeze.sourceUs >= i.sourceOutUs! ||
+        i.freeze.audioPolicy !== "silence" ||
+        i.loop)
+    )
+      throw Error("Invalid freeze policy");
+    if (
+      i.template &&
+      (Object.keys(i.template).some(
+        (k) => !["id", "version", "instanceId", "font"].includes(k),
+      ) ||
+        i.template.id !== "local-title" ||
+        i.template.version !== 1 ||
+        i.template.font !== "Arial" ||
+        i.template.instanceId !== i.id ||
+        !i.text)
+    )
+      throw Error("Unsupported template identity");
+    if (i.keyframes !== undefined) {
+      if (d.tracks.find((t) => t.id === i.trackId)?.kind === "audio")
+        throw Error("Motion requires a visual item");
+      if (
+        !Array.isArray(i.keyframes) ||
+        i.keyframes.length > 100 ||
+        i.keyframes.length < 1
+      )
+        throw Error("Invalid keyframes");
+      let last = -1;
+      for (const k of i.keyframes) {
+        if (
+          !k ||
+          Object.keys(k).length !== 5 ||
+          Object.keys(k).some(
+            (f) => !["frame", "x", "y", "scale", "rotation"].includes(f),
+          ) ||
+          !integer(k.frame) ||
+          k.frame >= i.durationFrames ||
+          k.frame <= last ||
+          ![k.x, k.y, k.scale, k.rotation].every(Number.isFinite) ||
+          Math.abs(k.x) > 8192 ||
+          Math.abs(k.y) > 8192 ||
+          k.scale < 0.1 ||
+          k.scale > 4 ||
+          Math.abs(k.rotation) > 360
+        )
+          throw Error("Unsupported transform keyframe");
+        last = k.frame;
+      }
+    }
     if (
       i.assetId &&
       (typeof i.assetId !== "string" ||
@@ -227,9 +303,29 @@ export function validateProject(
       (!Number.isFinite(i.opacity) || i.opacity < 0 || i.opacity > 1)
     )
       throw Error("Invalid opacity");
-    if (i.blur !== undefined && (!Number.isFinite(i.blur) || i.blur < 0 || i.blur > 30)) throw Error("Invalid blur");
-    if (i.colorPreset !== undefined && !["neutral","warm","cool","monochrome"].includes(i.colorPreset)) throw Error("Invalid color preset");
-    if (i.crop && (![i.crop.x,i.crop.y,i.crop.width,i.crop.height].every(Number.isFinite) || i.crop.x < 0 || i.crop.y < 0 || i.crop.width <= 0 || i.crop.height <= 0 || i.crop.x+i.crop.width > 1 || i.crop.y+i.crop.height > 1)) throw Error("Invalid crop");
+    if (
+      i.blur !== undefined &&
+      (!Number.isFinite(i.blur) || i.blur < 0 || i.blur > 30)
+    )
+      throw Error("Invalid blur");
+    if (
+      i.colorPreset !== undefined &&
+      !["neutral", "warm", "cool", "monochrome"].includes(i.colorPreset)
+    )
+      throw Error("Invalid color preset");
+    if (
+      i.crop &&
+      (![i.crop.x, i.crop.y, i.crop.width, i.crop.height].every(
+        Number.isFinite,
+      ) ||
+        i.crop.x < 0 ||
+        i.crop.y < 0 ||
+        i.crop.width <= 0 ||
+        i.crop.height <= 0 ||
+        i.crop.x + i.crop.width > 1 ||
+        i.crop.y + i.crop.height > 1)
+    )
+      throw Error("Invalid crop");
     if (i.fit !== undefined && !["contain", "cover"].includes(i.fit))
       throw Error("Invalid layer fit");
     if (
@@ -256,6 +352,8 @@ export function validateProject(
         audio.assetId !== i.assetId ||
         audio.startFrame !== i.startFrame ||
         audio.durationFrames !== i.durationFrames ||
+        audio.speed !== i.speed ||
+        JSON.stringify(audio.freeze) !== JSON.stringify(i.freeze) ||
         audio.sourceInUs !== i.sourceInUs ||
         audio.sourceOutUs !== i.sourceOutUs ||
         compareUs(sourcePhaseUs(audio), sourcePhaseUs(i)) !== 0 ||
@@ -295,6 +393,20 @@ export function validateProject(
         wordIds.add(word.id);
       }
     }
+  if (
+    d.beatMarkers !== undefined &&
+    (!Array.isArray(d.beatMarkers) ||
+      d.beatMarkers.length > 10000 ||
+      d.beatMarkers.some(
+        (m) =>
+          !m ||
+          Object.keys(m).some((k) => !["frame", "label"].includes(k)) ||
+          !integer(m.frame) ||
+          typeof m.label !== "string" ||
+          m.label.length > 100,
+      ))
+  )
+    throw Error("Invalid beat marker");
   const cueIds = new Set<string>();
   for (const c of d.captionCues)
     if (
@@ -353,6 +465,48 @@ export function validateProject(
 }
 export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
   validateProject(doc);
+  if (op.type === "suggested") {
+    if (
+      op.baseRevision !== doc.revision ||
+      op.baseDocument !== JSON.stringify(doc)
+    )
+      throw Error("Suggestion base revision or edits changed");
+    if (
+      !op.selectedItemIds.length ||
+      op.selectedItemIds.length > 50 ||
+      new Set(op.selectedItemIds).size !== op.selectedItemIds.length ||
+      op.selectedItemIds.some((id) => !doc.items.some((i) => i.id === id)) ||
+      !Array.isArray(op.operations) ||
+      op.operations.length > 200
+    )
+      throw Error("Invalid suggestion selection");
+    let result = doc;
+    for (const change of op.operations) {
+      if (
+        !["trim", "layer"].includes(change.type) ||
+        !("itemId" in change) ||
+        !op.selectedItemIds.includes(change.itemId)
+      )
+        throw Error("Suggestion exceeds selected items");
+      const selected = doc.items.find((i) => i.id === change.itemId)!;
+      if (selected.linkedVideoId || selected.detachedAudioId)
+        throw Error("Select attached source audio for assistance");
+      result = applyEdit(result, change).document;
+    }
+    if (
+      result.items.some(
+        (i) =>
+          !op.selectedItemIds.includes(i.id) &&
+          JSON.stringify(i) !==
+            JSON.stringify(doc.items.find((o) => o.id === i.id)),
+      )
+    )
+      throw Error("Suggestion changed an unselected item");
+    return {
+      document: result,
+      inverse: { type: "restore", document: structuredClone(doc) },
+    };
+  }
   const inverse: EditOperation = {
     type: "restore",
     document: structuredClone(doc),
@@ -371,12 +525,75 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
   if ("itemId" in op && !item) throw Error("Item not found");
   if (
     item?.linkedVideoId &&
-    ["move", "trim", "split", "remove", "ripple-delete", "duplicate"].includes(
-      op.type,
-    )
+    [
+      "move",
+      "trim",
+      "split",
+      "remove",
+      "ripple-delete",
+      "duplicate",
+      "retime",
+      "freeze",
+    ].includes(op.type)
   )
     item = next.items.find((i) => i.id === item!.linkedVideoId)!;
+  if (item?.freeze && ["split", "trim"].includes(op.type))
+    throw Error("Unfreeze using Undo before splitting or trimming this hold");
+  if (item?.keyframes && ["split", "trim"].includes(op.type))
+    throw Error("Remove motion keyframes before splitting or trimming");
   switch (op.type) {
+    case "retime": {
+      if (
+        ![0.5, 1, 2].includes(op.speed) ||
+        !item!.assetId ||
+        item!.freeze ||
+        item!.keyframes ||
+        item!.loop
+      )
+        throw Error("Unsupported retime; remove freeze, loop or motion first");
+      const ratio = item!.speed / op.speed;
+      item!.durationFrames = Math.max(
+        1,
+        Math.round(item!.durationFrames * ratio),
+      );
+      for (const key of ["fadeInFrames", "fadeOutFrames"] as const)
+        if (item![key] !== undefined)
+          item![key] = Math.min(
+            item!.durationFrames,
+            Math.round(item![key]! * ratio),
+          );
+      item!.speed = op.speed as TimelineItem["speed"];
+      break;
+    }
+    case "freeze": {
+      if (
+        !item!.assetId ||
+        item!.loop ||
+        !integer(op.frame) ||
+        op.frame >= item!.durationFrames ||
+        op.audioPolicy !== "silence" ||
+        !integer(op.durationFrames, 1)
+      )
+        throw Error("Invalid freeze request");
+      item!.freeze = {
+        sourceUs: Math.round(
+          numberUs(sourceFrameTimeUs(item!, item!.startFrame + op.frame, next)),
+        ),
+        audioPolicy: op.audioPolicy,
+      };
+      item!.durationFrames = op.durationFrames;
+      delete item!.keyframes;
+      delete item!.fadeInFrames;
+      delete item!.fadeOutFrames;
+      break;
+    }
+    case "keyframes":
+      item!.keyframes = structuredClone(op.keyframes);
+      if (!op.keyframes.length) delete item!.keyframes;
+      break;
+    case "beat-marker":
+      (next.beatMarkers ??= []).push({ frame: op.frame, label: op.label });
+      break;
     case "split": {
       if (
         !integer(op.frame, 1) ||
@@ -492,6 +709,9 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         ...structuredClone(item!),
         id: op.newId,
         startFrame: item!.startFrame + item!.durationFrames,
+        ...(item!.template
+          ? { template: { ...item!.template, instanceId: op.newId } }
+          : {}),
         detachedAudioId: undefined,
         transitionOut: undefined,
       });
@@ -623,6 +843,7 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       };
       delete detached.transitionOut;
       delete detached.transform;
+      delete detached.keyframes;
       next.items.push(detached);
       item!.detachedAudioId = op.newId;
       break;
@@ -734,9 +955,11 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       sourceOutUs: video.sourceOutUs,
       sourcePhaseUs: video.sourcePhaseUs,
       sourceAvailableOutUs: video.sourceAvailableOutUs,
+      speed: video.speed,
+      freeze: video.freeze,
     });
   }
-  if (["trim", "split"].includes(op.type))
+  if (["trim", "split", "retime", "freeze"].includes(op.type))
     for (const changed of next.items) {
       if (changed.fadeInFrames !== undefined)
         changed.fadeInFrames = Math.min(

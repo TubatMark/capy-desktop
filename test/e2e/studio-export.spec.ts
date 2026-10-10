@@ -184,4 +184,195 @@ test("account-free worker export, exact rendered preview/download, reopened hist
   );
   expect(stale.ok()).toBe(false);
   expect(errors).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/capy-b7-render-evidence/advanced-browser.png",
+    fullPage: true,
+  });
+});
+
+test("advanced edits are reversible and microphone recordings create assets only after acceptance", async ({
+  page,
+  request,
+  context,
+}) => {
+  test.setTimeout(120000);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video" },
+    })
+  ).json();
+  await expect
+    .poll(async () => {
+      const all = await (await request.get("/api/studio/assets")).json();
+      return all.find((a: any) => a.id === imported.id)?.status;
+    })
+    .toBe("ready");
+  const doc = await (
+    await request.post("/api/studio/projects", {
+      data: {
+        name: "Advanced browser fixture",
+        sources: [{ assetId: imported.id }],
+      },
+    })
+  ).json();
+  await page.goto(`/studio/${doc.id}`);
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  await page.getByLabel("Playback speed", { exact: true }).selectOption("2");
+  await expect(page.getByLabel("Playback speed", { exact: true })).toHaveValue(
+    "2",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Playback speed", { exact: true })).toHaveValue(
+    "1",
+  );
+  await page
+    .getByRole("button", {
+      name: "Freeze at playhead · 2 seconds · silence",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByLabel("Playback speed", { exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByLabel("Playback speed", { exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel("Template text", { exact: true }).fill("Local callout");
+  await page.getByLabel("Template placement").selectOption("callout");
+  await page
+    .getByRole("button", { name: "Apply local motion template", exact: true })
+    .click();
+  await expect(page.getByTestId("preview-layer")).toContainText(
+    "Local callout",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByTestId("preview-layer")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Add beat marker at playhead", exact: true })
+    .click();
+  await expect(page.getByLabel("Beat markers")).toContainText("Beat 1");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Beat markers")).toHaveCount(0);
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  await page
+    .getByLabel("Reframe fallback", { exact: true })
+    .selectOption("cover");
+  await page
+    .getByRole("button", { name: "Suggest reframe", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Accept suggested edit", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Accept suggested edit", exact: true })
+    .click();
+  await expect(page.getByLabel("Footage fit", { exact: true })).toHaveValue(
+    "cover",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Footage fit", { exact: true })).toHaveValue(
+    "contain",
+  );
+  await page.getByLabel("Playback speed", { exact: true }).selectOption("2");
+  await page
+    .getByLabel("Template text", { exact: true })
+    .fill("Advanced rendered motion");
+  await page
+    .getByRole("button", { name: "Apply local motion template", exact: true })
+    .click();
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  await page
+    .getByRole("button", { name: "Render export", exact: true })
+    .click();
+  await expect(page.getByTestId("normalized-preview")).toBeVisible({
+    timeout: 60000,
+  });
+  const advancedRender = await (
+    await request.get(`/api/studio/projects/${doc.id}/render`)
+  ).json();
+  expect(advancedRender.artifacts[0].rendererVersion).toBe("ffmpeg-studio-4");
+  expect(advancedRender.artifacts[0].probe.durationUs).toBe(2000000);
+  const assetCount = async () =>
+    ((await (await request.get("/api/studio/assets")).json()) as unknown[])
+      .length;
+  const before = await assetCount();
+  // Deterministic fixture stream still exercises real MediaRecorder and WAV decoding.
+  await page.evaluate(() => {
+    const media = navigator.mediaDevices;
+    Object.defineProperty(media, "getUserMedia", {
+      configurable: true,
+      value: async () => {
+        throw new DOMException(
+          "Microphone permission denied",
+          "NotAllowedError",
+        );
+      },
+    });
+  });
+  await page
+    .getByRole("button", { name: "Record voiceover", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Voice recording").getByRole("alert"),
+  ).toContainText("Microphone permission denied");
+  expect(await assetCount()).toBe(before);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: async () => {
+        const audio = new AudioContext(),
+          osc = audio.createOscillator(),
+          target = audio.createMediaStreamDestination();
+        osc.frequency.value = 440;
+        osc.connect(target);
+        osc.start();
+        const track = target.stream.getAudioTracks()[0]!;
+        const stop = track.stop.bind(track);
+        track.stop = () => {
+          osc.stop();
+          void audio.close();
+          stop();
+        };
+        return target.stream;
+      },
+    });
+  });
+  await page
+    .getByRole("button", { name: "Record voiceover", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeVisible();
+  await page.waitForTimeout(350);
+  await page
+    .getByRole("button", { name: "Cancel recording", exact: true })
+    .click();
+  expect(await assetCount()).toBe(before);
+  await page
+    .getByRole("button", { name: "Record voiceover", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toBeVisible();
+  await page.waitForTimeout(450);
+  await page
+    .getByRole("button", { name: "Stop recording", exact: true })
+    .click();
+  await expect(page.getByLabel("Recorded voice preview")).toBeVisible();
+  expect(await assetCount()).toBe(before);
+  await page
+    .getByRole("button", { name: "Accept recording as new asset", exact: true })
+    .click();
+  await expect.poll(assetCount).toBe(before + 1);
+  await expect(
+    page.getByRole("button", { name: "Record voiceover", exact: true }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/capy-b7-render-evidence/advanced-browser.png",
+    fullPage: true,
+  });
 });

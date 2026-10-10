@@ -10,13 +10,14 @@ import type {
 } from "../../lib/studio/types";
 import { validateProject } from "../../lib/studio/operations";
 import { numberUs } from "../../lib/studio/time";
+import { motionExpression } from "../../lib/studio/templates";
 import { sourcePhaseUs } from "../../lib/studio/audio";
 import { buildAudioPlan, audioGainAtFrame, type AudioPlan } from "./audio-plan";
 import { run, withCancel, throwIfCancelled } from "../exec";
 
 export const NORMALIZATION_POLICY =
-  "sdr-cfr-v2: display-rotation; requested-source-clock-nearest-presentation; display-aspect-preserving-square-pixel-resample-before-crop-fit; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
-export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-3";
+  "sdr-cfr-v3: pitch-preserving-atempo-word-anchors; declarative-linear-motion; freeze-silent; display-rotation; requested-source-clock-nearest-presentation; display-aspect-preserving-square-pixel-resample-before-crop-fit; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
+export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-4";
 export const DEFAULT_EXPORT_PRESET: ExportPreset = {
   aspect: "portrait",
   fps: 30,
@@ -47,6 +48,7 @@ export interface NormalizedPlan {
   normalizationPolicy: string;
   font: string;
   fonts: Record<string, string>;
+  fontChecksums: Record<string, string>;
   inputMatrices: Record<string, string>;
   inputGeometry: Record<
     string,
@@ -217,6 +219,14 @@ export async function compileNormalizedProject(
     normalizationPolicy: NORMALIZATION_POLICY,
     font,
     fonts,
+    fontChecksums: Object.fromEntries(
+      await Promise.all(
+        Object.entries(fonts).map(async ([name, file]) => [
+          name,
+          await hash(file),
+        ]),
+      ),
+    ),
     inputMatrices,
     inputGeometry,
   };
@@ -274,8 +284,11 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
   const out = path.join(dir, "mix.f32");
   const writer = await open(out, "w");
   try {
-    for (const id of new Set(clips.map((c) => c.assetId))) {
-      const a = plan.assets.find((a) => a.id === id)!;
+    for (const id of new Set(
+      clips.filter((c) => c.speed === 1).map((c) => `${c.assetId}@${c.speed}`),
+    )) {
+      const clip = clips.find((c) => `${c.assetId}@${c.speed}` === id)!;
+      const a = plan.assets.find((a) => a.id === clip.assetId)!;
       const file = path.join(dir, `audio-${decoded.size}.f32`);
       await run("ffmpeg", [
         "-v",
@@ -285,6 +298,7 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
         a.location,
         "-map",
         "0:a:0",
+        ...(clip.speed === 1 ? [] : ["-af", `atempo=${clip.speed}`]),
         "-ar",
         String(rate),
         "-ac",
@@ -296,15 +310,47 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
       ]);
       decoded.set(id, await open(file, "r"));
     }
+    for (const clip of clips.filter((c) => c.speed !== 1)) {
+      const asset = plan.assets.find((a) => a.id === clip.assetId)!;
+      for (const [index, segment] of clip.segments.entries()) {
+        throwIfCancelled();
+        const file = path.join(dir, `tempo-${decoded.size}.f32`);
+        await run("ffmpeg", [
+          "-v",
+          "error",
+          "-nostdin",
+          "-i",
+          asset.location,
+          "-map",
+          "0:a:0",
+          "-af",
+          `atrim=start=${numberUs(segment.sourceStartUs) / 1e6}:end=${numberUs(segment.sourceEndUs) / 1e6},asetpts=PTS-STARTPTS,atempo=${clip.speed}`,
+          "-ar",
+          String(rate),
+          "-ac",
+          "2",
+          "-f",
+          "f32le",
+          "-y",
+          file,
+        ]);
+        decoded.set(`${clip.itemId}:tempo:${index}`, await open(file, "r"));
+      }
+    }
     const entries = clips.map((clip) => ({
       clip,
-      segments: clip.segments.map((s) => ({
+      segments: clip.segments.map((s, index) => ({
+        key:
+          clip.speed === 1
+            ? `${clip.assetId}@1`
+            : `${clip.itemId}:tempo:${index}`,
         start: (numberUs(s.timelineStartUs) * rate) / 1e6,
         end:
           ((numberUs(s.timelineStartUs) + numberUs(s.durationUs)) * rate) / 1e6,
-        source: (numberUs(s.sourceStartUs) * rate) / 1e6,
+        source: clip.speed === 1 ? (numberUs(s.sourceStartUs) * rate) / 1e6 : 0,
       })),
       cache: Buffer.alloc(block * 8),
+      cacheKey: "",
       cacheStart: -block,
       cacheCount: 0,
     }));
@@ -319,12 +365,14 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
           for (let n = first; n < end; n++) {
             const source = Math.max(0, Math.round(s.source + n - s.start));
             if (
+              entry.cacheKey !== s.key ||
               source < entry.cacheStart ||
               source >= entry.cacheStart + entry.cacheCount
             ) {
               const read = await decoded
-                .get(entry.clip.assetId)!
+                .get(s.key)!
                 .read(entry.cache, 0, entry.cache.length, source * 8);
+              entry.cacheKey = s.key;
               entry.cacheStart = source;
               entry.cacheCount = read.bytesRead / 8;
             }
@@ -364,6 +412,9 @@ export async function renderNormalizedProject(
       for (const asset of plan.assets)
         if ((await hash(asset.location)) !== asset.checksum)
           throw Error("Asset checksum changed since render request");
+      for (const [name, file] of Object.entries(plan.fonts))
+        if ((await hash(file)) !== plan.fontChecksums[name])
+          throw Error("Local font changed since render request");
       const { document: doc, width: w, height: h } = plan;
       const filters: string[] = [];
       const args = ["-v", "error", "-nostdin", "-filter_complex_threads", "1"];
@@ -418,8 +469,9 @@ export async function renderNormalizedProject(
           chain.push(
             "setpts=PTS-STARTPTS",
             `trim=end=${(item.sourceOutUs ?? 0) / 1e6}`,
-            `setpts=PTS-${((item.sourceInUs ?? 0) + numberUs(sourcePhaseUs(item))) / 1e6}/TB`,
+            `setpts=(PTS-${(item.freeze?.sourceUs ?? (item.sourceInUs ?? 0) + numberUs(sourcePhaseUs(item))) / 1e6}/TB)/${item.speed}`,
             "fps=fps=30:start_time=0:round=near",
+            ...(item.freeze ? ["trim=end_frame=1", "setpts=PTS-STARTPTS"] : []),
           );
         }
         chain.push(
@@ -460,14 +512,29 @@ export async function renderNormalizedProject(
             `drawtext=fontfile='${filterPath(plan.font)}':textfile='${filterPath(textFile)}':expansion=none:fontsize=${(item.text.fontSize * w) / doc.canvas.width}:fontcolor=${safeColor(item.text.color)}:x=(w-text_w)/2:y=(h-text_h)/2`,
           );
         }
-        const tr = item.transform;
-        if (tr?.scale && tr.scale !== 1)
+        const fps = doc.fps.numerator / doc.fps.denominator;
+        const scale = motionExpression(item, "scale", "t", fps),
+          rotation = motionExpression(item, "rotation", "t", fps);
+        if (item.keyframes || item.transform?.scale !== undefined)
           chain.push(
-            `scale=trunc(iw*${tr.scale}/2)*2:trunc(ih*${tr.scale}/2)*2`,
+            `scale=w='max(2,trunc(iw*(${scale})/2)*2)':h='max(2,trunc(ih*(${scale})/2)*2)':eval=frame`,
           );
-        if (tr?.rotation)
+        if (item.keyframes) {
+          // A fixed transparent surface prevents downstream filter negotiation
+          // from stretching per-frame scaled dimensions back to the first size.
+          const extent =
+            Math.ceil(
+              (Math.hypot(w, h) *
+                Math.max(...item.keyframes.map((k) => k.scale))) /
+                2,
+            ) * 2;
           chain.push(
-            `rotate=${tr.rotation}*PI/180:ow=rotw(${tr.rotation}*PI/180):oh=roth(${tr.rotation}*PI/180):c=none`,
+            `setsar=1,pad=${extent}:${extent}:(ow-iw)/2:(oh-ih)/2:color=black@0:eval=frame`,
+          );
+          chain.push(`rotate='(${rotation})*PI/180':ow=iw:oh=ih:c=none`);
+        } else if (item.transform?.rotation)
+          chain.push(
+            `rotate=${rotation}*PI/180:ow=rotw(${rotation}*PI/180):oh=roth(${rotation}*PI/180):c=none`,
           );
         chain.push(`colorchannelmixer=aa=${item.opacity ?? 1}`);
         const previous = doc.items.find(
@@ -484,7 +551,7 @@ export async function renderNormalizedProject(
         chain.push(`setpts=PTS+${start}/TB`);
         filters.push(`[${inputIndex}:v]${chain.join(",")}[layer${index}]`);
         filters.push(
-          `[${base}][layer${index}]overlay=x=(W-w)/2+${((tr?.x ?? 0) * w) / doc.canvas.width}:y=(H-h)/2+${((tr?.y ?? 0) * h) / doc.canvas.height}:eof_action=pass:repeatlast=0:enable='gte(t,${start})*lt(t,${start + duration})'[composite${index}]`,
+          `[${base}][layer${index}]overlay=x='(W-w)/2+${`(${motionExpression(item, "x", `(t-${start})`, fps)})*${w / doc.canvas.width}`}':y='(H-h)/2+${`(${motionExpression(item, "y", `(t-${start})`, fps)})*${h / doc.canvas.height}`}':eof_action=pass:repeatlast=0:enable='gte(t,${start})*lt(t,${start + duration})'[composite${index}]`,
         );
         base = `composite${index++}`;
       }
