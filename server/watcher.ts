@@ -113,16 +113,25 @@ function defaultDeps(): WatcherDeps {
           const { run, withCancel } = await import("../src/exec");
           const { parseUploads } = await import("../src/youtube");
           const options = yt();
-          const args = ["--no-warnings", "--flat-playlist", "-J"];
-          if (options.cookiesFromBrowser)
-            args.push("--cookies-from-browser", options.cookiesFromBrowser);
-          if (options.proxy) args.push("--proxy", options.proxy);
-          // No playlist-end: catch up the complete Videos tab, subject to explicit output/deadline limits.
-          args.push(`https://www.youtube.com/channel/${channel.id}/videos`);
-          const result = await withCancel(signal, () =>
-            run("yt-dlp", args, { timeoutMs: 30_000 }),
-          );
-          return parseUploads(JSON.parse(result.stdout));
+          // Only uploads the public feed dates (its newest 15) can be new, so the newest 30 of each tab is enough.
+          // Stream replays live on the Live tab, not the Videos tab. Shorts are skipped by length anyway.
+          const tab = async (name: "videos" | "streams") => {
+            const args = ["--no-warnings", "--flat-playlist", "-J", "--playlist-end", "30"];
+            if (options.cookiesFromBrowser)
+              args.push("--cookies-from-browser", options.cookiesFromBrowser);
+            if (options.proxy) args.push("--proxy", options.proxy);
+            args.push(`https://www.youtube.com/channel/${channel.id}/${name}`);
+            const result = await withCancel(signal, () =>
+              run("yt-dlp", args, { timeoutMs: 25_000 }),
+            );
+            return parseUploads(JSON.parse(result.stdout));
+          };
+          const [videos, streams] = await Promise.all([
+            tab("videos"),
+            // a channel without a Live tab is fine
+            tab("streams").catch(() => []),
+          ]);
+          return [...videos, ...streams];
         },
       }),
     createJob: async () => {

@@ -70,6 +70,10 @@ export const dueReadinessChannels = (now: number) =>
       .map((r) => r.value.channelId),
   );
 const ALREADY_THERE = "Already on the channel when you started watching";
+const existingJob = (videoId: string) =>
+  runtimeStore()
+    .list<{ videoId?: string }>("legacy-jobs")
+    .some((r) => r.value.videoId === videoId);
 /** Channels added by link before they recorded a start date queued their whole back catalog on the first
  *  scan. Give them their start date and take those old uploads out of line (clips already made stay). */
 export function adoptStartDate(channelId: string): number {
@@ -119,9 +123,9 @@ export function recordDiscoveryPage(
   now: Date,
   signal: AbortSignal,
   accountId?: string,
-  /** Pages without publication dates: the first completed scan is the baseline of what was already on the
-   *  channel; after it, only uploads that appear later are new. */
-  dateless?: "baseline" | "after-baseline",
+  /** Account-free pages: only uploads the public feed dates (its newest 15) can be new; anything undated is older
+   *  than those and counts as already there (judged again if it ever gets a date). */
+  accountFree?: boolean,
 ): number {
   signal.throwIfAborted();
   return fence(() =>
@@ -151,30 +155,44 @@ export function recordDiscoveryPage(
           ]);
           const pending = [...ch.pending];
           const seen = new Set(ch.seen);
+          const catchUp =
+            !!accountFree && !store.get("discovery-catch-up", channelId);
           for (const candidate of candidates) {
             const key = recordKey(channelId, candidate.id);
             const old = store.get<DiscoveryRecord>("discovery-videos", key);
             let readiness = candidate.readiness;
             const dated = Number.isFinite(readiness.video?.publishedAt);
-            // a baseline skip made without a date is judged again once the upload has one
+            // a skip made without a date is judged again once the upload has one
             const redo =
               dated &&
               old?.value.status === "excluded" &&
               old.value.reason === ALREADY_THERE;
-            if (old?.value.accepted || (old?.value.status === "excluded" && !redo))
+            // One-time catch-up (2026-10-11): uploads accepted before start dates existed and then moved out of line
+            // come back once if they're recent and were never clipped. After it, accepted means handled, for good.
+            const readmit =
+              catchUp &&
+              dated &&
+              !!old?.value.accepted &&
+              !existingJob(candidate.id) &&
+              !ch.pending.some((p) => p.id === candidate.id) &&
+              !ch.history.some((h) => h.videoId === candidate.id);
+            if (
+              (old?.value.accepted && !readmit) ||
+              (old?.value.status === "excluded" && !redo)
+            )
               continue;
-            if (redo) {
+            if (redo || readmit) {
               known.delete(candidate.id);
               seen.delete(candidate.id);
             }
             const cutoff = discoveryCutoff(ch);
-            if (dateless === "baseline" && !dated && !known.has(candidate.id)) {
+            if (accountFree && !dated && !known.has(candidate.id)) {
               readiness = {
                 ...readiness,
                 status: "excluded",
                 reason: ALREADY_THERE,
               };
-            } else if (!dateless && cutoff !== undefined && !dated) {
+            } else if (!accountFree && cutoff !== undefined && !dated) {
               // Private/deleted outcomes remain explicit; public videos without exact dates stay unseen.
               if (readiness.status !== "unavailable")
                 readiness = {
@@ -198,7 +216,7 @@ export function recordDiscoveryPage(
             const accepted =
               known.has(candidate.id) ||
               (readiness.status === "ready" &&
-                store.claim("discovery-source", `${key}:1`, key));
+                (readmit || store.claim("discovery-source", `${key}:1`, key)));
             if (
               accepted &&
               !known.has(candidate.id) &&
@@ -227,6 +245,7 @@ export function recordDiscoveryPage(
               old?.revision ?? 0,
             );
           }
+          if (catchUp) store.put("discovery-catch-up", channelId, { at: now.getTime() });
           // Newest-first pages arrive separately; keep the complete pending queue oldest-first.
           pending.sort((a, b) => {
             const date = (id: string) =>
@@ -360,7 +379,7 @@ export async function reconcileCreator(
         now,
         bounded,
         undefined,
-        previous.lastSuccessAt === undefined ? "baseline" : "after-baseline",
+        true,
       );
     } else {
       const apiDeps = { ...deps, signal: bounded };

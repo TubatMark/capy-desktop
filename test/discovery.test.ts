@@ -450,7 +450,7 @@ const upload = (n: number) => ({
   duration: 600,
   live: false,
 });
-it("a channel added by link without a reading account queues only uploads that appear after the first scan", async () => {
+it("a channel added by link without a reading account queues only uploads the feed dates as new", async () => {
   saveReadingAccount({ account: null, tokens: null });
   watch().mutate((f) =>
     addChannel(
@@ -465,8 +465,13 @@ it("a channel added by link without a reading account queues only uploads that a
   const deps = { now: () => new Date(now + 60_000), legacyList: async () => page, feed: async () => new Map<string, number>() };
   expect((await reconcileCreator(id, new AbortController().signal, deps)).complete).toBe(true);
   expect(watch().get().channels[0]!.pending).toEqual([]);
-  page = [upload(6), ...page];
-  await reconcileCreator(id, new AbortController().signal, { ...deps, force: true });
+  // a new upload: the feed dates it, so it counts; an undated one (older than the feed's newest) does not
+  page = [upload(6), upload(7), ...page];
+  await reconcileCreator(id, new AbortController().signal, {
+    ...deps,
+    feed: async () => new Map([[upload(6).id, now + 30 * 60_000]]),
+    force: true,
+  });
   expect(watch().get().channels[0]!.pending.map((p) => p.id)).toEqual([upload(6).id]);
 });
 it("a channel added by link before start dates existed drops its wrongly queued back catalog once", async () => {
@@ -523,4 +528,42 @@ it("uploads from the 24 hours before a channel was added count, dated by the pub
   const ch = watch().get().channels[0]!;
   expect(ch.pending.map((p) => p.id)).toEqual([upload(1).id]);
   expect(ch.seen).toContain(upload(2).id);
+});
+
+it("recent uploads a start-date repair moved out of line come back once the feed dates them", async () => {
+  saveReadingAccount({ account: null, tokens: null });
+  watch().mutate((f) =>
+    mapChannel(
+      addChannel(
+        f,
+        { id, name: "Repaired", url: `https://www.youtube.com/channel/${id}/videos` },
+        [],
+        { now: new Date(now) },
+      ),
+      id,
+      (c) => ({ ...c, discoveryAfter: undefined }),
+    ),
+  );
+  const page = [1, 2].map(upload);
+  const noDates = { now: () => new Date(now + 60_000), legacyList: async () => page, feed: async () => new Map<string, number>(), force: true };
+  // the old code accepted both into the line, undated
+  watch().mutate((f) => mapChannel(f, id, (c) => ({ ...c, pending: page.map((u) => ({ id: u.id, title: u.title, foundAt: now + 60_000 })) })));
+  for (const u of page)
+    runtimeStore().put("discovery-videos", `${id}:${u.id}`, { status: "ready", reason: "fixture", video: { ...u, broadcast: "none" }, channelId: id, videoId: u.id, accepted: true, checkedAt: now });
+  expect(adoptStartDate(id)).toBe(2);
+  // the feed now says upload 1 is 3 hours old and upload 2 two days old
+  await reconcileCreator(id, new AbortController().signal, {
+    ...noDates,
+    feed: async () => new Map([[upload(1).id, now - 3 * 3600_000], [upload(2).id, now - 48 * 3600_000]]),
+  });
+  const ch = watch().get().channels[0]!;
+  expect(ch.pending.map((p) => p.id)).toEqual([upload(1).id]);
+  expect(ch.seen).toContain(upload(2).id);
+  // only once: after the catch-up, an accepted upload taken out of line stays out
+  watch().mutate((f) => mapChannel(f, id, (c) => ({ ...c, pending: [] })));
+  await reconcileCreator(id, new AbortController().signal, {
+    ...noDates,
+    feed: async () => new Map([[upload(1).id, now - 3 * 3600_000]]),
+  });
+  expect(watch().get().channels[0]!.pending).toEqual([]);
 });
