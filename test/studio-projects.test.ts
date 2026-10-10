@@ -230,3 +230,47 @@ it("a missing cached segment requests recoverable source footage", async () => {
   ).toBe("waiting");
   expect(store.get("legacy-jobs", job.id)?.value).toEqual(job);
 });
+
+it("seeds existing local transcript words in asset microseconds without changing the legacy job", async () => {
+  const file = path.join(dir, "captioned.mp4");
+  await writeFile(file, "original bytes");
+  await writeFile(
+    path.join(dir, "words.json"),
+    JSON.stringify([
+      { text: "before", start: 1, end: 2 },
+      { text: "mapped", start: 6, end: 7 },
+      { text: "after", start: 12, end: 13 },
+    ]),
+  );
+  const job = {
+    id: "captioned",
+    dir: ".",
+    videoId: "ABCDEFGHIJK",
+    duration: 30,
+    clips: [
+      {
+        n: 1,
+        start: 5,
+        end: 10,
+        segment: {
+          start: 4,
+          end: 14,
+          url: "/api/media/captioned.mp4",
+          status: "done",
+        },
+      },
+    ],
+  };
+  store.put("legacy-jobs", job.id, job);
+  const doc = await createProject(
+    { sources: [{ jobId: job.id, clipN: 1 }] },
+    { root: dir, store, enqueue: async () => ({ id: "w" }) },
+  );
+  expect(doc.captionCues.map((c) => [c.text, c.startFrame])).toEqual([
+    ["mapped", 30],
+  ]);
+  expect(
+    doc.sourceWords?.[0]?.words.find((w) => w.text === "mapped"),
+  ).toMatchObject({ startUs: 2000000, endUs: 3000000 });
+  expect(store.get("legacy-jobs", job.id)?.value).toEqual(job);
+});

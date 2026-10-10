@@ -22,6 +22,46 @@ export interface AssetRef {
   workId?: string;
   request?: { jobId: string; videoId: string; startUs: number; endUs: number };
 }
+export type AudioRole = "dialogue" | "music" | "sfx" | "voiceover";
+export interface DuckingSettings {
+  enabled: boolean;
+  reductionDb: number;
+  attackMs: number;
+  releaseMs: number;
+}
+export interface SourceWords {
+  assetId: string;
+  words: { id: string; startUs: number; endUs: number; text: string }[];
+}
+export interface CaptionCue {
+  id: string;
+  startFrame: number;
+  durationFrames: number;
+  text: string;
+  x?: number;
+  y?: number;
+  fontSize?: number;
+  color?: string;
+  fontFamily?: string;
+  source?: {
+    itemId: string;
+    assetId: string;
+    wordId: string;
+    startUs: number;
+    endUs: number;
+  };
+  // Manual timing is relative to the mapped source word, so it follows edits.
+  offsetFrames?: number;
+  manualDurationFrames?: number;
+  edited?: boolean;
+}
+export interface StudioTrack {
+  id: string;
+  kind: "video" | "audio" | "text";
+  role?: "main" | "overlay" | AudioRole;
+  muted?: boolean;
+  solo?: boolean;
+}
 export interface TimelineItem {
   id: string;
   trackId: string;
@@ -33,6 +73,17 @@ export interface TimelineItem {
   speed: 1;
   transform?: { x: number; y: number; scale: number; rotation: number };
   gain?: number;
+  audioRole?: AudioRole;
+  muted?: boolean;
+  solo?: boolean;
+  loop?: boolean;
+  loopOffsetUs?: number;
+  ducking?: DuckingSettings;
+  detachedAudioId?: string;
+  linkedVideoId?: string;
+  transitionOut?: { kind: "crossfade"; durationFrames: number };
+  fit?: "contain" | "cover";
+  opacity?: number;
   fadeInFrames?: number;
   fadeOutFrames?: number;
   text?: {
@@ -51,7 +102,7 @@ export interface ProjectDocument {
   updatedAt?: number;
   canvas: { width: number; height: number };
   fps: { numerator: number; denominator: number };
-  tracks: { id: string; kind: "video" | "audio" | "text" }[];
+  tracks: StudioTrack[];
   items: TimelineItem[];
   sourceMappings: {
     itemId: string;
@@ -59,12 +110,9 @@ export interface ProjectDocument {
     sourceInUs: number;
     sourceOutUs: number;
   }[];
-  captionCues: {
-    id: string;
-    startFrame: number;
-    durationFrames: number;
-    text: string;
-  }[];
+  captionCues: CaptionCue[];
+  sourceWords?: SourceWords[];
+  safeArea?: { enabled: boolean; inset: number };
   thumbnailIds: string[];
 }
 export interface RenderArtifact {

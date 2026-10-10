@@ -21,6 +21,11 @@ import { DraftJournal, type RecoveryDraft } from "@/lib/studio/recovery";
 import { AssetBin } from "./asset-bin";
 import { Timeline } from "./timeline";
 import { History } from "./history";
+import { AudioPanel } from "./audio-panel";
+import { CaptionsPanel } from "./captions-panel";
+import { LayersPanel } from "./layers-panel";
+import { AudioPreview } from "./audio-preview";
+import { LayerPreview } from "./layer-preview";
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
 export function StudioEditor({ id }: { id: string }) {
   const router = useRouter();
@@ -31,6 +36,8 @@ export function StudioEditor({ id }: { id: string }) {
   const [selected, setSelected] = useState<string>();
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const playhead = useRef(0);
+  playhead.current = frame;
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [error, setError] = useState("");
   const [version, setVersion] = useState(0);
@@ -263,7 +270,8 @@ export function StudioEditor({ id }: { id: string }) {
   const item = document?.items.find((i) => i.id === selected);
   const active = document?.items.find(
     (i) =>
-      i.trackId === "video" &&
+      document?.tracks.find((t) => t.id === i.trackId)?.kind === "video" &&
+      document?.tracks.find((t) => t.id === i.trackId)?.role !== "overlay" &&
       frame >= i.startFrame &&
       frame < i.startFrame + i.durationFrames,
   );
@@ -284,6 +292,7 @@ export function StudioEditor({ id }: { id: string }) {
     if (Math.abs(video.current.currentTime - desired) > 0.075)
       video.current.currentTime = desired;
     if (playing) void video.current.play().catch(() => setPlaying(false));
+    else video.current.pause();
   }, [
     active?.id,
     active?.sourceInUs,
@@ -294,6 +303,27 @@ export function StudioEditor({ id }: { id: string }) {
     fps,
     playing,
   ]);
+  useEffect(() => {
+    if (!playing) return;
+    let request = 0,
+      lastTime = performance.now(),
+      clockFrame = playhead.current,
+      lastFrame = playhead.current;
+    const tick = (time: number) => {
+      if (playhead.current !== lastFrame) clockFrame = playhead.current;
+      clockFrame += ((time - lastTime) * fps) / 1000;
+      lastTime = time;
+      lastFrame = Math.min(total, Math.floor(clockFrame));
+      setFrame(lastFrame);
+      if (lastFrame >= total) {
+        setPlaying(false);
+        return;
+      }
+      request = requestAnimationFrame(tick);
+    };
+    request = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(request);
+  }, [playing, fps, total]);
   const split = useCallback(() => {
     const doc = latest.current;
     const current = doc?.items.find((i) => i.id === selected);
@@ -389,8 +419,9 @@ export function StudioEditor({ id }: { id: string }) {
     }
   }
   function addAsset(a: AssetRef) {
-    if (!latest.current || !a.durationUs) return;
-    const duration = Math.round((a.durationUs * fps) / 1000000);
+    if (!latest.current || a.kind === "font") return;
+    const durationUs = a.durationUs ?? 3000000;
+    const duration = Math.max(1, Math.round((durationUs * fps) / 1000000));
     const trackId = a.kind === "audio" ? "audio" : "video";
     const start = Math.max(
       0,
@@ -408,7 +439,8 @@ export function StudioEditor({ id }: { id: string }) {
         startFrame: start,
         durationFrames: duration,
         sourceInUs: 0,
-        sourceOutUs: a.durationUs,
+        sourceOutUs: durationUs,
+        ...(a.kind === "audio" ? { audioRole: "music" as const } : {}),
         speed: 1,
       },
     });
@@ -552,13 +584,33 @@ export function StudioEditor({ id }: { id: string }) {
           className="min-w-0 rounded-xl border bg-card p-4"
           aria-label="Preview"
         >
-          <div className="mx-auto flex aspect-video max-h-[400px] items-center justify-center overflow-hidden rounded-lg bg-black">
+          <AudioPreview
+            document={document}
+            assets={assets}
+            frame={frame}
+            playing={playing}
+          />
+          <div
+            className="relative mx-auto flex max-h-[400px] items-center justify-center overflow-hidden rounded-lg bg-black"
+            style={{
+              aspectRatio: `${document.canvas.width}/${document.canvas.height}`,
+              maxWidth: 400,
+              containerType: "inline-size",
+            }}
+          >
             {asset?.status === "ready" && active ? (
               asset.kind === "image" ? (
                 <img
                   src={asset.mediaUrl}
                   alt={asset.name ?? "Preview"}
                   className="h-full w-full object-contain"
+                  style={
+                    active.transform
+                      ? {
+                          transform: `translate(${(active.transform.x / document.canvas.width) * 100}%, ${(active.transform.y / document.canvas.height) * 100}%) scale(${active.transform.scale}) rotate(${active.transform.rotation}deg)`,
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <video
@@ -566,52 +618,20 @@ export function StudioEditor({ id }: { id: string }) {
                   ref={video}
                   src={asset.proxyUrl ?? asset.mediaUrl}
                   className="h-full w-full object-contain"
+                  style={
+                    active.transform
+                      ? {
+                          transform: `translate(${(active.transform.x / document.canvas.width) * 100}%, ${(active.transform.y / document.canvas.height) * 100}%) scale(${active.transform.scale}) rotate(${active.transform.rotation}deg)`,
+                        }
+                      : undefined
+                  }
+                  muted
                   playsInline
                   onLoadedMetadata={() => {
                     if (video.current && active)
                       video.current.currentTime =
                         (active.sourceInUs ?? 0) / 1000000 +
                         (frame - active.startFrame) / fps;
-                  }}
-                  onTimeUpdate={() => {
-                    if (!video.current || !active || !playing) return;
-                    const next =
-                      active.startFrame +
-                      Math.round(
-                        (video.current.currentTime -
-                          (active.sourceInUs ?? 0) / 1000000) *
-                          fps,
-                      );
-                    if (next >= active.startFrame + active.durationFrames) {
-                      setFrame(
-                        Math.min(
-                          total,
-                          active.startFrame + active.durationFrames,
-                        ),
-                      );
-                      if (active.startFrame + active.durationFrames >= total) {
-                        video.current.pause();
-                        setPlaying(false);
-                      }
-                    } else setFrame(Math.max(active.startFrame, next));
-                  }}
-                  onEnded={() => {
-                    setFrame(
-                      Math.min(
-                        total,
-                        active.startFrame + active.durationFrames,
-                      ),
-                    );
-                    const end = active.startFrame + active.durationFrames;
-                    const nextItem = document.items.find(
-                      (item) =>
-                        item.trackId === "video" && item.startFrame === end,
-                    );
-                    const nextAsset = assets.find(
-                      (asset) => asset.id === nextItem?.assetId,
-                    );
-                    if (!nextItem || nextAsset?.status !== "ready")
-                      setPlaying(false);
                   }}
                 />
               )
@@ -624,6 +644,13 @@ export function StudioEditor({ id }: { id: string }) {
                   : "Select footage or import media to start editing."}
               </p>
             )}
+            <LayerPreview
+              document={document}
+              assets={assets}
+              frame={frame}
+              playing={playing}
+              main={active}
+            />
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
             <Button
@@ -638,9 +665,7 @@ export function StudioEditor({ id }: { id: string }) {
               variant="outline"
               size="sm"
               onClick={togglePlay}
-              disabled={
-                !active || asset?.status !== "ready" || asset.kind === "image"
-              }
+              disabled={!total}
               aria-label={playing ? "Pause" : "Play"}
             >
               {playing ? <Pause /> : <Play />}
@@ -807,6 +832,28 @@ export function StudioEditor({ id }: { id: string }) {
         onFrame={setFrame}
         onEdit={edit}
       />
+      <div className="grid items-start gap-5 lg:grid-cols-3">
+        <AudioPanel
+          document={document}
+          item={item}
+          assets={assets}
+          onEdit={edit}
+        />
+        <CaptionsPanel
+          document={document}
+          frame={frame}
+          onFrame={setFrame}
+          onEdit={edit}
+        />
+        <LayersPanel
+          document={document}
+          item={item}
+          assets={assets}
+          frame={frame}
+          onEdit={edit}
+          onSelect={setSelected}
+        />
+      </div>
       <History
         entries={history}
         onRestore={(doc) => edit({ type: "restore", document: doc })}

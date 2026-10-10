@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import type { AssetRef, ProjectDocument } from "@/lib/studio/types";
 import type { EditOperation } from "@/lib/studio/operations";
 import { cn } from "@/lib/utils";
+import { Waveform } from "./waveform";
 export function snapFrame(frame: number, boundaries: number[], threshold = 3) {
   const nearest = boundaries.reduce(
     (best, candidate) =>
@@ -106,7 +107,7 @@ export function Timeline({
           {document.tracks.map((track) => (
             <div key={track.id} className="flex h-20 border-b last:border-b-0">
               <span className="flex w-20 shrink-0 items-center text-xs capitalize text-muted-foreground">
-                {track.kind}
+                {track.role ?? track.kind}
               </span>
               <div className="relative flex-1 bg-muted/20">
                 {document.items
@@ -183,6 +184,15 @@ export function Timeline({
                         <span className="block truncate font-medium">
                           {asset?.name ?? item.text?.value ?? "Clip"}
                         </span>
+                        {asset?.status === "ready" &&
+                          (asset.kind === "audio" ||
+                            asset.streams?.some((s) => s.kind === "audio")) && (
+                            <Waveform
+                              asset={asset}
+                              item={item}
+                              document={document}
+                            />
+                          )}
                         <span className="block truncate font-mono text-[10px] text-muted-foreground">
                           {item.durationFrames}f · {asset?.status ?? "text"}
                         </span>
@@ -192,6 +202,53 @@ export function Timeline({
               </div>
             </div>
           ))}
+          <div className="flex h-16 border-t">
+            <span className="flex w-20 shrink-0 items-center text-xs text-muted-foreground">
+              Captions
+            </span>
+            <div className="relative flex-1 bg-muted/20">
+              {document.captionCues.map((cue) => (
+                <button
+                  key={cue.id}
+                  data-testid="timeline-caption"
+                  className="absolute top-2 h-10 touch-none overflow-hidden rounded border bg-accent px-2 text-xs"
+                  aria-label={`Caption ${cue.text}`}
+                  style={{
+                    left: cue.startFrame * zoom,
+                    width: Math.max(22, cue.durationFrames * zoom),
+                  }}
+                  onClick={() => onFrame(cue.startFrame)}
+                  onPointerDown={(e) => {
+                    drag.current = {
+                      id: cue.id,
+                      x: e.clientX,
+                      start: cue.startFrame,
+                    };
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  }}
+                  onPointerUp={(e) => {
+                    const initial = drag.current;
+                    drag.current = null;
+                    if (!initial || initial.id !== cue.id) return;
+                    const delta = (e.clientX - initial.x) / zoom;
+                    if (Math.abs(delta) < 2) return;
+                    onEdit({
+                      type: "caption",
+                      cueId: cue.id,
+                      changes: {
+                        startFrame: Math.max(
+                          0,
+                          Math.round(initial.start + delta),
+                        ),
+                      },
+                    });
+                  }}
+                >
+                  {cue.text}
+                </button>
+              ))}
+            </div>
+          </div>
           <div
             className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-primary"
             style={{ left: 80 + frame * zoom }}

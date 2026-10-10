@@ -76,3 +76,42 @@ export function CaptionOverlay({ words, t, style, look, hook, showHook, sample =
     </>
   );
 }
+
+/** Frame-based Studio cues share the presentation surface without legacy grouping rules. */
+export function StudioCaptionOverlay({
+  cues,
+  frame,
+  width,
+}: {
+  cues: import("@/lib/studio/types").CaptionCue[];
+  frame: number;
+  width: number;
+}) {
+  return (
+    <>
+      {cues
+        .filter(
+          (cue) =>
+            frame >= cue.startFrame &&
+            frame < cue.startFrame + cue.durationFrames,
+        )
+        .map((cue) => (
+          <div
+            data-testid="preview-caption"
+            key={cue.id}
+            className="pointer-events-none absolute max-w-[80%] -translate-x-1/2 -translate-y-1/2 whitespace-pre-wrap text-center font-bold leading-tight"
+            style={{
+              left: `${(cue.x ?? 0.5) * 100}%`,
+              top: `${(cue.y ?? 0.8) * 100}%`,
+              fontSize: `${((cue.fontSize ?? 64) / width) * 100}cqw`,
+              fontFamily: cue.fontFamily ?? "Arial",
+              color: cue.color ?? "#ffffff",
+              textShadow: "0 2px 4px black",
+            }}
+          >
+            {cue.text}
+          </div>
+        ))}
+    </>
+  );
+}

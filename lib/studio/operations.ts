@@ -1,4 +1,6 @@
-import type { ProjectDocument, TimelineItem } from "./types";
+import type { CaptionCue, ProjectDocument, TimelineItem } from "./types";
+import type { AudioChanges } from "./audio";
+import { copyCaptionEdits, mapCaptionCues } from "./caption-map";
 export type EditOperation =
   | { type: "split"; itemId: string; frame: number; newId: string }
   | { type: "trim"; itemId: string; inFrame: number; outFrame: number }
@@ -11,6 +13,35 @@ export type EditOperation =
       type: "transform";
       itemId: string;
       transform: NonNullable<TimelineItem["transform"]>;
+    }
+  | { type: "audio"; itemId: string; changes: AudioChanges }
+  | { type: "audio-duration"; itemId: string; durationFrames: number }
+  | { type: "detach-audio"; itemId: string; newId: string; trackId: string }
+  | { type: "relink-audio"; itemId: string }
+  | {
+      type: "caption";
+      cueId: string;
+      changes: Partial<
+        Omit<
+          CaptionCue,
+          "id" | "source" | "offsetFrames" | "manualDurationFrames"
+        >
+      >;
+    }
+  | { type: "add-caption"; cue: CaptionCue }
+  | { type: "remove-caption"; cueId: string }
+  | { type: "add-layer"; item: TimelineItem; kind: "video" | "text" }
+  | {
+      type: "layer";
+      itemId: string;
+      changes: Pick<TimelineItem, "text" | "fit" | "opacity">;
+    }
+  | { type: "safe-area"; enabled: boolean; inset: number }
+  | {
+      type: "transition";
+      itemId: string;
+      kind: "cut" | "crossfade";
+      durationFrames: number;
     }
   | { type: "restore"; document: ProjectDocument };
 export interface EditResult {
@@ -35,6 +66,7 @@ export function mapSources(doc: ProjectDocument) {
       sourceInUs: i.sourceInUs!,
       sourceOutUs: i.sourceOutUs!,
     }));
+  if (doc.sourceWords) doc.captionCues = mapCaptionCues(doc, doc.sourceWords);
   return doc;
 }
 export function validateProject(
@@ -74,6 +106,16 @@ export function validateProject(
       !["video", "audio", "text"].includes(t.kind)
     )
       throw Error("Invalid track");
+    if (
+      t.role !== undefined &&
+      !["main", "overlay", "dialogue", "music", "sfx", "voiceover"].includes(
+        t.role,
+      )
+    )
+      throw Error("Invalid track role");
+    for (const flag of [t.muted, t.solo])
+      if (flag !== undefined && typeof flag !== "boolean")
+        throw Error("Invalid track audio state");
     tracks.add(t.id);
   }
   const ids = new Set<string>();
@@ -111,18 +153,157 @@ export function validateProject(
         i.transform.scale <= 0)
     )
       throw Error("Invalid transform");
-    if (i.gain !== undefined && (!Number.isFinite(i.gain) || i.gain < 0))
+    if (
+      i.text &&
+      (typeof i.text.value !== "string" ||
+        i.text.value.length > 10000 ||
+        !Number.isFinite(i.text.fontSize) ||
+        i.text.fontSize <= 0 ||
+        !/^#[0-9a-f]{6}$/i.test(i.text.color))
+    )
+      throw Error("Invalid text layer");
+    for (const flag of [i.muted, i.solo, i.loop])
+      if (flag !== undefined && typeof flag !== "boolean")
+        throw Error("Invalid audio state");
+    for (const fade of [i.fadeInFrames, i.fadeOutFrames])
+      if (fade !== undefined && (!integer(fade) || fade > i.durationFrames))
+        throw Error("Invalid fade duration");
+    if (
+      i.audioRole !== undefined &&
+      !["dialogue", "music", "sfx", "voiceover"].includes(i.audioRole)
+    )
+      throw Error("Invalid audio role");
+    if (
+      i.ducking &&
+      (typeof i.ducking.enabled !== "boolean" ||
+        !Number.isFinite(i.ducking.reductionDb) ||
+        i.ducking.reductionDb < 0 ||
+        i.ducking.reductionDb > 60 ||
+        !Number.isFinite(i.ducking.attackMs) ||
+        i.ducking.attackMs < 0 ||
+        i.ducking.attackMs > 10000 ||
+        !Number.isFinite(i.ducking.releaseMs) ||
+        i.ducking.releaseMs < 0 ||
+        i.ducking.releaseMs > 10000)
+    )
+      throw Error("Invalid ducking settings");
+    if (
+      i.loopOffsetUs !== undefined &&
+      (!integer(i.loopOffsetUs) ||
+        i.loopOffsetUs >= i.sourceOutUs! - i.sourceInUs!)
+    )
+      throw Error("Invalid loop offset");
+    if (
+      i.opacity !== undefined &&
+      (!Number.isFinite(i.opacity) || i.opacity < 0 || i.opacity > 1)
+    )
+      throw Error("Invalid opacity");
+    if (i.fit !== undefined && !["contain", "cover"].includes(i.fit))
+      throw Error("Invalid layer fit");
+    if (
+      i.transitionOut &&
+      (i.transitionOut.kind !== "crossfade" ||
+        !integer(i.transitionOut.durationFrames, 1) ||
+        i.transitionOut.durationFrames >= i.durationFrames)
+    )
+      throw Error("Invalid transition duration");
+    if (
+      i.gain !== undefined &&
+      (!Number.isFinite(i.gain) || i.gain < 0 || i.gain > 4)
+    )
       throw Error("Invalid gain");
   }
+  for (const i of d.items) {
+    const audio = i.detachedAudioId
+      ? d.items.find((a) => a.id === i.detachedAudioId)
+      : undefined;
+    if (
+      i.detachedAudioId &&
+      (!audio ||
+        audio.linkedVideoId !== i.id ||
+        audio.assetId !== i.assetId ||
+        audio.startFrame !== i.startFrame ||
+        audio.durationFrames !== i.durationFrames ||
+        audio.sourceInUs !== i.sourceInUs ||
+        audio.sourceOutUs !== i.sourceOutUs)
+    )
+      throw Error("Invalid detached audio link");
+    if (
+      i.linkedVideoId &&
+      d.items.find((v) => v.id === i.linkedVideoId)?.detachedAudioId !== i.id
+    )
+      throw Error("Invalid source audio link");
+  }
+  if (
+    d.safeArea &&
+    (typeof d.safeArea.enabled !== "boolean" ||
+      !Number.isFinite(d.safeArea.inset) ||
+      d.safeArea.inset < 0 ||
+      d.safeArea.inset > 0.4)
+  )
+    throw Error("Invalid safe area");
+  if (d.sourceWords)
+    for (const source of d.sourceWords) {
+      if (typeof source.assetId !== "string" || !Array.isArray(source.words))
+        throw Error("Invalid source words");
+      const wordIds = new Set<string>();
+      for (const word of source.words) {
+        if (
+          !word.id ||
+          wordIds.has(word.id) ||
+          !integer(word.startUs) ||
+          !integer(word.endUs, 1) ||
+          word.endUs <= word.startUs ||
+          typeof word.text !== "string"
+        )
+          throw Error("Invalid source word");
+        wordIds.add(word.id);
+      }
+    }
+  const cueIds = new Set<string>();
   for (const c of d.captionCues)
     if (
       !c ||
       typeof c.id !== "string" ||
+      cueIds.has(c.id) ||
       typeof c.text !== "string" ||
       !integer(c.startFrame) ||
       !integer(c.durationFrames, 1)
     )
       throw Error("Invalid caption cue");
+    else {
+      cueIds.add(c.id);
+      for (const position of [c.x, c.y])
+        if (
+          position !== undefined &&
+          (!Number.isFinite(position) || position < 0 || position > 1)
+        )
+          throw Error("Invalid caption position");
+      if (
+        c.fontSize !== undefined &&
+        (!Number.isFinite(c.fontSize) || c.fontSize <= 0 || c.fontSize > 1000)
+      )
+        throw Error("Invalid caption font");
+      if (c.color !== undefined && !/^#[0-9a-f]{6}$/i.test(c.color))
+        throw Error("Invalid caption color");
+      if (c.offsetFrames !== undefined && !Number.isSafeInteger(c.offsetFrames))
+        throw Error("Invalid caption offset");
+      if (
+        c.manualDurationFrames !== undefined &&
+        !integer(c.manualDurationFrames, 1)
+      )
+        throw Error("Invalid caption duration");
+      if (
+        c.source &&
+        (!d.items.some(
+          (i) => i.id === c.source!.itemId && i.assetId === c.source!.assetId,
+        ) ||
+          !integer(c.source.startUs) ||
+          !integer(c.source.endUs, 1) ||
+          c.source.endUs <= c.source.startUs)
+      )
+        throw Error("Invalid caption source");
+    }
   if (
     d.name !== undefined &&
     (typeof d.name !== "string" || d.name.length > 200)
@@ -150,9 +331,16 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
     validateProject(next);
     return { document: next, inverse };
   }
-  const item =
+  let item =
     "itemId" in op ? next.items.find((i) => i.id === op.itemId) : undefined;
   if ("itemId" in op && !item) throw Error("Item not found");
+  if (
+    item?.linkedVideoId &&
+    ["move", "trim", "split", "remove", "ripple-delete", "duplicate"].includes(
+      op.type,
+    )
+  )
+    item = next.items.find((i) => i.id === item!.linkedVideoId)!;
   switch (op.type) {
     case "split": {
       if (
@@ -162,7 +350,7 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       )
         throw Error("Split must be inside item");
       const source =
-        item!.sourceInUs === undefined
+        item!.sourceInUs === undefined || item!.loop
           ? undefined
           : item!.sourceInUs +
             Math.round(
@@ -174,10 +362,30 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         id: op.newId,
         startFrame: item!.startFrame + op.frame,
         durationFrames: item!.durationFrames - op.frame,
-        sourceInUs: source,
+        sourceInUs: item!.loop ? item!.sourceInUs : source,
+        loopOffsetUs: item!.loop
+          ? ((item!.loopOffsetUs ?? 0) + frameUs(op.frame, next)) %
+            (item!.sourceOutUs! - item!.sourceInUs!)
+          : undefined,
       };
       item!.durationFrames = op.frame;
       if (source !== undefined) item!.sourceOutUs = source;
+      delete item!.transitionOut;
+      copyCaptionEdits(next, item!.id, right.id);
+      if (item!.detachedAudioId) {
+        const audio = next.items.find((i) => i.id === item!.detachedAudioId)!;
+        const audioId = `${op.newId}:audio`;
+        right.detachedAudioId = audioId;
+        next.items.push({
+          ...structuredClone(audio),
+          id: audioId,
+          linkedVideoId: right.id,
+          startFrame: right.startFrame,
+          durationFrames: right.durationFrames,
+          sourceInUs: right.sourceInUs,
+          sourceOutUs: right.sourceOutUs,
+        });
+      }
       next.items.splice(next.items.indexOf(item!) + 1, 0, right);
       break;
     }
@@ -192,7 +400,10 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       const from = item!.sourceInUs;
       const span = from === undefined ? 0 : item!.sourceOutUs! - from;
       const old = item!.durationFrames;
-      if (from !== undefined) {
+      if (from !== undefined && item!.loop) {
+        item!.loopOffsetUs =
+          ((item!.loopOffsetUs ?? 0) + frameUs(op.inFrame, next)) % span;
+      } else if (from !== undefined) {
         item!.sourceInUs = from + Math.round((span * op.inFrame) / old);
         item!.sourceOutUs = from + Math.round((span * op.outFrame) / old);
       }
@@ -213,8 +424,29 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       const cursor = new Map<string, number>();
       next.items = op.itemIds.map((id) => {
         const i = next.items.find((i) => i.id === id)!;
+        const followingId = op.itemIds
+          .slice(op.itemIds.indexOf(id) + 1)
+          .find(
+            (nextId) =>
+              next.items.find((candidate) => candidate.id === nextId)
+                ?.trackId === i.trackId,
+          );
+        const following = next.items.find(
+          (candidate) => candidate.id === followingId,
+        );
+        if (
+          i.transitionOut &&
+          (!following ||
+            i.transitionOut.durationFrames >= following.durationFrames)
+        )
+          delete i.transitionOut;
         i.startFrame = cursor.get(i.trackId) ?? 0;
-        cursor.set(i.trackId, i.startFrame + i.durationFrames);
+        cursor.set(
+          i.trackId,
+          i.startFrame +
+            i.durationFrames -
+            (i.transitionOut?.durationFrames ?? 0),
+        );
         return i;
       });
       break;
@@ -224,11 +456,30 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         ...structuredClone(item!),
         id: op.newId,
         startFrame: item!.startFrame + item!.durationFrames,
+        detachedAudioId: undefined,
+        transitionOut: undefined,
       });
+      copyCaptionEdits(next, item!.id, op.newId);
+      if (item!.detachedAudioId) {
+        const audio = next.items.find((i) => i.id === item!.detachedAudioId)!;
+        const duplicated = next.items.find((i) => i.id === op.newId)!;
+        duplicated.detachedAudioId = `${op.newId}:audio`;
+        next.items.push({
+          ...structuredClone(audio),
+          id: duplicated.detachedAudioId,
+          linkedVideoId: op.newId,
+          startFrame: duplicated.startFrame,
+        });
+      }
       break;
     case "remove":
     case "ripple-delete":
-      next.items = next.items.filter((i) => i.id !== item!.id);
+      next.items = next.items.filter(
+        (i) => i.id !== item!.id && i.id !== item!.detachedAudioId,
+      );
+      next.captionCues = next.captionCues.filter(
+        (c) => c.source?.itemId !== item!.id,
+      );
       if (op.type === "ripple-delete")
         for (const i of next.items)
           if (
@@ -240,11 +491,216 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
     case "add-asset":
       next.items.push(structuredClone(op.item));
       break;
+    case "audio":
+      Object.assign(item!, op.changes);
+      if (op.changes.loop === false && item!.sourceInUs !== undefined) {
+        item!.durationFrames = Math.min(
+          item!.durationFrames,
+          Math.max(
+            1,
+            Math.round(
+              ((item!.sourceOutUs! - item!.sourceInUs) * next.fps.numerator) /
+                (1000000 * next.fps.denominator),
+            ),
+          ),
+        );
+        delete item!.loopOffsetUs;
+        item!.fadeInFrames = Math.min(
+          item!.fadeInFrames ?? 0,
+          item!.durationFrames,
+        );
+        item!.fadeOutFrames = Math.min(
+          item!.fadeOutFrames ?? 0,
+          item!.durationFrames,
+        );
+      }
+      break;
+    case "audio-duration": {
+      const sourceFrames = Math.max(
+        1,
+        Math.round(
+          ((item!.sourceOutUs! - item!.sourceInUs!) * next.fps.numerator) /
+            (1000000 * next.fps.denominator),
+        ),
+      );
+      if (
+        next.tracks.find((t) => t.id === item!.trackId)?.kind !== "audio" ||
+        item!.linkedVideoId ||
+        !integer(op.durationFrames, 1) ||
+        (!item!.loop && op.durationFrames > sourceFrames)
+      )
+        throw Error("Enable looping to extend an imported sound");
+      item!.durationFrames = op.durationFrames;
+      item!.fadeInFrames = Math.min(
+        item!.fadeInFrames ?? 0,
+        item!.durationFrames,
+      );
+      item!.fadeOutFrames = Math.min(
+        item!.fadeOutFrames ?? 0,
+        item!.durationFrames,
+      );
+      break;
+    }
+    case "detach-audio": {
+      if (
+        !item!.assetId ||
+        item!.detachedAudioId ||
+        item!.linkedVideoId ||
+        next.tracks.find((t) => t.id === item!.trackId)?.kind !== "video" ||
+        next.items.some((i) => i.id === op.newId)
+      )
+        throw Error("Cannot detach this source audio");
+      if (!next.tracks.some((t) => t.id === op.trackId))
+        next.tracks.push({ id: op.trackId, kind: "audio", role: "dialogue" });
+      if (next.tracks.find((t) => t.id === op.trackId)?.kind !== "audio")
+        throw Error("Audio track required");
+      const detached = {
+        ...structuredClone(item!),
+        id: op.newId,
+        trackId: op.trackId,
+        linkedVideoId: item!.id,
+        audioRole: "dialogue" as const,
+      };
+      delete detached.transitionOut;
+      delete detached.transform;
+      next.items.push(detached);
+      item!.detachedAudioId = op.newId;
+      break;
+    }
+    case "relink-audio": {
+      const video = item!.linkedVideoId
+        ? next.items.find((i) => i.id === item!.linkedVideoId)!
+        : item!;
+      const audio = next.items.find((i) => i.id === video.detachedAudioId);
+      if (!audio) throw Error("No detached audio to relink");
+      for (const key of [
+        "gain",
+        "muted",
+        "solo",
+        "fadeInFrames",
+        "fadeOutFrames",
+        "audioRole",
+        "ducking",
+      ] as const)
+        Object.assign(video, { [key]: audio[key] });
+      next.items = next.items.filter((i) => i.id !== audio.id);
+      delete video.detachedAudioId;
+      break;
+    }
+    case "caption": {
+      const cue = next.captionCues.find((c) => c.id === op.cueId);
+      if (!cue) throw Error("Caption not found");
+      if (op.changes.startFrame !== undefined && cue.source)
+        cue.offsetFrames =
+          (cue.offsetFrames ?? 0) + op.changes.startFrame - cue.startFrame;
+      if (op.changes.durationFrames !== undefined && cue.source)
+        cue.manualDurationFrames = op.changes.durationFrames;
+      Object.assign(cue, op.changes, { edited: true });
+      break;
+    }
+    case "add-caption":
+      next.captionCues.push(structuredClone(op.cue));
+      break;
+    case "remove-caption":
+      next.captionCues = next.captionCues.filter((c) => c.id !== op.cueId);
+      break;
+    case "add-layer":
+      if (!next.tracks.some((t) => t.id === op.item.trackId))
+        next.tracks.push({
+          id: op.item.trackId,
+          kind: op.kind,
+          role: "overlay",
+        });
+      if (next.tracks.find((t) => t.id === op.item.trackId)?.role !== "overlay")
+        throw Error("Overlay track required");
+      next.items.push(structuredClone(op.item));
+      break;
+    case "layer":
+      Object.assign(item!, op.changes);
+      break;
+    case "safe-area":
+      next.safeArea = { enabled: op.enabled, inset: op.inset };
+      break;
+    case "transition": {
+      const ordered = next.items
+        .filter((i) => i.trackId === item!.trackId)
+        .sort((a, b) => a.startFrame - b.startFrame);
+      const index = ordered.indexOf(item!),
+        following = ordered[index + 1];
+      const old = item!.transitionOut?.durationFrames ?? 0,
+        newDuration = op.kind === "cut" ? 0 : op.durationFrames;
+      if (
+        op.kind === "cut" &&
+        (!following ||
+          following.startFrame !==
+            item!.startFrame + item!.durationFrames - old)
+      ) {
+        delete item!.transitionOut;
+        break;
+      }
+      if (
+        !following ||
+        !integer(newDuration) ||
+        (newDuration &&
+          (newDuration >= item!.durationFrames ||
+            newDuration >= following.durationFrames)) ||
+        following.startFrame !== item!.startFrame + item!.durationFrames - old
+      )
+        throw Error(
+          "Transition requires adjacent footage and an interior duration",
+        );
+      for (const later of ordered.slice(index + 1))
+        later.startFrame += old - newDuration;
+      if (newDuration)
+        item!.transitionOut = {
+          kind: "crossfade",
+          durationFrames: newDuration,
+        };
+      else delete item!.transitionOut;
+      break;
+    }
     case "transform":
       item!.transform = op.transform;
       break;
     default:
       throw Error("Unknown edit operation");
+  }
+  for (const video of next.items.filter((i) => i.detachedAudioId)) {
+    const linked = next.items.find((i) => i.id === video.detachedAudioId)!;
+    Object.assign(linked, {
+      startFrame: video.startFrame,
+      durationFrames: video.durationFrames,
+      sourceInUs: video.sourceInUs,
+      sourceOutUs: video.sourceOutUs,
+    });
+  }
+  if (["trim", "split"].includes(op.type))
+    for (const changed of next.items) {
+      if (changed.fadeInFrames !== undefined)
+        changed.fadeInFrames = Math.min(
+          changed.fadeInFrames,
+          changed.durationFrames,
+        );
+      if (changed.fadeOutFrames !== undefined)
+        changed.fadeOutFrames = Math.min(
+          changed.fadeOutFrames,
+          changed.durationFrames,
+        );
+    }
+  for (const outgoing of next.items.filter((i) => i.transitionOut)) {
+    const duration = outgoing.transitionOut!.durationFrames;
+    if (
+      duration >= outgoing.durationFrames ||
+      !next.items.some(
+        (incoming) =>
+          incoming.id !== outgoing.id &&
+          incoming.trackId === outgoing.trackId &&
+          incoming.startFrame ===
+            outgoing.startFrame + outgoing.durationFrames - duration &&
+          incoming.durationFrames > duration,
+      )
+    )
+      delete outgoing.transitionOut;
   }
   mapSources(next);
   validateProject(next);

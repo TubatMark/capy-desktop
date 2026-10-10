@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import type { ProjectDocument, AssetRef } from "../../lib/studio/types";
 import type { JobState } from "../../lib/types";
 import { mapSources, validateProject } from "../../lib/studio/operations";
@@ -170,6 +170,63 @@ async function sourceAsset(
   deps.store.save("assets", id, asset, 1);
   return { asset, start: 0, end: end - start };
 }
+/** Existing transcripts remain read-only; timestamps become relative to imported asset bytes. */
+async function seedSourceWords(
+  doc: ProjectDocument,
+  asset: AssetRef,
+  deps: StudioDependencies,
+) {
+  if (
+    !asset.original?.jobId ||
+    doc.sourceWords?.some((source) => source.assetId === asset.id)
+  )
+    return;
+  const job = deps.store.get<JobState>(
+    "legacy-jobs",
+    asset.original.jobId,
+  )?.value;
+  if (!job?.dir) return;
+  try {
+    const root = await realpath(deps.root);
+    const file = await realpath(path.resolve(root, job.dir, "words.json"));
+    if (!file.startsWith(root + path.sep)) return;
+    const raw: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (!Array.isArray(raw)) return;
+    const offset = asset.original.sourceOffsetUs ?? 0;
+    const words = raw.flatMap((word, index) => {
+      if (
+        !word ||
+        typeof word.text !== "string" ||
+        !Number.isFinite(word.start) ||
+        !Number.isFinite(word.end)
+      )
+        return [];
+      const startUs = Math.round(word.start * 1000000) - offset,
+        endUs = Math.round(word.end * 1000000) - offset;
+      if (
+        endUs <= 0 ||
+        endUs <= startUs ||
+        (asset.durationUs !== undefined && startUs >= asset.durationUs)
+      )
+        return [];
+      return [
+        {
+          id: `word:${index}`,
+          text: word.text,
+          startUs: Math.max(0, startUs),
+          endUs,
+        },
+      ];
+    });
+    if (words.length)
+      doc.sourceWords = [
+        ...(doc.sourceWords ?? []),
+        { assetId: asset.id, words },
+      ];
+  } catch {
+    // Absent local transcripts are shown in Studio; this path never starts a provider.
+  }
+}
 export async function createProject(
   input: ProjectSeed,
   deps = studioDependencies(),
@@ -214,6 +271,7 @@ export async function createProject(
   for (const source of input.sources ?? []) {
     if (!source || typeof source !== "object") throw Error("Invalid source");
     const { asset, start, end } = await sourceAsset(source, deps);
+    await seedSourceWords(doc, asset, deps);
     if (asset.kind === "font") throw Error("Font cannot be a footage source");
     const durationFrames = Math.round(
       ((end - start) * doc.fps.numerator) / (1000000 * doc.fps.denominator),

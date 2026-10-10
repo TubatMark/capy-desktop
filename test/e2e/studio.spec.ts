@@ -409,3 +409,147 @@ test("two editors preserve conflicting recovery when the other window finishes s
       .document.name,
   ).toBe("Window B saved");
 });
+
+test("sound volume, caption move, overlay and every undo are visible and durable", async ({
+  page,
+  request,
+}, testInfo) => {
+  const sound = path.join(root, "music.wav");
+  execFileSync("ffmpeg", [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=220:sample_rate=48000",
+    "-t",
+    "2",
+    sound,
+  ]);
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video", name: "layer-base.mp4" },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () => {
+        const assets = await (await request.get("/api/studio/assets")).json();
+        return assets.find((a: { id: string }) => a.id === imported.id)?.status;
+      },
+      { timeout: 30000 },
+    )
+    .toBe("ready");
+  const document = await (
+    await request.post("/api/studio/projects", {
+      data: { name: "B3 mix and layers", sources: [{ assetId: imported.id }] },
+    })
+  ).json();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`/studio/${document.id}`);
+  await page.getByTestId("media-upload").setInputFiles(sound);
+  await page
+    .getByRole("button", { name: "Add music.wav", exact: true })
+    .click();
+  await expect(page.getByTestId("timeline-item")).toHaveCount(2);
+  await expect(page.getByLabel("Audio gain dB", { exact: true })).toHaveValue(
+    "0",
+  );
+  await page.getByLabel("Audio gain dB", { exact: true }).fill("-6");
+  await expect(page.getByLabel("Audio gain dB", { exact: true })).toHaveValue(
+    "-6",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByLabel("Audio gain dB", { exact: true })).toHaveValue(
+    "0",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByTestId("timeline-item")).toHaveCount(1);
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page
+    .getByTestId("timeline-item")
+    .filter({ hasText: "music.wav" })
+    .click();
+  await expect(page.getByTestId("audio-waveform").first()).toBeVisible({
+    timeout: 15000,
+  });
+  await page.getByLabel("Audio gain dB", { exact: true }).fill("-6");
+  await page.getByLabel("Loop sound", { exact: true }).check();
+  await page.getByLabel("Sound duration frames", { exact: true }).fill("120");
+  await expect(
+    page.getByLabel("Sound duration frames", { exact: true }),
+  ).toHaveValue("120");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByLabel("Sound duration frames", { exact: true }),
+  ).toHaveValue("60");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByLabel("Loop sound", { exact: true }),
+  ).not.toBeChecked();
+  await page.getByLabel("Playhead frame", { exact: true }).fill("0");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("studio-audio-preview")
+        .last()
+        .evaluate((audio) => (audio as HTMLAudioElement).volume),
+    )
+    .toBeCloseTo(1 / 3, 2);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await page.getByLabel("Playhead frame", { exact: true }).fill("0");
+  await page.getByRole("button", { name: "Add caption", exact: true }).click();
+  await expect(page.getByTestId("timeline-caption")).toHaveCount(1);
+  await page.getByLabel("Caption text", { exact: true }).fill("Edited caption");
+  await page.getByLabel("Caption start frame", { exact: true }).fill("12");
+  await page
+    .getByLabel("Caption vertical position", { exact: true })
+    .fill("0.7");
+  await page
+    .getByRole("button", { name: "Apply caption", exact: true })
+    .click();
+  await page.getByLabel("Playhead frame", { exact: true }).fill("12");
+  await expect(page.getByTestId("preview-caption")).toHaveText(
+    "Edited caption",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(
+    page.getByLabel("Caption start frame", { exact: true }),
+  ).toHaveValue("0");
+  await expect(page.getByTestId("preview-caption")).toHaveText("New caption");
+  await page
+    .getByRole("button", { name: "Add title overlay", exact: true })
+    .click();
+  await expect(page.getByTestId("timeline-item")).toHaveCount(3);
+  await expect(page.getByTestId("preview-layer")).toContainText("Your title");
+  await page.getByLabel("Title text", { exact: true }).fill("Actual overlay");
+  await page.getByRole("button", { name: "Apply title", exact: true }).click();
+  await expect(page.getByTestId("preview-layer")).toContainText(
+    "Actual overlay",
+  );
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByTestId("preview-layer")).toContainText("Your title");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByTestId("preview-layer")).toHaveCount(0);
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await page.getByLabel("Show safe areas", { exact: true }).check();
+  await expect(page.getByTestId("preview-safe-area")).toBeVisible();
+  await expect(page.getByTestId("save-status")).toContainText("Saved", {
+    timeout: 20000,
+  });
+  await page.reload();
+  await expect(page.getByTestId("timeline-item")).toHaveCount(3);
+  await expect(page.getByTestId("timeline-caption")).toHaveCount(1);
+  await page.getByLabel("Playhead frame", { exact: true }).fill("12");
+  await expect(page.getByTestId("preview-layer")).toContainText("Your title");
+  await expect(page.getByTestId("preview-caption")).toHaveText("New caption");
+  await page.screenshot({
+    path: testInfo.outputPath("b3-audio-captions-layers.png"),
+    fullPage: true,
+  });
+  expect(errors).toEqual([]);
+});
