@@ -35,6 +35,16 @@ export const ThumbnailDeliverySchema = z.strictObject({
 });
 export const DeliveryRecordSchema = z.strictObject({
   version: z.literal(1),
+  generation: z.number().int().nonnegative(),
+  checkpoint: z.number().int().nonnegative(),
+  handleCheckpoint: z
+    .strictObject({
+      sequence: z.number().int().positive(),
+      operationId: z.string(),
+      intentRevision: z.number().int().nonnegative(),
+      generation: z.number().int().nonnegative(),
+    })
+    .optional(),
   id: z.string().uuid(),
   revision: z.number().int().nonnegative(),
   queueKey: z.string().min(1),

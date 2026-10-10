@@ -1,5 +1,12 @@
 import { beforeEach, afterEach, expect, it } from "vitest";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import * as nativeFs from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  statSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { publicationFixture } from "./publication-fixtures";
@@ -9,6 +16,7 @@ import { runtimeStore } from "../server/db/runtime";
 import { capturePublicationAttribution } from "../server/publication-attribution";
 import {
   createDelivery,
+  deliveryForPackage,
   readDelivery,
   saveDeliveryHandles,
   readDeliveryHandles,
@@ -129,4 +137,115 @@ it("read rejects a changed attribution reference rather than exposing invented p
   });
   expect(() => readDelivery(d.id)).toThrow(/integrity/);
   expect(() => listDeliveryAttributions()).toThrow(/integrity/);
+});
+
+it("stale checkpoint writers cannot replace newer handles", () => {
+  const e = entry(),
+    d = createDelivery(e);
+  saveDeliveryHandles(d, { session: "https://saved/one", uploadOffset: "100" });
+  expect(() =>
+    saveDeliveryHandles(d, { session: "https://stale/old", uploadOffset: "0" }),
+  ).toThrow(/stale/i);
+  expect(readDeliveryHandles(readDelivery(d.id)!)).toMatchObject({
+    session: "https://saved/one",
+    uploadOffset: "100",
+  });
+});
+it("package index corruption is never absence or another delivery", () => {
+  const e = entry(),
+    a = createDelivery(e),
+    b = createDelivery(
+      decide({ ...e, text: { title: "second" } }, false, new Date()),
+    );
+  runtimeStore().put("delivery-identities", a.package.packageHash, {
+    id: b.id,
+  });
+  expect(() => deliveryForPackage(a.package.packageHash)).toThrow(/identity/i);
+  runtimeStore().put("delivery-identities", a.package.packageHash, {
+    id: "missing",
+  });
+  expect(() => deliveryForPackage(a.package.packageHash)).toThrow(/identity/i);
+});
+
+it("only the exact one-ahead sidecar is adopted after its DB checkpoint fails", () => {
+  const e = entry(),
+    d = createDelivery(e),
+    store = runtimeStore(),
+    original = store.put.bind(store);
+  store.put = (kind, ...args) => {
+    if (kind === "deliveries") throw Error("ack commit failed");
+    return original(kind, ...args);
+  };
+  try {
+    expect(() =>
+      saveDeliveryHandles(d, { session: "https://accepted/session" }),
+    ).toThrow("ack commit failed");
+  } finally {
+    store.put = original;
+  }
+  expect(readDelivery(d.id)?.checkpoint).toBe(0);
+  expect(readDeliveryHandles(d).session).toBe("https://accepted/session");
+  expect(readDelivery(d.id)?.checkpoint).toBe(1);
+  const file = path.join(root, "delivery-private", `${d.id}.json`),
+    saved = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(
+    file,
+    JSON.stringify({
+      ...saved,
+      checkpoint: { ...saved.checkpoint, sequence: 3 },
+    }),
+  );
+  expect(() => readDeliveryHandles(readDelivery(d.id)!)).toThrow(
+    /checkpoint identity/,
+  );
+  writeFileSync(
+    file,
+    JSON.stringify({
+      ...saved,
+      checkpoint: { ...saved.checkpoint, generation: 999 },
+    }),
+  );
+  expect(() => readDeliveryHandles(readDelivery(d.id)!)).toThrow(
+    /checkpoint identity/,
+  );
+});
+it("first save syncs the new directory parent before writing, then file before rename and child directory after", () => {
+  const e = entry(),
+    d = createDelivery(e),
+    events: string[] = [],
+    fds = new Map<number, string>();
+  const fs = {
+    ...nativeFs,
+    openSync: (...args: Parameters<typeof nativeFs.openSync>) => {
+      const fd = nativeFs.openSync(...args);
+      fds.set(fd, String(args[0]));
+      return fd;
+    },
+    fsyncSync: (fd: number) => {
+      events.push(`sync:${fds.get(fd)}`);
+      nativeFs.fsyncSync(fd);
+    },
+    mkdirSync: ((...args: Parameters<typeof nativeFs.mkdirSync>) => {
+      events.push(`mkdir:${args[0]}`);
+      return nativeFs.mkdirSync(...args);
+    }) as typeof nativeFs.mkdirSync,
+    writeFileSync: ((...args: Parameters<typeof nativeFs.writeFileSync>) => {
+      events.push("write");
+      return nativeFs.writeFileSync(...args);
+    }) as typeof nativeFs.writeFileSync,
+    renameSync: (a: nativeFs.PathLike, b: nativeFs.PathLike) => {
+      events.push("rename");
+      nativeFs.renameSync(a, b);
+    },
+  };
+  saveDeliveryHandles(d, { session: "https://saved/session" }, fs);
+  expect(events[0]).toBe(`mkdir:${path.join(root, "delivery-private")}`);
+  expect(events[1]).toBe(`sync:${root}`);
+  const write = events.indexOf("write"),
+    rename = events.indexOf("rename");
+  expect(events[write + 1]).toMatch(/sync:.*\.tmp$/);
+  expect(rename).toBe(write + 2);
+  expect(events[rename + 1]).toBe(
+    `sync:${path.join(root, "delivery-private")}`,
+  );
 });
