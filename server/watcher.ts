@@ -240,11 +240,7 @@ export async function watcherTick(
             }
             // Compatibility seam for bounded-feed callers; normal worker discovery uses the paginated reconciler.
             let uploads = await abortable(deps.list(ch.url), signal);
-            if (discoveryCutoff(ch) !== undefined) {
-              if (!ch.sourceAccountId)
-                throw new Error(
-                  "Reconnect the creator's original YouTube reading account to resolve publication dates",
-                );
+            if (ch.sourceAccountId && discoveryCutoff(ch) !== undefined) {
               uploads = await abortable(
                 (deps.dateUploads ?? readUploadDates)(
                   ch.sourceAccountId,

@@ -66,6 +66,46 @@ export const dueReadinessChannels = (now: number) =>
       )
       .map((r) => r.value.channelId),
   );
+const ALREADY_THERE = "Already on the channel when you started watching";
+/** Channels added by link before they recorded a start date queued their whole back catalog on the first
+ *  scan. Give them their start date and take those old uploads out of line (clips already made stay). */
+export function adoptStartDate(channelId: string): number {
+  return fence(() =>
+    runtimeStore().transaction(() => {
+      const store = runtimeStore();
+      let dropped: string[] = [];
+      watch().mutate((file) =>
+        mapChannel(file, channelId, (ch) => {
+          if (ch.discoveryAfter !== undefined || ch.sourceAccountId) return ch;
+          const publishedAt = (id: string) =>
+            store.get<DiscoveryRecord>("discovery-videos", recordKey(channelId, id))
+              ?.value.video?.publishedAt;
+          // the upload picked by "also clip their newest video" was queued at addedAt itself
+          const keep = (p: WatchedChannel["pending"][number]) =>
+            p.foundAt === ch.addedAt || (publishedAt(p.id) ?? 0) > ch.addedAt;
+          dropped = ch.pending.filter((p) => !keep(p)).map((p) => p.id);
+          return {
+            ...ch,
+            discoveryAfter: ch.addedAt,
+            pending: ch.pending.filter(keep),
+            seen: [...new Set([...ch.seen, ...dropped])].slice(-500),
+          };
+        }),
+      );
+      for (const id of dropped) {
+        const row = store.get<DiscoveryRecord>("discovery-videos", recordKey(channelId, id));
+        if (row)
+          store.save(
+            "discovery-videos",
+            recordKey(channelId, id),
+            { ...row.value, status: "excluded", reason: ALREADY_THERE },
+            row.revision,
+          );
+      }
+      return dropped.length;
+    }),
+  );
+}
 const recordKey = (channelId: string, videoId: string) =>
   `${channelId}:${videoId}`;
 
@@ -76,6 +116,9 @@ export function recordDiscoveryPage(
   now: Date,
   signal: AbortSignal,
   accountId?: string,
+  /** Pages without publication dates: the first completed scan is the baseline of what was already on the
+   *  channel; after it, only uploads that appear later are new. */
+  dateless?: "baseline" | "after-baseline",
 ): number {
   signal.throwIfAborted();
   return fence(() =>
@@ -112,7 +155,14 @@ export function recordDiscoveryPage(
               continue;
             let readiness = candidate.readiness;
             const cutoff = discoveryCutoff(ch);
-            if (
+            if (dateless === "baseline" && !known.has(candidate.id)) {
+              readiness = {
+                ...readiness,
+                status: "excluded",
+                reason: ALREADY_THERE,
+              };
+            } else if (
+              !dateless &&
               cutoff !== undefined &&
               !Number.isFinite(readiness.video?.publishedAt)
             ) {
@@ -127,6 +177,7 @@ export function recordDiscoveryPage(
                 };
             } else if (
               cutoff !== undefined &&
+              Number.isFinite(readiness.video?.publishedAt) &&
               readiness.video!.publishedAt! <= cutoff
             ) {
               readiness = {
@@ -221,6 +272,7 @@ export async function reconcileCreator(
     .get()
     .channels.find((c) => c.id === channelId);
   if (!ch) throw Error("Creator is no longer watched");
+  adoptStartDate(channelId);
   const now = deps.now?.() ?? new Date();
   const previous = discoveryState(channelId);
   if (!deps.force && (previous.nextAttemptAt ?? 0) > now.getTime())
@@ -273,7 +325,7 @@ export async function reconcileCreator(
       return { channelId, complete: true, discovered: 0, reason };
     }
     if (!accountId) {
-      if (discoveryCutoff(ch) !== undefined)
+      if (ch.sourceAccountId)
         throw Error(
           "Reconnect the creator's original YouTube reading account to resolve publication dates",
         );
@@ -293,6 +345,8 @@ export async function reconcileCreator(
         })),
         now,
         bounded,
+        undefined,
+        previous.lastSuccessAt === undefined ? "baseline" : "after-baseline",
       );
     } else {
       const apiDeps = { ...deps, signal: bounded };

@@ -45,6 +45,8 @@ export function addChannel(
     ...info,
     enabled: true,
     addedAt: o.now.getTime(),
+    // only uploads published after this count as new; the uploads listed here are just the newest few
+    discoveryAfter: o.now.getTime(),
     seen: uploads.filter((u) => u.id !== latest?.id).map((u) => u.id),
     pending: latest
       ? [
@@ -65,13 +67,17 @@ export function addChannel(
 /** C1 imports predating the explicit field retain their original addedAt boundary without rewriting preferences. */
 export const discoveryCutoff = (ch: WatchedChannel): number | undefined =>
   ch.discoveryAfter ?? (ch.sourceAccountId ? ch.addedAt : undefined);
+/** The bounded-feed seam can only date uploads through the creator's reading account; without one it keeps
+ *  the seen-list baseline taken when the channel was added. */
+const datedCutoff = (ch: WatchedChannel) =>
+  ch.sourceAccountId ? discoveryCutoff(ch) : undefined;
 
 /** Sort a channel's latest uploads into new clippable ones, ones to skip for good, and ones to look at again later. */
 export function diffUploads(
   ch: WatchedChannel,
   uploads: Upload[],
 ): { fresh: Upload[]; skipped: Upload[]; unknown: Upload[] } {
-  const cutoff = discoveryCutoff(ch);
+  const cutoff = datedCutoff(ch);
   const known = new Set([...ch.seen, ...ch.pending.map((p) => p.id)]);
   const fresh: Upload[] = [];
   const skipped: Upload[] = [];
@@ -99,7 +105,7 @@ export function applyCheck(
   return mapChannel(file, channelId, (ch) => {
     const { fresh, skipped, unknown } = diffUploads(ch, uploads);
     const waitingDates =
-      discoveryCutoff(ch) === undefined
+      datedCutoff(ch) === undefined
         ? []
         : unknown.filter((u) => !Number.isFinite(u.publishedAt));
     return {

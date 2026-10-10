@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   reconcileCreator,
   discoveryState,
+  adoptStartDate,
 } from "../server/discovery/reconcile";
 import { checkVideoReadiness } from "../server/discovery/readiness";
 import {
@@ -441,4 +442,58 @@ it("deadline passes make durable pagination progress and expired cursors restart
   for (let n = 0; n < 8 && !discoveryState(id).lastSuccessAt; n++) await pass();
   expect(watch().get().channels[0]!.pending).toHaveLength(75);
   expect(new Set(watch().get().channels[0]!.pending.map((p) => p.id)).size).toBe(75);
+});
+
+const upload = (n: number) => ({
+  id: `u${String(n).padStart(10, "0")}`,
+  title: `Upload ${n}`,
+  duration: 600,
+  live: false,
+});
+it("a channel added by link without a reading account queues only uploads that appear after the first scan", async () => {
+  saveReadingAccount({ account: null, tokens: null });
+  watch().mutate((f) =>
+    addChannel(
+      f,
+      { id, name: "Linked", url: `https://www.youtube.com/channel/${id}/videos` },
+      [upload(1)],
+      { now: new Date(now) },
+    ),
+  );
+  expect(watch().get().channels[0]!.discoveryAfter).toBe(now);
+  let page = [1, 2, 3, 4, 5].map(upload);
+  const deps = { now: () => new Date(now + 60_000), legacyList: async () => page };
+  expect((await reconcileCreator(id, new AbortController().signal, deps)).complete).toBe(true);
+  expect(watch().get().channels[0]!.pending).toEqual([]);
+  page = [upload(6), ...page];
+  await reconcileCreator(id, new AbortController().signal, { ...deps, force: true });
+  expect(watch().get().channels[0]!.pending.map((p) => p.id)).toEqual([upload(6).id]);
+});
+it("a channel added by link before start dates existed drops its wrongly queued back catalog once", async () => {
+  saveReadingAccount({ account: null, tokens: null });
+  watch().mutate((f) =>
+    mapChannel(
+      addChannel(
+        f,
+        { id, name: "Old", url: `https://www.youtube.com/channel/${id}/videos` },
+        [],
+        { now: new Date(now) },
+      ),
+      id,
+      (c) => ({
+        ...c,
+        discoveryAfter: undefined,
+        pending: [
+          { id: "picked", title: "Newest at add time", foundAt: now },
+          ...[1, 2, 3].map((n) => ({ id: upload(n).id, title: "old", foundAt: now + 60_000 })),
+        ],
+      }),
+    ),
+  );
+  expect(adoptStartDate(id)).toBe(3);
+  const ch = watch().get().channels[0]!;
+  expect(ch.discoveryAfter).toBe(now);
+  expect(ch.pending.map((p) => p.id)).toEqual(["picked"]);
+  expect(ch.seen).toEqual(expect.arrayContaining([1, 2, 3].map((n) => upload(n).id)));
+  expect(adoptStartDate(id)).toBe(0);
 });
