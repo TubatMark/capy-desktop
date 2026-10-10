@@ -9,6 +9,7 @@ import {
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Store } from "./index";
+import { validateLegacy } from "./legacy-validation";
 export interface LegacyImportInput {
   store: Store;
   dataDir: string;
@@ -20,21 +21,28 @@ export interface ImportReport {
   skipped: string[];
   unresolved: { id: string; location: string }[];
   corrupt: { file: string; error: string }[];
-  backupLocation: string;
+  backupLocation: string | null;
+  diagnostics: {
+    file: string;
+    status: "changed-recovery" | "corrupt-recovery" | "missing-recovery";
+    originalDigest: string;
+    observedDigest?: string;
+    error?: string;
+  }[];
 }
 /** Validate and back up every legacy source before a single transactional activation. Originals are never modified. */
 export async function importLegacy(
   input: LegacyImportInput,
 ): Promise<ImportReport> {
   const { store, dataDir, outputRoot } = input;
-  const backupLocation = path.join(dataDir, "legacy-backups", randomUUID());
-  mkdirSync(backupLocation, { recursive: true });
+  let backupLocation: string | null = null;
   const report: ImportReport = {
     imported: [],
     skipped: [],
     unresolved: [],
     corrupt: [],
     backupLocation,
+    diagnostics: [],
   };
   const files: { file: string; kind: string; id: string }[] = [
     {
@@ -63,36 +71,113 @@ export async function importLegacy(
     body: any;
     digest: string;
   }[] = [];
+  // Completed markers are consulted first: recovery material cannot disable healthy durable state.
+  const completed = store.db
+    .prepare("SELECT source,digest FROM imports")
+    .all() as { source: string; digest: string }[];
+  for (const prior of completed)
+    if (!files.some((entry) => entry.file === prior.source))
+      files.push({ file: prior.source, kind: "recovery", id: prior.source });
+  const pending: typeof files = [];
   for (const entry of files) {
-    if (!existsSync(entry.file)) continue;
+    const prior = completed.find((marker) => marker.source === entry.file);
+    if (prior) {
+      report.skipped.push(entry.id);
+      if (!existsSync(entry.file)) {
+        report.diagnostics.push({
+          file: entry.file,
+          status: "missing-recovery",
+          originalDigest: prior.digest,
+        });
+        continue;
+      }
+      let raw: Buffer;
+      try {
+        raw = readFileSync(entry.file);
+      } catch (error) {
+        report.diagnostics.push({
+          file: entry.file,
+          status: "corrupt-recovery",
+          originalDigest: prior.digest,
+          error: String(error),
+        });
+        continue;
+      }
+      const observedDigest = createHash("sha256").update(raw).digest("hex");
+      if (observedDigest !== prior.digest) {
+        let status: "changed-recovery" | "corrupt-recovery" =
+          "changed-recovery";
+        let error: string | undefined;
+        try {
+          const body = JSON.parse(raw.toString());
+          if (entry.kind !== "recovery")
+            validateLegacy(
+              entry.kind,
+              entry.id,
+              body,
+              entry.kind === "legacy-jobs"
+                ? path.basename(path.dirname(entry.file))
+                : undefined,
+            );
+        } catch (e) {
+          status = "corrupt-recovery";
+          error = String(e);
+        }
+        report.diagnostics.push({
+          file: entry.file,
+          status,
+          originalDigest: prior.digest,
+          observedDigest,
+          error,
+        });
+      }
+      continue;
+    }
+    if (existsSync(entry.file)) pending.push(entry);
+  }
+  for (const diagnostic of report.diagnostics) {
+    const identity = JSON.stringify([
+      diagnostic.file,
+      diagnostic.observedDigest ?? "missing",
+      diagnostic.status,
+    ]);
+    if (!store.get("import-diagnostics", identity))
+      store.put("import-diagnostics", identity, {
+        ...diagnostic,
+        observedAt: Date.now(),
+      });
+  }
+  if (!pending.length) return report;
+  backupLocation = path.join(dataDir, "legacy-backups", randomUUID());
+  report.backupLocation = backupLocation;
+  mkdirSync(backupLocation, { recursive: true });
+  for (const [index, entry] of pending.entries()) {
     const raw = readFileSync(entry.file);
     copyFileSync(
       entry.file,
       path.join(
         backupLocation,
-        `${records.length}-${path.basename(path.dirname(entry.file))}-${path.basename(entry.file)}`,
+        `${index}-${path.basename(path.dirname(entry.file))}-${path.basename(entry.file)}`,
       ),
     );
     try {
       const body = JSON.parse(raw.toString());
-      if (entry.id === "watch" && (!body || !Array.isArray(body.channels)))
-        throw Error("Invalid watch channels");
-      if (entry.id === "queue" && !Array.isArray(body))
-        throw Error("Invalid queue entries");
-      if (
-        entry.kind === "legacy-jobs" &&
-        (!body || typeof body.id !== "string" || !Array.isArray(body.clips))
-      )
-        throw Error("Invalid job identity/clips");
-      const id = entry.kind === "legacy-jobs" ? body.id : entry.id;
+      validateLegacy(
+        entry.kind,
+        entry.id,
+        body,
+        entry.kind === "legacy-jobs"
+          ? path.basename(path.dirname(entry.file))
+          : undefined,
+      );
       records.push({
         ...entry,
-        id,
+        id: entry.kind === "legacy-jobs" ? body.id : entry.id,
         body,
         digest: createHash("sha256").update(raw).digest("hex"),
       });
-    } catch (e) {
-      report.corrupt.push({ file: entry.file, error: String(e) });
+    } catch (error) {
+      report.corrupt.push({ file: entry.file, error: String(error) });
     }
   }
   if (report.corrupt.length) {
@@ -144,6 +229,12 @@ export async function importLegacy(
             if (!ready) report.unresolved.push({ id, location: original });
           }
       }
+      store.put("import-history", r.file, {
+        source: r.file,
+        digest: r.digest,
+        backupLocation,
+        completedAt: Date.now(),
+      });
       store.db
         .prepare("INSERT INTO imports(source,digest,imported_at) VALUES(?,?,?)")
         .run(r.file, r.digest, Date.now());

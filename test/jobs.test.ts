@@ -272,3 +272,23 @@ describe("automation fixes", () => {
     expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "caution" });
   });
 });
+
+describe("authoritative load corruption", () => {
+  it("surfaces invalid durable jobs even when older CLI metadata exists", async () => {
+    const { runtimeStore } = await import("../server/db/runtime");
+    const store = runtimeStore();
+    const id = "invalid-durable";
+    const previous = globalThis.__capyJobs;
+    mkdirSync(path.join(OUT, "invalid"), { recursive: true });
+    writeFileSync(path.join(OUT, "invalid", "meta.json"), JSON.stringify({ id, title: "Older CLI state" }));
+    store.put("legacy-jobs", id, { id, dir: "invalid", clips: [{ n: 1 }] });
+    globalThis.__capyJobs = undefined;
+    try {
+      await expect(jobs().init()).rejects.toThrow();
+      expect(jobs().get(id)).toBeUndefined();
+    } finally {
+      store.db.prepare("DELETE FROM documents WHERE kind=? AND id=?").run("legacy-jobs", id);
+      globalThis.__capyJobs = previous;
+    }
+  });
+});

@@ -89,11 +89,22 @@ class JobManager extends EventEmitter {
   private async load() {
     boot();
     await mkdir(OUTPUT_ROOT, { recursive: true });
-    await importLegacy({ store: runtimeStore(), dataDir: dataDir(), outputRoot: OUTPUT_ROOT });
+    const report = await importLegacy({ store: runtimeStore(), dataDir: dataDir(), outputRoot: OUTPUT_ROOT });
+    for (const diagnostic of report.diagnostics) console.warn("[legacy recovery]", diagnostic);
     const durableJobs = new Map(jobRepository(runtimeStore()).list().map(job => [job.dir, job]));
     for (const d of new Set([...durableJobs.keys(), ...await readdir(OUTPUT_ROOT)])) {
-      try {
-        const job: JobState = durableJobs.get(d) ?? JSON.parse(await readFile(path.join(OUTPUT_ROOT, d, "job.json"), "utf8"));
+      const job = durableJobs.get(d);
+      if (!job) {
+        const legacyFile = path.join(OUTPUT_ROOT, d, "job.json");
+        if (existsSync(legacyFile)) throw Error(`Legacy job was not activated: ${legacyFile}`);
+        // Only a genuinely absent job.json can be treated as an older CLI run.
+        const metaFile = path.join(OUTPUT_ROOT, d, "meta.json");
+        if (!existsSync(metaFile)) continue;
+        const imported = await this.importCliRun(d);
+        if (imported) this.jobs.set(imported.id, imported);
+        continue;
+      }
+      {
         // anything that was mid-flight when the server died is not running anymore
         if (job.status === "analyzing" || job.status === "preparing") {
           job.status = job.clips.length ? "ready" : "error";
@@ -114,10 +125,6 @@ class JobManager extends EventEmitter {
         }
         this.jobs.set(job.id, job);
         if (repaired) await this.save(job);
-      } catch {
-        // no job.json: maybe an older CLI run (meta.json + clips.json). Import it.
-        const imported = await this.importCliRun(d).catch(() => null);
-        if (imported) this.jobs.set(imported.id, imported);
       }
     }
   }
