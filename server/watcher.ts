@@ -14,6 +14,12 @@ import {
 } from "./discovery/reconcile";
 import { abortable } from "./discovery/readiness";
 import {
+  pullChannelEvents,
+  pendingChannelEvents,
+  acknowledgeChannelEvents,
+} from "./discovery/events";
+import { runtimeStore } from "./db/runtime";
+import {
   discoveryCutoff,
   applyCheck,
   checkFailed,
@@ -41,6 +47,7 @@ export interface WatcherDeps {
     force: boolean,
   ): Promise<DiscoveryResult>;
   deadlineMs?: number;
+  pullEvents?(signal: AbortSignal): Promise<number>;
   createJob(
     videoId: string,
     settings: Partial<JobSettings>,
@@ -73,6 +80,9 @@ function defaultDeps(): WatcherDeps {
     list: async () => {
       throw Error("Worker discovery uses the complete uploads reconciler");
     },
+    pullEvents: process.env.CAPY_YOUTUBE_EVENTS_URL
+      ? (signal) => pullChannelEvents(signal)
+      : undefined,
     reconcile: (channelId, signal, force) =>
       reconcileCreator(channelId, signal, {
         force,
@@ -120,6 +130,45 @@ export async function watcherTick(
   const deps = d ?? defaultDeps();
   if (deps.lock() === "busy") return;
   const now = deps.now();
+  if (deps.pullEvents) {
+    const workerSignal = currentWork()?.signal ?? new AbortController().signal;
+    try {
+      const signal = AbortSignal.any([
+        workerSignal,
+        AbortSignal.timeout(10_000),
+      ]);
+      await abortable(deps.pullEvents(signal), signal);
+      fence(() =>
+        runtimeStore().mutate(
+          "discovery-receiver-health",
+          "service",
+          () => ({}),
+          () => ({
+            lastAttemptAt: now.getTime(),
+            lastSuccessAt: now.getTime(),
+          }),
+        ),
+      );
+    } catch (error) {
+      workerSignal.throwIfAborted();
+      fence(() =>
+        runtimeStore().mutate<Record<string, unknown>>(
+          "discovery-receiver-health",
+          "service",
+          () => ({}),
+          (health) => ({
+            ...health,
+            lastAttemptAt: now.getTime(),
+            error:
+              error instanceof Error
+                ? error.message.slice(0, 300)
+                : String(error).slice(0, 300),
+          }),
+        ),
+      );
+    }
+  }
+  const eventHints = pendingChannelEvents();
   const file = watch().get();
 
   const due =
@@ -127,12 +176,16 @@ export async function watcherTick(
     !file.lastCheckAt ||
     now.getTime() - file.lastCheckAt >= file.intervalMin * 60_000;
   const readinessDue = dueReadinessChannels(now.getTime());
-  if ((due || readinessDue.size > 0) && file.channels.some((c) => c.enabled)) {
+  if (
+    (due || readinessDue.size > 0 || eventHints.size > 0) &&
+    file.channels.some((c) => c.enabled)
+  ) {
     state().checking = true;
     try {
       if (due) mutateWatch((f) => ({ ...f, lastCheckAt: now.getTime() }));
       const channels = file.channels.filter(
-        (c) => c.enabled && (due || readinessDue.has(c.id)),
+        (c) =>
+          c.enabled && (due || readinessDue.has(c.id) || eventHints.has(c.id)),
       );
       let position = 0;
       const checkChannel = async () => {
@@ -144,7 +197,13 @@ export async function watcherTick(
           ]);
           try {
             if (deps.reconcile) {
-              await abortable(deps.reconcile(ch.id, signal, !!o.force), signal);
+              const result = await abortable(
+                deps.reconcile(ch.id, signal, !!o.force),
+                signal,
+              );
+              const revision = eventHints.get(ch.id);
+              if (result.complete && revision !== undefined)
+                acknowledgeChannelEvents(ch.id, revision);
               continue;
             }
             // Compatibility seam for bounded-feed callers; normal worker discovery uses the paginated reconciler.
