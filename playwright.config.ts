@@ -11,7 +11,9 @@ process.env.CAPY_STUDIO_TEST_ROOT = root;
 export default defineConfig({
   testDir: "test/e2e",
   fullyParallel: false,
-  workers: 2,
+  // Every spec uses the same durable backend and fixture files. Keep their
+  // mutations sequential; browser contexts alone do not isolate server state.
+  workers: 1,
   timeout: 60000,
   expect: { timeout: 15000 },
   reporter: "list",

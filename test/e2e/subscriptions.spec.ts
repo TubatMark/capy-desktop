@@ -48,6 +48,12 @@ test("imports selected unique creators across pages through the real API without
 }, info) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  const priorCreators = (await (await request.get("/api/automation")).json())
+    .channels;
+  const selectedIds = [id(1), id(110)];
+  expect(
+    priorCreators.some((c: { id: string }) => selectedIds.includes(c.id)),
+  ).toBe(false);
   const before = readFileSync(path.join(data, "accounts.json"), "utf8");
   await page.goto("/automation");
   const picker = page.getByRole("region", {
@@ -84,9 +90,14 @@ test("imports selected unique creators across pages through the real API without
   await expect(picker.getByRole("status")).toContainText("Imported 2 creators");
   const state = await (await request.get("/api/automation")).json();
   expect(state.channels.map((c: { id: string }) => c.id).sort()).toEqual(
-    [id(1), id(110)].sort(),
+    [...priorCreators.map((c: { id: string }) => c.id), ...selectedIds].sort(),
   );
-  for (const c of state.channels)
+  expect(
+    state.channels.filter((c: { id: string }) => !selectedIds.includes(c.id)),
+  ).toEqual(priorCreators);
+  for (const c of state.channels.filter((c: { id: string }) =>
+    selectedIds.includes(c.id),
+  ))
     expect(c).toMatchObject({
       mode: "manual",
       enabled: false,
@@ -106,6 +117,8 @@ test("revoked reading access offers reconnect and changing the reading principal
   request,
 }, info) => {
   const before = readFileSync(path.join(data, "accounts.json"), "utf8");
+  const priorCreators = (await (await request.get("/api/automation")).json())
+    .channels;
   writeFileSync(marker, JSON.stringify({ revoked: true }));
   await page.goto("/automation");
   const picker = page.getByRole("region", {
@@ -142,9 +155,15 @@ test("revoked reading access offers reconnect and changing the reading principal
   await expect(picker).toContainText("Reading account: Reader B");
   const creators = (await (await request.get("/api/automation")).json())
     .channels;
-  expect(creators).toHaveLength(2);
+  expect(creators).toEqual(priorCreators);
+  const importedCreators = creators.filter((c: { id: string }) =>
+    [id(1), id(110)].includes(c.id),
+  );
+  expect(importedCreators.map((c: { id: string }) => c.id).sort()).toEqual(
+    [id(1), id(110)].sort(),
+  );
   expect(
-    creators.every(
+    importedCreators.every(
       (c: { sourceAccountId: string }) => c.sourceAccountId === "reader-a",
     ),
   ).toBe(true);

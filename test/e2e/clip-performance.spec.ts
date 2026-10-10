@@ -78,21 +78,24 @@ test("Capy template suggestion changes only the draft until explicit creator rec
 }) => {
   await page.goto("/automation");
   const panel = page.getByRole("region", { name: "Automation operations" });
-  await panel.getByText("Creator recipe and capacity", { exact: true }).click();
+  const creator = panel
+    .getByText("Performance creator", { exact: true })
+    .locator("..");
+  await creator.getByText("Creator recipe and capacity", { exact: true }).click();
   const before = await (await request.get("/api/automation/health")).json();
   const old = before.policies["performance-creator"].recipeId;
-  await panel
+  await creator
     .getByRole("button", { name: "Use Clean in recipe draft", exact: true })
     .click();
-  await expect(panel.getByLabel("Edit template")).toHaveValue(
+  await expect(creator.getByLabel("Edit template")).toHaveValue(
     "clean-portrait-v1",
   );
   const unsaved = await (await request.get("/api/automation/health")).json();
   expect(unsaved.policies["performance-creator"].recipeId).toBe(old);
-  await panel
+  await creator
     .getByRole("button", { name: "Save creator recipe", exact: true })
     .click();
-  await expect(panel).toContainText("Saved recipe version:");
+  await expect(creator).toContainText("Saved recipe version:");
   const after = await (await request.get("/api/automation/health")).json();
   expect(after.policies["performance-creator"].recipeId).not.toBe(old);
   expect(after.policies["performance-creator"].mode).toBe("automatic_drafts");

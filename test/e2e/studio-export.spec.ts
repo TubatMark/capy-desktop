@@ -4,8 +4,10 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { resolveBin } from "../../src/exec";
+import { allowLocalStudioWork } from "../fixtures/studio-controls";
 const root = process.env.CAPY_STUDIO_TEST_ROOT!,
   source = path.join(root, "export-source.mp4");
+test.beforeEach(async ({ request }) => allowLocalStudioWork(request));
 test.beforeAll(() => {
   mkdirSync(root, { recursive: true });
   execFileSync(resolveBin("ffmpeg"), [

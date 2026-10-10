@@ -2,8 +2,10 @@ import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, copyFileSync } from "node:fs";
 import path from "node:path";
+import { allowLocalStudioWork } from "../fixtures/studio-controls";
 const root = process.env.CAPY_STUDIO_TEST_ROOT!;
 const source = path.join(root, "fixture.mp4");
+test.beforeEach(async ({ request }) => allowLocalStudioWork(request));
 test.beforeAll(() => {
   mkdirSync(root, { recursive: true });
   execFileSync("ffmpeg", [
