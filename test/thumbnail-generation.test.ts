@@ -702,3 +702,341 @@ it("the production image transport uploads only selected frame bytes and returns
   );
   expect(adapter.capabilities.providerQuotaBound).toBe(false);
 }, 30_000);
+
+async function pngRgb(file: string, directory: string) {
+  const { readFile } = await import("node:fs/promises");
+  const raw = path.join(directory, `pixels-${path.basename(file)}.rgb`);
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-i",
+    file,
+    "-pix_fmt",
+    "rgb24",
+    "-f",
+    "rawvideo",
+    "-y",
+    raw,
+  ]);
+  return readFile(raw);
+}
+async function compositionFixture() {
+  const f = await fixture();
+  const { composeThumbnail, thumbnailLayers } =
+    await import("../src/thumbnails/compose");
+  const { buildThumbnailBrief } = await import("../src/thumbnails/brief");
+  const framePath = path.join(f.root, "original.jpg");
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=black:size=320x180",
+    "-frames:v",
+    "1",
+    "-pix_fmt",
+    "yuvj420p",
+    "-y",
+    framePath,
+  ]);
+  const frame = {
+    id: "original-frame",
+    path: framePath,
+    checksum: await checksum(framePath),
+    assetId: "original",
+    sourceUs: 0,
+    renderUs: 0,
+    sourceRevision: 4,
+    renderChecksum: f.source.renderChecksum,
+    frameKind: "finished" as const,
+    quality: { status: "usable" as const, score: 1, sharpness: 1, exposure: 1 },
+  };
+  const brief = buildThumbnailBrief({
+    headline: "Saved composition",
+    aspect: "square",
+    variant: 1,
+    frames: [frame],
+  });
+  return { ...f, frame, brief, composeThumbnail, thumbnailLayers };
+}
+it("recomposes saved provider layers with the same source geometry and background pixels", async () => {
+  const f = await compositionFixture();
+  const backgroundPath = path.join(f.root, "generated.png");
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=magenta:size=1080x1080",
+    "-frames:v",
+    "1",
+    "-y",
+    backgroundPath,
+  ]);
+  const first = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "first-compose"),
+      background: {
+        assetId: await checksum(backgroundPath),
+        path: backgroundPath,
+        checksum: await checksum(backgroundPath),
+      },
+    },
+    new AbortController().signal,
+  );
+  const saved = structuredClone(first.layers);
+  const background = saved.find((l) => l.id === "background")!;
+  expect(background.kind).toBe("image");
+  expect(background.assetId).toBe(await checksum(backgroundPath));
+  saved.reverse();
+  saved.find((l) => l.id === "headline")!.text = "Only the headline changed";
+  const source = saved.find((l) => l.id === "source")!;
+  const second = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "recompose"),
+      background: {
+        assetId: await checksum(backgroundPath),
+        path: backgroundPath,
+        checksum: await checksum(backgroundPath),
+      },
+      layers: saved,
+    },
+    new AbortController().signal,
+  );
+  expect(second.layers.find((l) => l.id === "source")).toEqual(source);
+  const original = await pngRgb(first.versions[0]!.path, f.root),
+    edited = await pngRgb(second.versions[0]!.path, f.root);
+  const pixel = (pixels: Buffer, x: number, y: number) => [
+    ...pixels.subarray((y * 1080 + x) * 3, (y * 1080 + x) * 3 + 3),
+  ];
+  expect(pixel(edited, 10, 10)).toEqual(pixel(original, 10, 10));
+  expect(pixel(edited, 10, 10)[0]).toBeGreaterThan(200);
+  expect(pixel(edited, 10, 10)[2]).toBeGreaterThan(200);
+  for (const [x, y] of [
+    [source.x + 10, source.y + 10],
+    [
+      source.x + Math.floor(source.width / 2),
+      source.y + Math.floor(source.height / 2),
+    ],
+  ])
+    expect(pixel(edited, x!, y!)).toEqual(pixel(original, x!, y!));
+  source.x = 540;
+  source.width = 400;
+  const moved = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "moved-source"),
+      background: {
+        assetId: background.assetId!,
+        path: backgroundPath,
+        checksum: background.assetId!,
+      },
+      layers: saved,
+      textFree: true,
+    },
+    new AbortController().signal,
+  );
+  const movedPixels = await pngRgb(moved.versions[0]!.path, f.root);
+  expect(pixel(movedPixels, 500, 80)[0]).toBeGreaterThan(200);
+  expect(pixel(movedPixels, 500, 80)[2]).toBeGreaterThan(200);
+  expect(pixel(movedPixels, 740, 540).every((channel) => channel < 50)).toBe(
+    true,
+  );
+}, 90_000);
+for (const headline of [
+  "W".repeat(120),
+  "WWWiiiiMMMM llllWWWW iiiiiiiii MMMMM WWWW iiiii WMWMWM iiiWWWW MMMMMM iiiiiWWWW iiiiWWWWMMMMM iiiiiiWWWMMMM",
+]) {
+  it(`fits actual glyph bounds and persists typography for ${headline.startsWith("WWWi") ? "mixed-width" : "wide"} headlines`, async () => {
+    const f = await compositionFixture();
+    const layers = f
+      .thumbnailLayers({ ...f.brief, headline }, f.frame)
+      .filter((l) => l.id !== "accent");
+    layers.find((l) => l.id === "background")!.color = "000000";
+    const text = layers.find((l) => l.id === "headline")!;
+    text.color = "ffffff";
+    const composed = await f.composeThumbnail(
+      {
+        brief: { ...f.brief, headline },
+        frame: f.frame,
+        directory: path.join(f.root, "glyph-fit"),
+        layers,
+      },
+      new AbortController().signal,
+    );
+    const pixels = await pngRgb(composed.versions[0]!.path, f.root);
+    let minX = 1080,
+      minY = 1080,
+      maxX = -1,
+      maxY = -1;
+    for (let y = 0; y < 1080; y++)
+      for (let x = 0; x < 1080; x++) {
+        const offset = (y * 1080 + x) * 3;
+        if (
+          pixels[offset]! > 80 &&
+          pixels[offset + 1]! > 80 &&
+          pixels[offset + 2]! > 80
+        ) {
+          minX = Math.min(minX, x);
+          maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    expect(maxX).toBeGreaterThan(minX);
+    expect(minX).toBeGreaterThanOrEqual(text.x);
+    expect(maxX).toBeLessThan(text.x + text.width);
+    expect(minY).toBeGreaterThanOrEqual(text.y);
+    expect(maxY).toBeLessThan(text.y + text.height);
+    const resolved = composed.layers.find((l) => l.id === "headline")!;
+    expect(resolved.fontSize).toBeLessThan(text.fontSize!);
+    expect(resolved.fontFamily).toBeTruthy();
+    expect(resolved.textLayout!.fontSize).toBe(resolved.fontSize);
+    expect(resolved.textLayout!.fontFamily).toBe(resolved.fontFamily);
+    expect(resolved.textLayout!.lines.length).toBeGreaterThan(1);
+    expect(resolved.textLayout!.width).toBeLessThanOrEqual(resolved.width);
+    expect(resolved.textLayout!.height).toBeLessThanOrEqual(resolved.height);
+    const roundtrip = await f.composeThumbnail(
+      {
+        brief: f.brief,
+        frame: f.frame,
+        directory: path.join(f.root, "glyph-roundtrip"),
+        layers: composed.layers,
+      },
+      new AbortController().signal,
+    );
+    expect(roundtrip.layers).toEqual(composed.layers);
+    expect(roundtrip.versions[0]!.checksum).toBe(
+      composed.versions[0]!.checksum,
+    );
+  }, 90_000);
+}
+
+it("rejects mismatched source and saved background identities before recomposition", async () => {
+  const f = await compositionFixture();
+  const layers = f.thumbnailLayers(f.brief, f.frame);
+  const input = {
+    brief: f.brief,
+    frame: f.frame,
+    directory: path.join(f.root, "reject-assets"),
+    layers,
+  };
+  layers.find((layer) => layer.id === "source")!.assetId = "another-frame";
+  await expect(
+    f.composeThumbnail(input, new AbortController().signal),
+  ).rejects.toThrow(/layers/);
+  layers.find((layer) => layer.id === "source")!.assetId = f.frame.id;
+  await expect(
+    f.composeThumbnail(
+      { ...input, frame: { ...f.frame, checksum: "wrong" } },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/Source frame bytes/);
+  const background = layers.find((layer) => layer.id === "background")!;
+  background.kind = "image";
+  background.assetId = "another-background";
+  await expect(
+    f.composeThumbnail(input, new AbortController().signal),
+  ).rejects.toThrow(/matching background asset/);
+  const asset = {
+    assetId: f.frame.checksum,
+    path: f.frame.path,
+    checksum: f.frame.checksum,
+  };
+  await expect(
+    f.composeThumbnail(
+      { ...input, background: asset },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/matching background asset/);
+  background.assetId = asset.assetId;
+  await expect(
+    f.composeThumbnail(
+      { ...input, background: { ...asset, checksum: "wrong" } },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow(/Background asset identity/);
+}, 30_000);
+
+it("recomposes edited position, font and color, and allows text-free output", async () => {
+  const f = await compositionFixture();
+  const layers = f
+    .thumbnailLayers({ ...f.brief, headline: "Editable" }, f.frame)
+    .filter((layer) => layer.id !== "accent");
+  layers.find((layer) => layer.id === "background")!.color = "000000";
+  const first = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "editable-first"),
+      layers,
+    },
+    new AbortController().signal,
+  );
+  const edited = structuredClone(first.layers);
+  const source = edited.find((layer) => layer.id === "source")!;
+  source.x = 540;
+  source.width = 400;
+  const text = edited.find((layer) => layer.id === "headline")!;
+  text.x = 101;
+  text.y = 151;
+  text.fontFamily = text.fontFamily!.replace(" Bold", "");
+  text.color = "00ff00";
+  const second = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "editable-second"),
+      layers: edited,
+    },
+    new AbortController().signal,
+  );
+  expect(second.layers.find((layer) => layer.id === "source")).toEqual(source);
+  const resolved = second.layers.find((layer) => layer.id === "headline")!;
+  expect(resolved.fontFamily).toBe(text.fontFamily);
+  expect(resolved.textLayout!.fontChecksum).not.toBe(
+    first.layers.find((layer) => layer.id === "headline")!.textLayout!
+      .fontChecksum,
+  );
+  const pixels = await pngRgb(second.versions[0]!.path, f.root);
+  let greenPixels = 0;
+  for (let y = 0; y < 1080; y++)
+    for (let x = 0; x < 1080; x++) {
+      const offset = (y * 1080 + x) * 3;
+      if (
+        pixels[offset + 1]! > 80 &&
+        pixels[offset]! < 40 &&
+        pixels[offset + 2]! < 40
+      ) {
+        greenPixels++;
+        expect(x).toBeGreaterThanOrEqual(text.x);
+        expect(x).toBeLessThan(text.x + text.width);
+        expect(y).toBeGreaterThanOrEqual(text.y);
+        expect(y).toBeLessThan(text.y + text.height);
+      }
+    }
+  expect(greenPixels).toBeGreaterThan(100);
+  // A text-free render does not require the saved font to remain installed.
+  text.fontFamily = "missing-font";
+  const clean = await f.composeThumbnail(
+    {
+      brief: f.brief,
+      frame: f.frame,
+      directory: path.join(f.root, "editable-clean"),
+      layers: edited,
+      textFree: true,
+    },
+    new AbortController().signal,
+  );
+  expect(clean.layers.find((layer) => layer.id === "source")).toEqual(source);
+  const cleanPixels = await pngRgb(clean.versions[0]!.path, f.root);
+  expect(Math.max(...cleanPixels.subarray(0, 100))).toBeLessThan(20);
+  expect(cleanPixels.every((value) => value < 20)).toBe(true);
+}, 90_000);

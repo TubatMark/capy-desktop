@@ -693,7 +693,13 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
               brief,
               frame: selected[variant % selected.length]!,
               directory: path.join(ctx.workspace, `design-${variant}`),
-              background: background?.path,
+              background: background
+                ? {
+                    assetId: background.checksum,
+                    path: background.path,
+                    checksum: background.checksum,
+                  }
+                : undefined,
             },
             ctx.signal,
           );

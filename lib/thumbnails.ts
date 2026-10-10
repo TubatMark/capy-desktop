@@ -89,6 +89,7 @@ export interface ThumbnailBrief {
   sourceFrameIds: string[];
 }
 export interface ThumbnailLayer {
+  /** Reserved source/background IDs identify image roles independently of kind or array order. */
   id: string;
   kind: "image" | "text" | "shape";
   assetId?: string;
@@ -100,6 +101,18 @@ export interface ThumbnailLayer {
   color?: string;
   fontSize?: number;
   fontFamily?: string;
+  /** Resolved drawtext typography; bounds come from an actual glyph raster. */
+  textLayout?: {
+    fontFamily: string;
+    fontChecksum: string;
+    fontSize: number;
+    lineAdvance: number;
+    width: number;
+    height: number;
+    offsetX: number;
+    offsetY: number;
+    lines: { text: string; width: number; y: number }[];
+  };
 }
 export interface ThumbnailVersion {
   id: string;

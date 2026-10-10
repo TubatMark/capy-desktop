@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { run, withCancel } from "../exec";
@@ -11,9 +11,25 @@ import {
   type ThumbnailLayer,
   type ThumbnailVersion,
 } from "../../lib/thumbnails";
-const fontFiles = [
-  "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+export interface ThumbnailBackgroundAsset {
+  assetId: string;
+  path: string;
+  checksum: string;
+}
+const fonts = [
+  {
+    family: "Arial Bold",
+    path: "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+  },
+  {
+    family: "DejaVu Sans Bold",
+    path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  },
+  { family: "Arial", path: "/System/Library/Fonts/Supplemental/Arial.ttf" },
+  {
+    family: "DejaVu Sans",
+    path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  },
 ];
 function escaped(file: string) {
   return file
@@ -21,21 +37,225 @@ function escaped(file: string) {
     .replace(/:/g, "\\:")
     .replace(/'/g, "'\\''");
 }
-function wrap(text: string, max: number) {
-  const lines: string[] = [];
-  let line = "";
-  for (const word of text.split(/\s+/)) {
-    const chunks = word.match(new RegExp(`.{1,${max}}`, "gu")) ?? [];
-    for (const chunk of chunks) {
-      if (line && line.length + chunk.length + 1 > max) {
-        lines.push(line);
-        line = "";
-      }
-      line += (line ? " " : "") + chunk;
+function fontFor(layer: ThumbnailLayer) {
+  const desired = fonts.find(
+    (font) => font.family === layer.fontFamily && existsSync(font.path),
+  );
+  const font =
+    desired ??
+    (!layer.textLayout
+      ? fonts.find((font) => existsSync(font.path))
+      : undefined);
+  if (!font)
+    throw Error(
+      "The saved thumbnail font is unavailable. Install Arial or DejaVu Sans, or select an installed font.",
+    );
+  return font;
+}
+/** Measures the same shaped glyph runs used by drawtext, including kerning and wide glyphs. */
+async function fittedText(
+  layer: ThumbnailLayer,
+  directory: string,
+  signal: AbortSignal,
+) {
+  if (
+    typeof layer.text !== "string" ||
+    layer.text.length > 120 ||
+    /[\x00-\x1f]/.test(layer.text)
+  )
+    throw Error(
+      "Editable headline must contain at most 120 printable characters",
+    );
+  const font = fontFor(layer),
+    fontChecksum = await checksum(font.path);
+  if (
+    layer.textLayout &&
+    layer.textLayout.fontChecksum !== fontChecksum &&
+    layer.fontFamily === layer.textLayout.fontFamily
+  )
+    throw Error(
+      "The saved font bytes changed. Re-select the font before rendering.",
+    );
+  const requested = layer.fontSize ?? 64;
+  if (!Number.isSafeInteger(requested) || requested < 16 || requested > 256)
+    throw Error("Thumbnail font size must be 16–256 pixels");
+  const deadline = Date.now() + 30_000;
+  let measurements = 0;
+  const measured = new Map<string, number>();
+  const command = async (args: string[]) => {
+    signal.throwIfAborted();
+    if (Date.now() >= deadline || measurements++ >= 128)
+      throw Error("Thumbnail text measurement exceeded its bounded allowance");
+    return withCancel(signal, () =>
+      run("ffmpeg", args, {
+        cwd: directory,
+        timeoutMs: Math.min(5_000, deadline - Date.now()),
+      }),
+    );
+  };
+  const widths = async (text: string, size: number) => {
+    const graphemes = [
+      ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+        text,
+      ),
+    ].map((segment) => segment.segment);
+    const prefixes = graphemes.map((_, index) =>
+      graphemes.slice(0, index + 1).join(""),
+    );
+    const missing = [...new Set(prefixes)].filter(
+      (prefix) => !measured.has(`${size}:${prefix}`),
+    );
+    if (missing.length) {
+      const file = `glyph-widths-${measurements}.txt`;
+      await writeFile(path.join(directory, file), missing.join("\n"));
+      const result = await command([
+        "-v",
+        "debug",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=black:s=64x64",
+        "-vf",
+        `drawtext=fontfile='${escaped(font.path)}':textfile=${file}:expansion=none:fontsize=${size}:fontcolor=white:x=0:y=0`,
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+      ]);
+      const actual = new Map<number, number>();
+      for (const match of result.stderr.matchAll(
+        /Line:\s*(\d+)\s*--[^\n]*width64:\s*(-?\d+)/g,
+      ))
+        actual.set(Number(match[1]), Math.ceil(Number(match[2]) / 64));
+      if (actual.size !== missing.length)
+        throw Error(
+          "This ffmpeg cannot report actual glyph layout; install a build with current drawtext support",
+        );
+      for (const [index, prefix] of missing.entries())
+        measured.set(`${size}:${prefix}`, actual.get(index)!);
+      await rm(path.join(directory, file));
     }
+    return prefixes.map((prefix) => ({
+      text: prefix,
+      width: measured.get(`${size}:${prefix}`)!,
+    }));
+  };
+  const wrap = async (size: number) => {
+    let remaining = layer.text!.trim();
+    const lines: { text: string; width: number }[] = [];
+    while (remaining) {
+      const prefixes = await widths(remaining, size),
+        fitting = prefixes.filter((prefix) => prefix.width <= layer.width - 4);
+      if (!fitting.length) return undefined;
+      let selected = fitting.at(-1)!;
+      if (selected.text.length < remaining.length) {
+        const boundary = selected.text.lastIndexOf(" ");
+        if (boundary > 0)
+          selected = prefixes.find(
+            (prefix) => prefix.text === selected.text.slice(0, boundary),
+          )!;
+      }
+      lines.push(selected);
+      remaining = remaining.slice(selected.text.length).trimStart();
+    }
+    return lines;
+  };
+  let size = requested;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const lines = await wrap(size),
+      advance = Math.ceil(size * 1.25);
+    if (!lines || lines.length * advance > layer.height) {
+      if (size === 16) break;
+      const ratio = lines
+        ? Math.sqrt(layer.height / (lines.length * advance))
+        : 0.8;
+      size = Math.max(16, Math.min(size - 1, Math.floor(size * ratio * 0.98)));
+      continue;
+    }
+    // A raster check catches ink overhang, diacritics and vertical extents beyond advance metrics.
+    const margin = size * 2 + 16,
+      canvasWidth = Math.ceil((layer.width + margin * 2) / 2) * 2,
+      canvasHeight = Math.ceil((layer.height + margin * 2) / 2) * 2;
+    const filters = ["format=gray"];
+    for (const [index, line] of lines.entries()) {
+      const file = `glyph-line-${index}.txt`;
+      await writeFile(path.join(directory, file), line.text);
+      filters.push(
+        `drawtext=fontfile='${escaped(font.path)}':textfile=${file}:expansion=none:fontsize=${size}:fontcolor=white:x=${margin}:y=${margin + index * advance}`,
+      );
+    }
+    const raster = `glyph-bounds-${attempt}.gray`;
+    await command([
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      `color=black:s=${canvasWidth}x${canvasHeight}`,
+      "-vf",
+      filters.join(","),
+      "-frames:v",
+      "1",
+      "-pix_fmt",
+      "gray",
+      "-f",
+      "rawvideo",
+      "-y",
+      raster,
+    ]);
+    const bytes = await readFile(path.join(directory, raster));
+    if (bytes.length !== canvasWidth * canvasHeight)
+      throw Error("Unexpected glyph measurement raster dimensions");
+    await rm(path.join(directory, raster));
+    let minX = canvasWidth,
+      minY = canvasHeight,
+      maxX = -1,
+      maxY = -1;
+    for (let y = 0; y < canvasHeight; y++)
+      for (let x = 0; x < canvasWidth; x++)
+        if (bytes[y * canvasWidth + x]! > 1) {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+    const offsetX = maxX < 0 ? 0 : Math.max(0, margin - minX),
+      offsetY = maxY < 0 ? 0 : Math.max(0, margin - minY);
+    const width = maxX < 0 ? 0 : maxX - margin + 1 + offsetX,
+      height = maxY < 0 ? 0 : maxY - margin + 1 + offsetY;
+    if (width <= layer.width && height <= layer.height) {
+      layer.fontSize = size;
+      layer.fontFamily = font.family;
+      layer.textLayout = {
+        fontFamily: font.family,
+        fontChecksum,
+        fontSize: size,
+        lineAdvance: advance,
+        width,
+        height,
+        offsetX,
+        offsetY,
+        lines: lines.map((line, index) => ({ ...line, y: index * advance })),
+      };
+      return {
+        font: font.path,
+        size,
+        lines: layer.textLayout.lines,
+        offsetX,
+        offsetY,
+      };
+    }
+    if (size === 16) break;
+    const ratio = Math.min(
+      layer.width / Math.max(1, width),
+      layer.height / Math.max(1, height),
+    );
+    size = Math.max(16, Math.min(size - 1, Math.floor(size * ratio * 0.98)));
   }
-  if (line) lines.push(line);
-  return lines;
+  throw Error(
+    "Text overflows thumbnail safe area at the minimum readable font size",
+  );
 }
 export function thumbnailLayers(
   brief: ThumbnailBrief,
@@ -118,7 +338,7 @@ export async function composeThumbnail(
     brief: ThumbnailBrief;
     frame: FrameCandidate;
     directory: string;
-    background?: string;
+    background?: ThumbnailBackgroundAsset;
     layers?: ThumbnailLayer[];
     textFree?: boolean;
   },
@@ -127,12 +347,22 @@ export async function composeThumbnail(
   signal.throwIfAborted();
   await mkdir(input.directory, { recursive: true });
   const { width, height } = THUMBNAIL_DIMENSIONS[input.brief.aspect];
-  const layers = input.layers ?? thumbnailLayers(input.brief, input.frame),
+  const layers = structuredClone(
+      input.layers ?? thumbnailLayers(input.brief, input.frame),
+    ),
     base = layers.find((l) => l.id === "background")!,
-    image = layers.find((l) => l.kind === "image")!;
+    image = layers.find((l) => l.id === "source")!;
   if (
     !image ||
     !base ||
+    image.kind !== "image" ||
+    !["shape", "image"].includes(base.kind) ||
+    layers.some(
+      (layer) =>
+        layer.kind === "image" && !["source", "background"].includes(layer.id),
+    ) ||
+    image.assetId !== input.frame.id ||
+    new Set(layers.map((layer) => layer.id)).size !== layers.length ||
     layers.some(
       (l) =>
         ![l.x, l.y, l.width, l.height].every(Number.isFinite) ||
@@ -146,17 +376,38 @@ export async function composeThumbnail(
     )
   )
     throw Error("Thumbnail layers exceed canvas or contain unsupported colors");
+  if ((await checksum(input.frame.path)) !== input.frame.checksum)
+    throw Error("Source frame bytes changed before composition");
+  if (
+    base.kind === "image" &&
+    (!input.background || base.assetId !== input.background.assetId)
+  )
+    throw Error(
+      "Saved background layer requires its matching background asset",
+    );
+  if (input.background) {
+    if (
+      (await checksum(input.background.path)) !== input.background.checksum ||
+      input.background.assetId !== input.background.checksum
+    )
+      throw Error(
+        "Background asset identity/checksum changed before composition",
+      );
+    base.kind = "image";
+    base.assetId = input.background.assetId;
+  }
+  const baseColor = base.color ?? "000000";
   const args = [
     "-v",
     "error",
     "-f",
     "lavfi",
     "-i",
-    `color=c=0x${base.color}:s=${width}x${height}:r=1`,
+    `color=c=0x${baseColor}:s=${width}x${height}:r=1`,
     "-i",
     input.frame.path,
   ];
-  if (input.background) args.push("-i", input.background);
+  if (input.background) args.push("-i", input.background.path);
   const filters: string[] = [];
   let current = "base";
   if (input.background) {
@@ -166,7 +417,7 @@ export async function composeThumbnail(
     filters.push("[0:v][background]overlay=0:0:shortest=1[base]");
   } else filters.push("[0:v]null[base]");
   filters.push(
-    `[1:v]format=rgba,scale=${image.width}:${image.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${image.width}:${image.height}:(ow-iw)/2:(oh-ih)/2:0x${base.color}[subject]`,
+    `[1:v]format=rgba,scale=${image.width}:${image.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${image.width}:${image.height}:(ow-iw)/2:(oh-ih)/2:0x${baseColor}[subject]`,
     `[${current}][subject]overlay=${image.x}:${image.y}:shortest=1[source]`,
   );
   current = "source";
@@ -180,39 +431,15 @@ export async function composeThumbnail(
     );
     current = next;
   }
-  const font = fontFiles.find(existsSync);
-  if (!font)
-    throw Error(
-      "Install Arial or DejaVu Sans for local editable thumbnail text",
-    );
   if (!input.textFree)
     for (const layer of layers.filter((l) => l.kind === "text")) {
-      if (typeof layer.text !== "string" || layer.text.length > 120)
-        throw Error("Editable headline exceeds 120 characters");
-      let size = layer.fontSize ?? 64,
-        lines = wrap(
-          layer.text,
-          Math.max(1, Math.floor(layer.width / (size * 0.7))),
-        );
-      while (
-        (lines.length * size * 1.25 > layer.height ||
-          Math.max(...lines.map((l) => l.length)) * size * 0.7 > layer.width) &&
-        size > 16
-      ) {
-        size -= 2;
-        lines = wrap(
-          layer.text,
-          Math.max(1, Math.floor(layer.width / (size * 0.7))),
-        );
-      }
-      if (lines.length * size * 1.25 > layer.height)
-        throw Error("Text overflows thumbnail safe area");
-      for (const [n, line] of lines.entries()) {
+      const fitted = await fittedText(layer, input.directory, signal);
+      for (const line of fitted.lines) {
         const textFile = `text-${index}.txt`;
-        await writeFile(path.join(input.directory, textFile), line);
+        await writeFile(path.join(input.directory, textFile), line.text);
         const next = `text${index++}`;
         filters.push(
-          `[${current}]drawtext=fontfile='${escaped(font)}':textfile=${textFile}:expansion=none:fontsize=${size}:fontcolor=0x${layer.color ?? "ffffff"}:x=${layer.x}:y=${Math.round(layer.y + n * size * 1.25)}[${next}]`,
+          `[${current}]drawtext=fontfile='${escaped(fitted.font)}':textfile=${textFile}:expansion=none:fontsize=${fitted.size}:fontcolor=0x${layer.color ?? "ffffff"}:x=${layer.x + fitted.offsetX}:y=${layer.y + line.y + fitted.offsetY}[${next}]`,
         );
         current = next;
       }
