@@ -20,6 +20,79 @@ describe("AI routing", () => {
       /cloud/i,
     );
   });
+  it.each(["selection", "diagnostic"] as const)(
+    "%s explicit omitted-model routes use their own candidate, not a legacy model",
+    (task) => {
+      const settings = {
+        ...DEFAULT_AI_ROUTING,
+        tasks: { [task]: { agent: "codex" as const, premium: false } },
+      };
+      expect(
+        resolveAiTask(task, {
+          agent: "claude",
+          model: "claude-sonnet-5-5",
+          settings,
+        }),
+      ).toMatchObject({
+        provider: "codex",
+        model: task === "selection" ? "gpt-6-sol" : "gpt-6-luna",
+      });
+      // An explicit same-agent assignment also means its candidate, rather than
+      // inheriting a legacy premium choice that this task did not authorize.
+      expect(
+        resolveAiTask(task, {
+          agent: "codex",
+          model: "gpt-6-astra",
+          settings,
+        }).model,
+      ).toBe(task === "selection" ? "gpt-6-sol" : "gpt-6-luna");
+      expect(() =>
+        resolveAiTask(task, {
+          agent: "claude",
+          model: "claude-sonnet-5-5",
+          settings: {
+            ...DEFAULT_AI_ROUTING,
+            tasks: {
+              [task]: { agent: "qwen", premium: false },
+            },
+          },
+        }),
+      ).toThrow(/qwen requires an explicit task model assignment/);
+    },
+  );
+  it.each(["selection", "diagnostic"] as const)(
+    "%s preserves legacy implicit models and explicit same-agent model intent",
+    (task) => {
+      expect(
+        resolveAiTask(task, {
+          agent: "claude",
+          model: "claude-sonnet-legacy",
+        }),
+      ).toMatchObject({ provider: "claude", model: "claude-sonnet-legacy" });
+      expect(
+        resolveAiTask(task, {
+          agent: "codex",
+          model: "gpt-6-sol-legacy",
+        }),
+      ).toMatchObject({ provider: "codex", model: "gpt-6-sol-legacy" });
+      expect(
+        resolveAiTask(task, {
+          agent: "claude",
+          model: "claude-sonnet-legacy",
+          settings: {
+            ...DEFAULT_AI_ROUTING,
+            tasks: {
+              [task]: {
+                agent: "claude",
+                model: "claude-haiku-explicit",
+                premium: false,
+              },
+            },
+          },
+        }),
+      ).toMatchObject({ provider: "claude", model: "claude-haiku-explicit" });
+    },
+  );
   it("creator overrides cannot increase limits or enable premium implicitly", () => {
     const p = resolveAiTask("metadata", {
       creatorOverride: { maxJobUsd: 100, maxDayUsd: 100 },

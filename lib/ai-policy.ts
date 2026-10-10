@@ -235,7 +235,9 @@ export function resolveAiTask(
   const selection = task === "selection";
   const model =
     route?.model ??
-    (selection || task === "diagnostic" ? context.model : undefined) ??
+    (!route && (selection || task === "diagnostic")
+      ? context.model
+      : undefined) ??
     defaultAiModel(task, agent);
   const modality =
     context.requiredModality ??
