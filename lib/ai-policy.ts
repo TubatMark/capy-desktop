@@ -73,7 +73,8 @@ export const AI_ADAPTER_CAPABILITIES: Record<
   }
 > = {
   claude: {
-    modalities: ["text"],
+    // Image inputs go through the Agent SDK as base64 content blocks (vision); no image generation.
+    modalities: ["text", "image"],
     local: false,
     modelSelection: true,
     tokenReporting: true,

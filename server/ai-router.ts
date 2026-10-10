@@ -28,6 +28,18 @@ export function withAiContext<T>(context: AiTaskContext, fn: () => T): T {
     fn,
   );
 }
+/** One still sent with a vision task: base64 bytes, never a path or URL. */
+export interface AiImage {
+  mediaType: "image/jpeg" | "image/png";
+  data: string;
+  /** Text placed just before the image so the answer can refer to it. */
+  label?: string;
+}
+/** Small stills only: a frame pick sends a handful of downscaled JPEGs. */
+export const MAX_AI_IMAGES = 10;
+export const MAX_AI_IMAGE_BYTES = 400_000;
+/** Conservative admission estimate per image; the API bills roughly width*height/750 tokens. */
+const IMAGE_TOKEN_ESTIMATE = 1_600;
 export interface RoutedAiRequest {
   task: AiTaskId;
   agent: AgentId;
@@ -41,6 +53,8 @@ export interface RoutedAiRequest {
   context?: AiTaskContext;
   parameters?: Record<string, unknown>;
   validate?: (data: unknown) => boolean;
+  /** Only for image-capable routes (task "vision"); text adapters never receive them. */
+  images?: AiImage[];
 }
 export interface RoutedAiResult {
   data: unknown;
@@ -64,6 +78,7 @@ export type AiAdapter = (
     timeoutMs: number;
     maxBudgetUsd: number;
     retryLimit: number;
+    images?: AiImage[];
   },
 ) => Promise<RoutedAiResult>;
 function canonical(value: unknown): unknown {
@@ -99,8 +114,30 @@ export async function routeAiTask(
     throw Error(
       "This task uses a local deterministic adapter, not a model prompt",
     );
+  const images = request.images ?? [];
+  if (images.length) {
+    if (policy.modality !== "image")
+      throw Error(`${request.task} does not accept image inputs`);
+    if (
+      images.length > MAX_AI_IMAGES ||
+      images.some(
+        (i) =>
+          !["image/jpeg", "image/png"].includes(i.mediaType) ||
+          typeof i.data !== "string" ||
+          !i.data ||
+          i.data.length > MAX_AI_IMAGE_BYTES ||
+          !/^[A-Za-z0-9+/]+={0,2}$/.test(i.data),
+      )
+    )
+      throw Error(
+        `Send at most ${MAX_AI_IMAGES} small JPEG/PNG images to an AI task`,
+      );
+  }
   const inputBytes = Buffer.byteLength(
-    request.prompt + request.system + JSON.stringify(request.schema),
+    request.prompt +
+      request.system +
+      JSON.stringify(request.schema) +
+      images.map((i) => i.label ?? "").join(""),
     "utf8",
   );
   if (inputBytes > policy.contextLimit)
@@ -121,6 +158,15 @@ export async function routeAiTask(
     effort: request.effort ?? "low",
     maxTurns: request.maxTurns ?? 1,
     outputLimit: policy.outputLimit,
+    ...(images.length
+      ? {
+          images: images.map((i) => ({
+            mediaType: i.mediaType,
+            label: i.label,
+            digest: createHash("sha256").update(i.data).digest("hex"),
+          })),
+        }
+      : {}),
   });
   const validator = z.fromJSONSchema(request.schema);
   const validate = (data: unknown) =>
@@ -180,7 +226,9 @@ export async function routeAiTask(
       ceilingUsd: policy.attemptCeilingUsd * routes.length,
       requests: routes.length * turnAllowance,
       tokens:
-        (inputBytes + policy.outputLimit * 4) * routes.length * turnAllowance,
+        (inputBytes + images.length * IMAGE_TOKEN_ESTIMATE + policy.outputLimit * 4) *
+        routes.length *
+        turnAllowance,
       ...budgetLimits(policy),
     },
     store,
@@ -214,6 +262,7 @@ export async function routeAiTask(
             timeoutMs: deadline - Date.now(),
             maxBudgetUsd: policy.attemptCeilingUsd,
             retryLimit: 0,
+            ...(images.length ? { images } : {}),
           },
         );
         admissionUnits += turnAllowance;

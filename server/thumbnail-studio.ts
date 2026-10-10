@@ -1,4 +1,5 @@
 import { deliveryMutationReason } from "./queue";
+import { clipThumbnailDesigns } from "./queue-thumbnails";
 import { randomUUID } from "node:crypto";
 import { realpath, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -33,6 +34,7 @@ import { composeThumbnail, thumbnailLayers } from "../src/thumbnails/compose";
 import {
   hashManifest,
   buildPublishPackage,
+  decide,
   hashFile,
 } from "./publication-policy";
 const fail = (message: string, status = 400) =>
@@ -543,8 +545,40 @@ export async function attachThumbnail(
   editRevision: number,
   deps = thumbnailDependencies(),
 ): Promise<PublishPackage> {
+  return attachToEntry(
+    (e) => e.publishPackage?.id === packageId,
+    thumbnailId,
+    editRevision,
+    deps,
+  );
+}
+/** Statuses whose post can still take a different thumbnail (it returns to review). */
+const ATTACHABLE: QueueEntry["status"][] = ["review", "scheduled", "failed"];
+/**
+ * Export the design as the jpg that will be uploaded and bind it to one queue entry's publish package.
+ * An entry not yet approved has no package: `provisional` builds the same package approval would, without
+ * approving it, so the designed thumbnail survives the later decision.
+ */
+async function attachToEntry(
+  match: (e: QueueEntry) => boolean,
+  thumbnailId: string,
+  editRevision: number,
+  deps: ThumbnailDependencies,
+  options: {
+    note?: string;
+    provisional?: boolean;
+    statuses?: QueueEntry["status"][];
+  } = {},
+): Promise<PublishPackage> {
   const doc = getThumbnail(thumbnailId, editRevision, deps);
   const frame = frameFor(doc, deps);
+  const seen = deps.store
+    .get<QueueEntry[]>("legacy-state", "queue")
+    ?.value.find(match);
+  const provisional =
+    options.provisional && seen && !seen.publishPackage
+      ? decide(seen, false, new Date()).publishPackage
+      : undefined;
   const output = await exportThumbnail(
     thumbnailId,
     editRevision,
@@ -553,13 +587,20 @@ export async function attachThumbnail(
   );
   return deps.store.transaction(() => {
     const row = deps.store.get<QueueEntry[]>("legacy-state", "queue");
-    const entry = row?.value.find((e) => e.publishPackage?.id === packageId);
+    const found = row?.value.find(match);
+    const entry =
+      found && provisional && !found.publishPackage
+        ? found.updatedAt === seen?.updatedAt
+          ? { ...found, publishPackage: provisional }
+          : undefined
+        : found;
     if (
       !entry ||
       !entry.publishPackage ||
       !entry.publicationFiles ||
       entry.progress ||
-      ["posting", "posted", "needs_action"].includes(entry.status)
+      ["posting", "posted", "needs_action"].includes(entry.status) ||
+      (options.statuses && !options.statuses.includes(entry.status))
     )
       throw fail("Publish package unavailable for attachment", 409);
     const reason = deliveryMutationReason(entry, deps.store);
@@ -602,13 +643,17 @@ export async function attachThumbnail(
       id: `${pkg.id}:thumbnail:${randomUUID()}`,
       thumbnail: attachment,
     });
-    deps.store.put("thumbnail-attachments", attached.packageHash, {
+    const record = {
       ...attachment,
       editRevision,
       path: output.path,
       packageId: attached.id,
-    });
-    deps.store.put("publication-history", pkg.packageHash, pkg);
+    };
+    deps.store.put("thumbnail-attachments", attached.packageHash, record);
+    // Approval rebuilds the package (new hash after a text edit); the version ID still finds this record.
+    deps.store.put("thumbnail-attachments", `version:${versionId}`, record);
+    if (found?.publishPackage)
+      deps.store.put("publication-history", pkg.packageHash, pkg);
     deps.store.save(
       "legacy-state",
       "queue",
@@ -632,7 +677,8 @@ export async function attachThumbnail(
                 ...e.history,
                 {
                   t: Date.now(),
-                  msg: "Thumbnail attached; new approval required",
+                  msg:
+                    options.note ?? "Thumbnail attached; new approval required",
                 },
               ],
             },
@@ -641,6 +687,90 @@ export async function attachThumbnail(
     );
     return attached;
   });
+}
+const autoAttachable = (e: QueueEntry, source: ThumbnailSourceRef) =>
+  source.kind === "legacy" &&
+  !e.source &&
+  e.platform === "youtube" &&
+  e.status === "review" &&
+  e.jobId === source.jobId &&
+  e.n === source.clipN &&
+  !e.progress &&
+  !e.publishPackage?.thumbnail?.designId;
+/**
+ * Automatic designs: attach the top one to the clip's YouTube posts that still wait for review. Posts already
+ * scheduled, posting or posted are never touched, nor is a design someone already chose. Returns attached keys.
+ */
+export async function autoAttachThumbnail(
+  source: ThumbnailSourceRef,
+  designId: string,
+  deps = thumbnailDependencies(),
+): Promise<string[]> {
+  const doc = getThumbnail(designId, undefined, deps);
+  if (doc.reviewState === "stale" || doc.generationState !== "ready")
+    return [];
+  const keys = (
+    deps.store.get<QueueEntry[]>("legacy-state", "queue")?.value ?? []
+  )
+    .filter((e) => autoAttachable(e, source))
+    .map((e) => e.key);
+  const attached: string[] = [];
+  for (const key of keys) {
+    await attachToEntry(
+      (e) => e.key === key && autoAttachable(e, source),
+      designId,
+      doc.editRevision,
+      deps,
+      { provisional: true, statuses: ["review"], note: "AI thumbnail added" },
+    );
+    attached.push(key);
+  }
+  return attached;
+}
+/** Queue → "use this thumbnail": attach another design of the same clip; a scheduled post returns to review. */
+export async function switchQueueThumbnail(
+  key: string,
+  designId: string,
+  deps = thumbnailDependencies(),
+): Promise<QueueEntry> {
+  const entry = deps.store
+    .get<QueueEntry[]>("legacy-state", "queue")
+    ?.value.find((e) => e.key === key);
+  if (!entry) throw fail("Not in the queue", 404);
+  if (
+    entry.platform !== "youtube" ||
+    entry.source ||
+    entry.jobId === undefined ||
+    entry.n === undefined
+  )
+    throw fail("Only YouTube posts use a custom thumbnail");
+  if (!ATTACHABLE.includes(entry.status))
+    throw fail("This post can't change its thumbnail now", 409);
+  if (
+    !clipThumbnailDesigns(entry.jobId, entry.n, deps.store).some(
+      (d) => d.id === designId,
+    )
+  )
+    throw fail("That thumbnail isn't one of this clip's current designs", 404);
+  const doc = getThumbnail(designId, undefined, deps);
+  if (entry.publishPackage?.thumbnail?.designId === designId) {
+    const attachment = deps.store.get<{ editRevision: number }>(
+      "thumbnail-attachments",
+      entry.publishPackage.packageHash,
+    )?.value;
+    if (attachment?.editRevision === doc.editRevision) return entry;
+  }
+  await attachToEntry((e) => e.key === key, designId, doc.editRevision, deps, {
+    provisional: true,
+    statuses: ATTACHABLE,
+    note:
+      entry.status === "scheduled"
+        ? "Thumbnail changed; approve again to schedule it"
+        : "Thumbnail changed",
+  });
+  return deps.store
+    .get<QueueEntry[]>("legacy-state", "queue")!
+    .value.find((e) => e.key === key)!;
 }
 export interface ThumbnailRegeneration {
   id: string;

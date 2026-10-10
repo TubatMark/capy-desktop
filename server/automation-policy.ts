@@ -330,6 +330,8 @@ export function unsavedCreatorPolicy(
     minDurationSec: c.settings.minVideoSec,
     destinationAccountIds: ["local-drafts", ...destinationIds],
     requireModelReview: true,
+    // Every automated clip gets designed thumbnails; saved options keep their own choice.
+    thumbnailGeneration: "automatic",
   };
 }
 export function creatorPolicy(channelId: string): CreatorPolicy {
@@ -602,11 +604,21 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
       "thumbnails",
       pkg.thumbnail.designId,
     );
-    const attachment = runtimeStore().get<{
+    type Attachment = {
       editRevision: number;
       checksum: string;
       versionId: string;
-    }>("thumbnail-attachments", pkg.packageHash)?.value;
+    };
+    // Re-approval after a text edit rebuilds the package under a new hash; the exact version still matches.
+    const attachment =
+      runtimeStore().get<Attachment>("thumbnail-attachments", pkg.packageHash)
+        ?.value ??
+      (pkg.thumbnail.versionId
+        ? runtimeStore().get<Attachment>(
+            "thumbnail-attachments",
+            `version:${pkg.thumbnail.versionId}`,
+          )?.value
+        : undefined);
     const selected =
       attachment && row
         ? row.revision === attachment.editRevision

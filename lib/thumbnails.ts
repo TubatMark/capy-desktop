@@ -77,6 +77,8 @@ export interface ThumbnailBriefInput {
   aspect: ThumbnailAspect;
   style?: "bold" | "clean";
   variant: number;
+  /** Overrides the variant's default layout (the AI pick puts its chosen layout first). */
+  layout?: ThumbnailLayout;
   frames: FrameCandidate[];
 }
 export interface ThumbnailBrief {
@@ -147,6 +149,8 @@ export interface ThumbnailDesign extends Omit<
     reason?: string;
     accounting: "application-estimates" | "verified-provider-bounds" | "local";
   };
+  /** Automatic designs: whether the AI chose the frame/headline or the local ranking did. */
+  pick?: { by: "ai" | "heuristic"; reason?: string };
 }
 export interface ThumbnailRequest {
   source: ThumbnailSourceRef;
@@ -166,6 +170,8 @@ export interface ThumbnailRequest {
   allowLocal?: boolean;
   maxJobUsd?: number;
   maxDayUsd?: number;
+  /** What the clip says, for the AI frame/headline pick of automatic requests only. */
+  clipContext?: { title?: string; hook?: string; transcript?: string };
 }
 
 /** editRevision is independent of the exact footage/project revision. */

@@ -28,6 +28,17 @@ export interface PostText {
 }
 
 /** One clip going to one platform (server/queue.ts owns these). */
+/** One designed thumbnail the Queue can switch a post to; `url` previews its latest jpg. */
+export interface QueueThumbnailOption {
+  designId: string;
+  url: string;
+  layout: "bold" | "editorial" | "minimal";
+  headline?: string;
+  /** "ai" when the AI chose its frame and headline. */
+  pickedBy?: "ai" | "heuristic";
+  attached: boolean;
+}
+
 export interface QueueEntry {
   remoteSchedule?: {
     publishAt: number;
@@ -68,7 +79,16 @@ export interface QueueEntry {
   seo?: SeoReport;
   videoTitle?: string;
   videoUrl?: string;
+  /** The picture to show for this post: the attached designed thumbnail when there is one, else the raw frame. */
   thumbUrl?: string;
+  /** The raw frame grab (publicQueueEntry only; set when thumbUrl shows a design instead). */
+  frameThumbUrl?: string;
+  /** The design attached to this post (publicQueueEntry only). */
+  thumbnailDesignId?: string;
+  /** The exact designed jpg that will be uploaded with the video (publicQueueEntry only). */
+  thumbnailDesignUrl?: string;
+  /** This clip's designs to switch between (YouTube posts; publicQueueEntry only). */
+  thumbnailOptions?: QueueThumbnailOption[];
   thumbAt?: number;
   /** Unix ms. */
   slotAt?: number;
