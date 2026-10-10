@@ -5,7 +5,7 @@ import { api } from "@/hooks/use-job";
 import type { QueueEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const LAYOUT = { bold: "Bold", editorial: "Editorial", minimal: "Minimal" } as const;
+const LAYOUT = { original: "Original", bold: "Bold", editorial: "Editorial", minimal: "Minimal" } as const;
 
 /** The designed thumbnails for a clip's YouTube post: the one that uploads with the video is ticked; picking
  *  another swaps it (a scheduled post goes back to waiting for your OK). */

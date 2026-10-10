@@ -17,6 +17,7 @@ import type {
   ThumbnailSource,
   ThumbnailSourceRef,
 } from "../lib/thumbnails";
+import { thumbnailProvenanceComplete } from "../lib/thumbnails";
 import type { Store } from "./db";
 import { runtimeStore } from "./db/runtime";
 import { OUTPUT_ROOT } from "./paths";
@@ -32,7 +33,15 @@ import { extractFrameCandidates } from "../src/thumbnails/frames";
 import { buildThumbnailBrief } from "../src/thumbnails/brief";
 import { creatorPolicy } from "./automation-policy";
 import { pickThumbnail, type VisionAsk } from "./thumbnail-pick";
-import { composeThumbnail } from "../src/thumbnails/compose";
+import {
+  composeOriginalThumbnail,
+  composeThumbnail,
+} from "../src/thumbnails/compose";
+import {
+  sourceThumbnail,
+  type CachedSourceThumbnail,
+  type FetchImage,
+} from "./source-thumbnail";
 import {
   configuredImageProvider,
   type ImageProvider,
@@ -48,6 +57,8 @@ export interface ThumbnailDependencies {
   allowAutomatic?: (source: ThumbnailSourceRef) => boolean;
   /** Vision question for the automatic frame/headline pick; defaults to Claude through the AI router. */
   ask?: VisionAsk;
+  /** Downloads the source video's YouTube thumbnail for the "original" design; defaults to fetch. */
+  fetchImage?: FetchImage;
 }
 /** Only clips the creator automation made, for a channel whose saved (or default) options say "automatic". */
 export function automaticThumbnailsAllowed(
@@ -351,6 +362,21 @@ function sourceStale(source: ThumbnailSourceRef, deps: ThumbnailDependencies) {
     row.value.clips.find((c) => c.n === source.clipN)?.render.status !== "done"
   );
 }
+/** The source video's ID for legacy clips; "original" designs must come from this video. */
+function sourceVideoId(source: ThumbnailSourceRef, deps: ThumbnailDependencies) {
+  return source.kind === "legacy"
+    ? deps.store.get<JobState>("legacy-jobs", source.jobId)?.value.videoId
+    : undefined;
+}
+/** Cached next to the job's files (one source video per job), else under studio/. */
+function sourceThumbnailDirectory(job: JobState, root: string) {
+  const fallback = path.join(root, "studio", "source-thumbnails", job.videoId);
+  if (!job.dir) return fallback;
+  const directory = path.resolve(root, job.dir);
+  return directory.startsWith(path.resolve(root) + path.sep)
+    ? directory
+    : fallback;
+}
 /** Staleness is computed against current media identity; every old version remains downloadable. */
 export function listThumbnails(
   source?: ThumbnailSourceRef,
@@ -361,7 +387,11 @@ export function listThumbnails(
     .map((row) => {
       const design = row.value;
       if (
-        sourceStale(design.sourceIdentity, deps) &&
+        (sourceStale(design.sourceIdentity, deps) ||
+          !thumbnailProvenanceComplete(
+            design,
+            sourceVideoId(design.sourceIdentity, deps),
+          )) &&
         design.reviewState !== "stale"
       ) {
         const stale = { ...design, reviewState: "stale" as const };
@@ -653,6 +683,83 @@ async function imageResults(
     );
   }
 }
+/**
+ * The "original" design: the source video's own thumbnail with the clip headline. It leads the designs (and is
+ * the one auto-attached); if it can't be composed the frame designs stand alone.
+ */
+async function originalDesign(
+  ctx: StageContext,
+  input: ThumbnailRequest,
+  headline: string,
+  found: CachedSourceThumbnail | undefined,
+  deps: ThumbnailDependencies,
+) {
+  if (!found || input.source.kind !== "legacy") return undefined;
+  try {
+    if (sourceVideoId(input.source, deps) !== found.videoId) return undefined;
+    const image = {
+      assetId: found.checksum,
+      path: await trustedPath(found.path, deps.root, found.checksum),
+      checksum: found.checksum,
+    };
+    const composed = await composeOriginalThumbnail(
+      {
+        aspect: input.aspect,
+        headline,
+        image,
+        directory: path.join(ctx.workspace, "design-original"),
+      },
+      ctx.signal,
+    );
+    const id = aiCacheIdentity({ work: ctx.lease.id, variant: "original" }),
+      destination = path.join(deps.root, "studio", "thumbnails", id),
+      artifacts: { from: string; to: string }[] = [];
+    const versions = composed.versions.map((v) => {
+      const to = path.join(destination, `${v.id}.${v.format}`);
+      artifacts.push({ from: v.path, to });
+      return { ...v, path: to };
+    });
+    const design: ThumbnailDesign = {
+      id,
+      name: `original — ${headline}`,
+      sourceIdentity: input.source,
+      legacyClipId: `${input.source.jobId}:${input.source.clipN}`,
+      renderChecksum: input.source.renderChecksum,
+      sourceFrames: [],
+      sourceThumbnail: {
+        videoId: found.videoId,
+        url: found.url,
+        checksum: found.checksum,
+      },
+      aspectPreset: input.aspect,
+      layout: "original",
+      layers: composed.layers,
+      versions,
+      provenance: {
+        provider: "local",
+        model: "none",
+        prompt: `The source video's own thumbnail (${found.url}), kept whole and composed locally with the clip headline.`,
+        capability: "local-composition",
+      },
+      imageGeneration: { status: "unavailable", accounting: "local" },
+      generationState: "ready",
+      reviewState: "pending",
+    };
+    return {
+      design,
+      artifacts,
+      asset: {
+        id: found.checksum,
+        path: image.path,
+        checksum: found.checksum,
+        kind: "source-thumbnail",
+      },
+    };
+  } catch (error) {
+    if (error instanceof LeaseLostError || ctx.signal.aborted) throw error;
+    return undefined;
+  }
+}
 export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
   return [
     {
@@ -748,6 +855,41 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
       },
     },
     {
+      // Automatic clips: the source video's own YouTube thumbnail, fetched once per video. Any failure
+      // (offline, 404, placeholder) just leaves the frame designs.
+      name: "thumbnail-original",
+      timeoutMs: 60_000,
+      run: async (ctx) => {
+        const input = requestFor(ctx, deps);
+        if (!aiPicks(input) || input.source.kind !== "legacy") return;
+        const job = deps.store.get<JobState>(
+          "legacy-jobs",
+          input.source.jobId,
+        )?.value;
+        if (!job?.videoId) return;
+        try {
+          const found = await sourceThumbnail(
+            {
+              videoId: job.videoId,
+              directory: sourceThumbnailDirectory(job, deps.root),
+            },
+            ctx.signal,
+            deps.fetchImage,
+          );
+          ctx.assert();
+          return found ? { data: { sourceThumbnail: found } } : undefined;
+        } catch (error) {
+          if (error instanceof LeaseLostError || ctx.signal.aborted) throw error;
+          return {
+            data: {
+              sourceThumbnailError:
+                error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      },
+    },
+    {
       name: "thumbnail-designs",
       expensive: true,
       timeoutMs: 600_000,
@@ -779,6 +921,13 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
         const selected = frames.slice(0, 3);
         for (const frame of selected)
           await trustedPath(frame.path, deps.root, frame.checksum);
+        const original = await originalDesign(
+          ctx,
+          input,
+          headline,
+          ctx.data.sourceThumbnail as CachedSourceThumbnail | undefined,
+          deps,
+        );
         const generated = await imageResults(
             { ...input, headline },
             selected,
@@ -786,8 +935,10 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
             deps,
             layouts,
           ),
-          designs: ThumbnailDesign[] = [],
-          artifacts: { from: string; to: string }[] = [];
+          designs: ThumbnailDesign[] = original ? [original.design] : [],
+          artifacts: { from: string; to: string }[] = original
+            ? [...original.artifacts]
+            : [];
         for (let variant = 0; variant < (input.variantCount ?? 3); variant++) {
           const brief = buildThumbnailBrief({
             headline,
@@ -898,19 +1049,22 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
         return {
           data: {
             designs,
-            generatedAssets: generated.results
-              .flatMap((r) => r?.assets ?? [])
-              .map((a) => ({
-                id: a.checksum,
-                path: path.join(
-                  deps.root,
-                  "studio",
-                  "thumbnail-assets",
-                  `${a.checksum}.png`,
-                ),
-                checksum: a.checksum,
-                kind: a.kind,
-              })),
+            generatedAssets: [
+              ...(original ? [original.asset] : []),
+              ...generated.results
+                .flatMap((r) => r?.assets ?? [])
+                .map((a) => ({
+                  id: a.checksum,
+                  path: path.join(
+                    deps.root,
+                    "studio",
+                    "thumbnail-assets",
+                    `${a.checksum}.png`,
+                  ),
+                  checksum: a.checksum,
+                  kind: a.kind,
+                })),
+            ],
           },
           artifacts,
         };

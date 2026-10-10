@@ -20,7 +20,10 @@ import type {
   ThumbnailDesign,
   ThumbnailStudioDocument,
 } from "../lib/thumbnails";
-import { thumbnailReviewManifest } from "../lib/thumbnails";
+import {
+  thumbnailProvenanceComplete,
+  thumbnailReviewManifest,
+} from "../lib/thumbnails";
 import { hashManifest } from "./publication-policy";
 import { fence } from "./worker/context";
 export function planCreatorWork(input: CreatorWorkInput): WorkDecision {
@@ -498,7 +501,7 @@ export function automationPublicationFiles<
       thumbnail?.designId &&
       thumbnail.versionId &&
       thumbnail.sourceIdentity &&
-      thumbnail.sourceFrame
+      (thumbnail.sourceFrame || thumbnail.sourceThumbnail)
     )
   ) {
     const { thumbFile: _omitted, ...selected } = files;
@@ -649,16 +652,32 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
       selected &&
       hashManifest(selected.sourceIdentity) === hashManifest(source) &&
       source?.renderChecksum === pkg.artifact.checksum;
-    const frame = pkg.thumbnail.sourceFrame;
-    const frameMatches =
-      selected &&
-      frame &&
-      selected.sourceFrames.some(
-        (f) =>
-          f.assetId === frame.assetId &&
-          f.sourceUs === frame.sourceUs &&
-          f.checksum === frame.checksum,
-      );
+    const frame = pkg.thumbnail.sourceFrame,
+      original = pkg.thumbnail.sourceThumbnail;
+    // Frame designs must name one of their frames; "original" designs the exact source-video thumbnail.
+    const provenanceMatches =
+      !!selected &&
+      thumbnailProvenanceComplete(
+        selected,
+        source?.kind === "legacy"
+          ? runtimeStore().get<JobState>("legacy-jobs", source.jobId)?.value
+              .videoId
+          : undefined,
+      ) &&
+      (selected.sourceThumbnail
+        ? !frame &&
+          !!original &&
+          original.videoId === selected.sourceThumbnail.videoId &&
+          original.url === selected.sourceThumbnail.url &&
+          original.checksum === selected.sourceThumbnail.checksum
+        : !original &&
+          !!frame &&
+          selected.sourceFrames.some(
+            (f) =>
+              f.assetId === frame.assetId &&
+              f.sourceUs === frame.sourceUs &&
+              f.checksum === frame.checksum,
+          ));
     if (
       !selected ||
       !attachment ||
@@ -668,7 +687,7 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
       selected.reviewState === "stale" ||
       selected.reviewState === "blocked" ||
       !matches ||
-      !frameMatches
+      !provenanceMatches
     )
       reasons.push(
         "Selected thumbnail revision, provenance or composition is stale or failed",
@@ -691,7 +710,7 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
       pkg.thumbnail?.designId &&
       pkg.thumbnail.versionId &&
       pkg.thumbnail.sourceIdentity &&
-      pkg.thumbnail.sourceFrame
+      (pkg.thumbnail.sourceFrame || pkg.thumbnail.sourceThumbnail)
     ) &&
     p.optionalThumbnailFallback !== "none"
   )

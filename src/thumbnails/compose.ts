@@ -513,3 +513,244 @@ export async function composeThumbnail(
     ),
   };
 }
+
+/** The source video's own thumbnail as an image asset (assetId is its checksum). */
+export interface SourceThumbnailAsset {
+  assetId: string;
+  path: string;
+  checksum: string;
+}
+/**
+ * Default layers of an "original" design: a blurred fill of the source thumbnail (background), the
+ * thumbnail itself as a rounded card below the middle (source), an accent rule and the headline above it.
+ */
+export function originalThumbnailLayers(
+  aspect: ThumbnailBrief["aspect"],
+  headline: string,
+  assetId: string,
+): ThumbnailLayer[] {
+  const { width: w, height: h } = THUMBNAIL_DIMENSIONS[aspect];
+  const m = Math.round(Math.min(w, h) * 0.045),
+    portrait = h > w,
+    gap = Math.round(h * 0.035),
+    top = portrait ? Math.round(h * 0.135) : m,
+    band = Math.round(h * (portrait ? 0.2 : 0.16)),
+    accentY = top + band + Math.round(gap * 0.6),
+    accentH = Math.round(Math.min(w, h) * 0.013),
+    cardY = accentY + accentH + gap,
+    // Slightly wider than the text margin: the original reads as the hero, close to full width.
+    cardW = Math.min(
+      w - Math.round(m * 1.3),
+      Math.floor(((h - cardY - m) * 16) / 9),
+    ),
+    cardH = Math.round((cardW * 9) / 16),
+    cardX = Math.round((w - cardW) / 2);
+  return [
+    {
+      id: "background",
+      kind: "image",
+      assetId,
+      x: 0,
+      y: 0,
+      width: w,
+      height: h,
+    },
+    {
+      id: "source",
+      kind: "image",
+      assetId,
+      x: cardX,
+      y: cardY,
+      width: cardW,
+      height: cardH,
+    },
+    {
+      id: "accent",
+      kind: "shape",
+      x: cardX,
+      y: accentY,
+      width: Math.round(w * 0.15),
+      height: accentH,
+      color: "ffd94a",
+    },
+    {
+      id: "headline",
+      kind: "text",
+      text: headline,
+      x: cardX,
+      y: top,
+      width: cardW,
+      height: band,
+      color: "ffffff",
+      fontSize: Math.round(Math.min(w, h) * 0.089),
+      fontFamily: "Arial Bold",
+    },
+  ];
+}
+/** Antialiased rounded-rectangle alpha for geq, inset by `inset` pixels on every side. */
+function roundedAlpha(radius: number, inset = 0, opacity = 1) {
+  const a = inset + radius;
+  const dx = `max(0,${a}-X)+max(0,X-(W-1-${a}))`,
+    dy = `max(0,${a}-Y)+max(0,Y-(H-1-${a}))`;
+  return `${Math.round(255 * opacity)}*clip(${radius}+0.5-hypot(${dx},${dy}),0,1)`;
+}
+/**
+ * "Original" designs: the source video's professionally made 16:9 thumbnail, kept sharp as a rounded,
+ * shadowed card over a blurred, darkened fill of itself, with the clip headline set above it locally.
+ * 4:3 fallbacks (sd/hq) carry letterbox bars, so both copies are cropped to 16:9 first.
+ */
+export async function composeOriginalThumbnail(
+  input: {
+    aspect: ThumbnailBrief["aspect"];
+    headline: string;
+    image: SourceThumbnailAsset;
+    directory: string;
+    layers?: ThumbnailLayer[];
+    textFree?: boolean;
+  },
+  signal: AbortSignal,
+): Promise<{ layers: ThumbnailLayer[]; versions: ThumbnailVersion[] }> {
+  signal.throwIfAborted();
+  await mkdir(input.directory, { recursive: true });
+  const { width, height } = THUMBNAIL_DIMENSIONS[input.aspect];
+  const layers = structuredClone(
+    input.layers ??
+      originalThumbnailLayers(
+        input.aspect,
+        input.headline,
+        input.image.assetId,
+      ),
+  );
+  const card = layers.find((l) => l.id === "source"),
+    base = layers.find((l) => l.id === "background");
+  if (
+    !card ||
+    !base ||
+    card.kind !== "image" ||
+    base.kind !== "image" ||
+    card.assetId !== input.image.assetId ||
+    base.assetId !== input.image.assetId ||
+    layers.some(
+      (l) => l.kind === "image" && !["source", "background"].includes(l.id),
+    ) ||
+    new Set(layers.map((l) => l.id)).size !== layers.length ||
+    layers.some(
+      (l) =>
+        ![l.x, l.y, l.width, l.height].every(Number.isFinite) ||
+        l.width <= 0 ||
+        l.height <= 0 ||
+        l.x < 0 ||
+        l.y < 0 ||
+        l.x + l.width > width ||
+        l.y + l.height > height ||
+        (l.color && !/^[a-f0-9]{6}$/i.test(l.color)),
+    )
+  )
+    throw Error("Thumbnail layers exceed canvas or contain unsupported colors");
+  if (
+    input.image.assetId !== input.image.checksum ||
+    (await checksum(input.image.path)) !== input.image.checksum
+  )
+    throw Error("Source video thumbnail bytes changed before composition");
+  const cw = Math.max(2, Math.round(card.width / 2) * 2),
+    ch = Math.max(2, Math.round(card.height / 2) * 2),
+    radius = Math.round(Math.min(cw, ch) * 0.06),
+    spread = Math.round(Math.min(width, height) * 0.05),
+    to169 = "crop=iw:'min(ih,trunc(iw*9/16/2)*2)'";
+  const filters = [
+    "[1:v]split=2[fill][face]",
+    // Blurred at a quarter size: smoother and far cheaper than blurring the full canvas.
+    `[fill]${to169},scale=${width / 4}:${height / 4}:force_original_aspect_ratio=increase,crop=${width / 4}:${height / 4},gblur=sigma=9,scale=${width}:${height}:flags=bicubic,eq=brightness=-0.06:saturation=1.25,colorchannelmixer=rr=0.62:gg=0.62:bb=0.62,vignette=angle=PI/4,format=rgba[bg]`,
+    `[face]${to169},scale=${cw}:${ch}:force_original_aspect_ratio=increase:flags=lanczos,crop=${cw}:${ch},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${roundedAlpha(radius)}'[card]`,
+    `color=c=black:s=${cw + 2 * spread}x${ch + 2 * spread}:r=1,format=rgba,geq=r=0:g=0:b=0:a='${roundedAlpha(radius, spread, 0.6)}',gblur=sigma=${Math.round(spread / 2.5)}[shadow]`,
+    "[0:v][bg]overlay=0:0:shortest=1[base]",
+    `[base][shadow]overlay=${card.x - spread}:${card.y - spread + Math.round(spread * 0.35)}:shortest=1[shadowed]`,
+    `[shadowed][card]overlay=${card.x}:${card.y}:shortest=1[c0]`,
+  ];
+  let current = "c0",
+    index = 0;
+  for (const layer of layers.filter((l) => l.kind === "shape")) {
+    const next = `shape${index++}`;
+    filters.push(
+      `[${current}]drawbox=x=${layer.x}:y=${layer.y}:w=${layer.width}:h=${layer.height}:color=0x${layer.color}:t=fill[${next}]`,
+    );
+    current = next;
+  }
+  if (!input.textFree)
+    for (const layer of layers.filter((l) => l.kind === "text")) {
+      const fitted = await fittedText(layer, input.directory, signal);
+      // Bottom-aligned in its band so a short headline sits on the accent rule, not far above it.
+      const lift = layer.height - (layer.textLayout?.height ?? layer.height);
+      for (const line of fitted.lines) {
+        const textFile = `text-${index}.txt`;
+        await writeFile(path.join(input.directory, textFile), line.text);
+        const next = `text${index++}`;
+        filters.push(
+          `[${current}]drawtext=fontfile='${escaped(fitted.font)}':textfile=${textFile}:expansion=none:fontsize=${fitted.size}:fontcolor=0x${layer.color ?? "ffffff"}:shadowcolor=0x000000@0.5:shadowx=0:shadowy=${Math.max(2, Math.round(fitted.size / 24))}:x=${layer.x + fitted.offsetX}:y=${layer.y + lift + line.y + fitted.offsetY}[${next}]`,
+        );
+        current = next;
+      }
+    }
+  const png = path.join(input.directory, "design.png"),
+    jpg = path.join(input.directory, "design.jpg");
+  await withCancel(signal, async () => {
+    await run(
+      "ffmpeg",
+      [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        `color=c=0x0b0d12:s=${width}x${height}:r=1`,
+        "-i",
+        input.image.path,
+        "-filter_complex",
+        filters.join(";"),
+        "-map",
+        `[${current}]`,
+        "-frames:v",
+        "1",
+        "-y",
+        png,
+      ],
+      { cwd: input.directory, timeoutMs: 60_000 },
+    );
+    await run(
+      "ffmpeg",
+      [
+        "-v",
+        "error",
+        "-i",
+        png,
+        "-frames:v",
+        "1",
+        "-pix_fmt",
+        "yuvj420p",
+        "-q:v",
+        "2",
+        "-y",
+        jpg,
+      ],
+      { timeoutMs: 30_000 },
+    );
+  });
+  return {
+    layers,
+    versions: await Promise.all(
+      (
+        [
+          { path: png, format: "png" },
+          { path: jpg, format: "jpg" },
+        ] as const
+      ).map(async (file) => ({
+        id: randomUUID(),
+        ...file,
+        checksum: await checksum(file.path),
+        width,
+        height,
+        createdAt: Date.now(),
+      })),
+    ),
+  };
+}

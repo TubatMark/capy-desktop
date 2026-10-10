@@ -37,6 +37,8 @@ export interface PublishPackageInput {
       renderUs: number;
       checksum: string;
     };
+    /** "original" designs: the source video's own thumbnail instead of a clip frame. */
+    sourceThumbnail?: import("./thumbnails").SourceThumbnailRef;
   };
   platform: Platform;
   accountId: string;
@@ -162,6 +164,15 @@ export const PublishPackageSchema = z.strictObject({
           assetId: z.string().min(1),
           sourceUs: z.number().finite().nonnegative(),
           renderUs: z.number().finite().nonnegative(),
+          checksum: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .optional(),
+      sourceThumbnail: z
+        .strictObject({
+          videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+          url: z
+            .string()
+            .regex(/^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{11}\/[a-z]+\.jpg$/),
           checksum: z.string().regex(/^[a-f0-9]{64}$/),
         })
         .optional(),

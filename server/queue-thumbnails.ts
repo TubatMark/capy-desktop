@@ -1,16 +1,21 @@
-import type { ThumbnailDesign } from "../lib/thumbnails";
+import {
+  thumbnailProvenanceComplete,
+  type ThumbnailDesign,
+} from "../lib/thumbnails";
+import type { JobState } from "../lib/types";
 import type { QueueEntry, QueueThumbnailOption } from "../lib/types";
 import type { Store } from "./db";
 import { runtimeStore } from "./db/runtime";
 import { toMediaUrl } from "./paths";
 
-/** Designs made from this clip's current footage, in the order they were made (the top pick first). */
+/** Designs made from this clip's current footage: the original video's thumbnail first, then in the order made. */
 export function clipThumbnailDesigns(
   jobId: string,
   n: number,
   store: Store = runtimeStore(),
 ): ThumbnailDesign[] {
-  const revision = store.get("legacy-jobs", jobId)?.revision;
+  const job = store.get<JobState>("legacy-jobs", jobId);
+  const revision = job?.revision;
   if (revision === undefined) return [];
   return store
     .list<ThumbnailDesign>("thumbnails")
@@ -24,8 +29,18 @@ export function clipThumbnailDesigns(
         d.generationState === "ready" &&
         d.reviewState !== "stale" &&
         d.reviewState !== "blocked" &&
-        d.versions.some((v) => v.format === "jpg"),
-    );
+        d.versions.some((v) => v.format === "jpg") &&
+        thumbnailProvenanceComplete(d, job?.value.videoId),
+    )
+    .map((d) => ({
+      d,
+      rank: [
+        d.layout === "original" ? 0 : 1,
+        Math.min(...d.versions.map((v) => v.createdAt)),
+      ],
+    }))
+    .sort((a, b) => a.rank[0]! - b.rank[0]! || a.rank[1]! - b.rank[1]!)
+    .map(({ d }) => d);
 }
 
 const mediaUrl = (file: string) => {

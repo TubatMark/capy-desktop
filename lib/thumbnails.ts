@@ -71,6 +71,14 @@ export interface FrameCandidate {
   };
 }
 export type ThumbnailLayout = "bold" | "editorial" | "minimal";
+/** "original" is built from the source video's own YouTube thumbnail instead of a clip frame. */
+export type ThumbnailDesignLayout = ThumbnailLayout | "original";
+/** Provenance of an "original" design: the source video's published thumbnail, as fetched and cached. */
+export interface SourceThumbnailRef {
+  videoId: string;
+  url: string;
+  checksum: string;
+}
 export interface ThumbnailBriefInput {
   title?: string;
   headline: string;
@@ -133,7 +141,9 @@ export interface ThumbnailDesign extends Omit<
 > {
   sourceIdentity: ThumbnailSourceRef;
   name: string;
-  layout: ThumbnailLayout;
+  layout: ThumbnailDesignLayout;
+  /** Set on "original" designs only (their sourceFrames is empty); frame designs never carry it. */
+  sourceThumbnail?: SourceThumbnailRef;
   layers: ThumbnailLayer[];
   versions: ThumbnailVersion[];
   provenance: {
@@ -174,6 +184,24 @@ export interface ThumbnailRequest {
   clipContext?: { title?: string; hook?: string; transcript?: string };
 }
 
+/**
+ * Where a design's picture came from must be on record: frame designs need their clip frames; "original"
+ * designs need the source video's own thumbnail (from this clip's source video) and no frames.
+ */
+export function thumbnailProvenanceComplete(
+  design: Pick<ThumbnailDesign, "layout" | "sourceFrames" | "sourceThumbnail">,
+  sourceVideoId?: string,
+) {
+  if (design.layout === "original" || design.sourceThumbnail)
+    return (
+      design.layout === "original" &&
+      !!design.sourceThumbnail &&
+      !design.sourceFrames.length &&
+      design.sourceThumbnail.videoId === sourceVideoId
+    );
+  return design.sourceFrames.length > 0;
+}
+
 /** editRevision is independent of the exact footage/project revision. */
 export interface ThumbnailStudioDocument extends ThumbnailDesign {
   editRevision: number;
@@ -208,6 +236,7 @@ export function thumbnailReviewManifest(doc: ThumbnailStudioDocument) {
     sourceIdentity: doc.sourceIdentity,
     renderChecksum: doc.renderChecksum,
     sourceFrames: doc.sourceFrames,
+    ...(doc.sourceThumbnail ? { sourceThumbnail: doc.sourceThumbnail } : {}),
     layout: doc.layout,
     aspectPreset: doc.aspectPreset,
     layers: doc.layers,
