@@ -5,7 +5,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { tick, type PosterDeps } from "../server/poster";
-import { queue, resetQueueCache, upsertForRender } from "../server/queue";
+import {
+  queue,
+  resetQueueCache,
+  upsertForRender,
+  recoverInterrupted,
+} from "../server/queue";
 import { AuthError } from "../server/accounts";
 import { PlatformError, type PostOutcome } from "../server/platforms/types";
 import type { Platform, QueueEntry } from "../lib/types";
@@ -332,4 +337,90 @@ it("executes the freshly checked snapshot rather than the pre-token entry", asyn
   expect(executedTitle).toBe("Fresh checked title");
   expect(executedProgress).toBe("latest");
   expect(executedMode).toBe("inbox");
+});
+
+async function inPosterWork(fn: () => Promise<void>) {
+  const { runtimeStore } = await import("../server/db/runtime");
+  const { WorkQueue } = await import("../server/worker/leases");
+  const { withWork } = await import("../server/worker/context");
+  const q = new WorkQueue(runtimeStore());
+  await q.enqueue({
+    kind: "poster",
+    workKey: "fixture",
+    inputRevision: 1,
+    payload: {},
+  });
+  const lease = (await q.claim("fixture-owner"))!;
+  await withWork(
+    { queue: q, lease, workspace: root, signal: new AbortController().signal },
+    fn,
+  );
+}
+describe("uncertain delivery under a durable lease", () => {
+  it("response-body AbortError requires reconciliation without automatic retry", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    await inPosterWork(() =>
+      tick(
+        deps({
+          post: async () => {
+            throw new DOMException("The operation was aborted.", "AbortError");
+          },
+        }),
+      ),
+    );
+    expect(get("J:1:youtube")).toMatchObject({
+      status: "needs_action",
+    });
+    expect(get("J:1:youtube").nextTryAt).toBeUndefined();
+    expect(get("J:1:youtube").slotAt).toBeUndefined();
+  });
+  it("Instagram preparation cannot authorize retry after an unacknowledged publish attempt", async () => {
+    seed([{ n: 1, platform: "instagram", slotAt: now.getTime() }]);
+    await inPosterWork(() =>
+      tick(
+        deps({
+          post: async (_e, _job, _token, checkpoint) => {
+            checkpoint({
+              container: "fixture-container",
+              uploaded: "1",
+              deliveryPhase: "attempted",
+            });
+            throw new PlatformError("Network error: deadline", true);
+          },
+        }),
+      ),
+    );
+    expect(get("J:1:instagram")).toMatchObject({
+      status: "needs_action",
+    });
+    expect(get("J:1:instagram").nextTryAt).toBeUndefined();
+    expect(get("J:1:instagram").progress?.container).toBe("fixture-container");
+  });
+  it.each([undefined, "attempted"])(
+    "restart retains uncertain Instagram progress with phase %s",
+    (phase) => {
+      seed([
+        {
+          n: 1,
+          platform: "instagram",
+          status: "posting",
+          slotAt: now.getTime(),
+        },
+      ]);
+      const entry = {
+        ...get("J:1:instagram"),
+        progress: {
+          container: "fixture-container",
+          uploaded: "1",
+          ...(phase ? { deliveryPhase: phase } : {}),
+        },
+      };
+      expect(recoverInterrupted([entry], now)[0]).toMatchObject({
+        status: "needs_action",
+        nextTryAt: undefined,
+        slotAt: undefined,
+        progress: entry.progress,
+      });
+    },
+  );
 });

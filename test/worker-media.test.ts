@@ -213,6 +213,17 @@ describe("actual media worker adapters", () => {
     stageRender.mockRejectedValueOnce(Error("render interrupted"));
     let task = await drain();
     expect(task.status).toBe("retryable");
+    const rejections: unknown[] = [];
+    const observe = (error: unknown) => {
+      rejections.push(error);
+    };
+    process.on("unhandledRejection", observe);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", observe);
+    }
     expect(
       readFileSync(path.join(out, dir, "work", "01.src.mp4"), "utf8"),
     ).toBe("original-source");

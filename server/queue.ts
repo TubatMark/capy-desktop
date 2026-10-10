@@ -10,7 +10,7 @@ import type {
   SeoReport,
 } from "../lib/types";
 import { postTextFor, type Publish } from "./platforms/text";
-import type { PostOutcome } from "./platforms/types";
+import { canResumeDelivery, type PostOutcome } from "./platforms/types";
 
 /**
  * The posting queue: one entry per clip × platform in <CAPY_DATA_DIR>/queue.json.
@@ -412,7 +412,7 @@ export function recoverInterrupted(
   return entries.map((e) =>
     e.status !== "posting"
       ? e
-      : e.progress && Object.keys(e.progress).length
+      : canResumeDelivery(e.platform, e.progress)
         ? gated(
             e,
             () =>

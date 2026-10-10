@@ -14,7 +14,7 @@ import {
   renameSync,
   statSync,
 } from "node:fs";
-import { currentWork, fence } from "./worker/context";
+import { currentWork, fence, assertWork } from "./worker/context";
 import { enqueueWork, workQueue } from "./worker/api";
 import type { JobLease } from "./worker/leases";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -417,6 +417,7 @@ class JobManager extends EventEmitter {
   workerFailure(lease: JobLease, error: unknown) {
     const job = this.jobs.get(String(lease.payload.jobId));
     if (!job) return;
+    this.stopTicker(job);
     const message = error instanceof Error ? error.message : String(error);
     job.error = message;
     if (["analyzing", "preparing", "queued"].includes(job.status))
@@ -459,35 +460,39 @@ class JobManager extends EventEmitter {
       dest = path.join(workRoot(), job.dir);
     if (existsSync(src))
       cpSync(src, dest, { recursive: true, force: false, errorOnExist: false });
-    const op = String(lease.payload.operation);
-    const args = (lease.payload.args ?? []) as unknown[];
-    if (op === "analyze") await this.analyze(job, { repick: !!args[0] });
-    else if (op === "render")
-      for (const n of args as number[]) {
-        const c = job.clips.find((x) => x.n === n);
-        if (c && c.render.status !== "done") {
-          c.render = { status: "queued" };
-          await this.renderOne(job, c);
+    try {
+      const op = String(lease.payload.operation);
+      const args = (lease.payload.args ?? []) as unknown[];
+      if (op === "analyze") await this.analyze(job, { repick: !!args[0] });
+      else if (op === "render")
+        for (const n of args as number[]) {
+          const c = job.clips.find((x) => x.n === n);
+          if (c && c.render.status !== "done") {
+            c.render = { status: "queued" };
+            await this.renderOne(job, c);
+          }
         }
+      else if (op === "segments") await this.prepareSegments(job);
+      else if (op === "segment") {
+        const c = job.clips.find((x) => x.n === Number(args[0]));
+        if (c) await this.refetchSegment(job, c);
+      } else {
+        const method = this[op as keyof JobManager];
+        if (typeof method !== "function")
+          throw Object.assign(Error("Unsupported media operation"), {
+            retryable: false,
+          });
+        const result = await (method as (...args: unknown[]) => unknown).call(
+          this,
+          id,
+          ...args,
+        );
+        currentWork()!.queue.checkpoint(lease, op, { result });
       }
-    else if (op === "segments") await this.prepareSegments(job);
-    else if (op === "segment") {
-      const c = job.clips.find((x) => x.n === Number(args[0]));
-      if (c) await this.refetchSegment(job, c);
-    } else {
-      const method = this[op as keyof JobManager];
-      if (typeof method !== "function")
-        throw Object.assign(Error("Unsupported media operation"), {
-          retryable: false,
-        });
-      const result = await (method as (...args: unknown[]) => unknown).call(
-        this,
-        id,
-        ...args,
-      );
-      currentWork()!.queue.checkpoint(lease, op, { result });
+      return job;
+    } finally {
+      this.stopTicker(job);
     }
-    return job;
   }
 
   /** The AI chosen in Settings (Claude by default) and the model to ask it for. */
@@ -598,19 +603,22 @@ class JobManager extends EventEmitter {
     this.stopTicker(job);
     this.tickers.set(
       job.id,
-      setInterval(async () => {
-        await this.recomputeEstimate(job);
-        for (const c of job.clips) {
-          if (c.render.status === "rendering" && c.render.startedAt) {
-            const t = await loadTimings();
-            const est = (c.end - c.start) * t.renderSecPerSec;
-            c.render.remaining = Math.max(
-              1,
-              Math.round(est - (Date.now() - c.render.startedAt) / 1000),
-            );
+      setInterval(() => {
+        void (async () => {
+          assertWork();
+          await this.recomputeEstimate(job);
+          for (const c of job.clips) {
+            if (c.render.status === "rendering" && c.render.startedAt) {
+              const t = await loadTimings();
+              const est = (c.end - c.start) * t.renderSecPerSec;
+              c.render.remaining = Math.max(
+                1,
+                Math.round(est - (Date.now() - c.render.startedAt) / 1000),
+              );
+            }
           }
-        }
-        this.emitJob(job);
+          this.emitJob(job);
+        })().catch(() => this.stopTicker(job));
       }, 1000),
     );
   }
@@ -1683,6 +1691,7 @@ class JobManager extends EventEmitter {
         `clip ${c.n} failed: ${c.render.error!.split("\n")[0]}`,
       );
     } finally {
+      if (currentWork()) this.stopTicker(job);
       if (
         !job.clips.some((x) => x.render.status === "rendering") &&
         job.status === "ready"

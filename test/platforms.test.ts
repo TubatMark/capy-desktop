@@ -5,7 +5,12 @@ import path from "node:path";
 import { postYouTube } from "../server/platforms/youtube";
 import { postInstagram } from "../server/platforms/instagram";
 import { postTikTok, tiktokAccount } from "../server/platforms/tiktok";
-import { httpError, PlatformError } from "../server/platforms/types";
+import {
+  httpError,
+  PlatformError,
+  readJson,
+  TransportError,
+} from "../server/platforms/types";
 
 const dir = mkdtempSync(path.join(tmpdir(), "capy-plat-"));
 const file = path.join(dir, "clip.mp4");
@@ -16,12 +21,22 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-type Call = { url: string; method: string; headers: Record<string, string>; body?: unknown };
+type Call = {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: unknown;
+};
 function stub(answers: ((c: Call) => Response)[]) {
   const calls: Call[] = [];
   const f = (async (url: string | URL, init: RequestInit = {}) => {
     const h = new Headers(init.headers);
-    const c: Call = { url: String(url), method: init.method ?? "GET", headers: Object.fromEntries(h.entries()), body: init.body };
+    const c: Call = {
+      url: String(url),
+      method: init.method ?? "GET",
+      headers: Object.fromEntries(h.entries()),
+      body: init.body,
+    };
     calls.push(c);
     const next = answers.shift();
     if (!next) throw new Error(`unexpected call ${c.method} ${c.url}`);
@@ -29,16 +44,48 @@ function stub(answers: ((c: Call) => Response)[]) {
   }) as unknown as typeof fetch;
   return { f, calls };
 }
-const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => () => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json", ...headers } });
-const ctx = (f: typeof fetch) => ({ token: "T", fetch: f, sleep: async () => {}, log: () => {} });
-const job = { file, thumbFile: thumb, thumbAt: 1.4, text: { title: "Title", description: "Desc", tags: ["a"], caption: "Cap #a" } };
+const json =
+  (b: unknown, status = 200, headers: Record<string, string> = {}) =>
+  () =>
+    new Response(JSON.stringify(b), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    });
+const ctx = (f: typeof fetch) => ({
+  token: "T",
+  fetch: f,
+  sleep: async () => {},
+  log: () => {},
+});
+const job = {
+  file,
+  thumbFile: thumb,
+  thumbAt: 1.4,
+  text: { title: "Title", description: "Desc", tags: ["a"], caption: "Cap #a" },
+};
 
 describe("youtube", () => {
   const init = json({}, 200, { location: "https://upload.example/session1" });
   it("uploads public, sets the thumbnail, waits for processing, returns the Shorts link", async () => {
-    const { f, calls } = stub([init, json({ id: "abc" }), json({}), json({ items: [{ status: { uploadStatus: "uploaded", privacyStatus: "public" } }] }), json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
+    const { f, calls } = stub([
+      init,
+      json({ id: "abc" }),
+      json({}),
+      json({
+        items: [
+          { status: { uploadStatus: "uploaded", privacyStatus: "public" } },
+        ],
+      }),
+      json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "public" } },
+        ],
+      }),
+    ]);
     const out = await postYouTube(job, ctx(f));
-    expect(calls[0]!.url).toContain("upload/youtube/v3/videos?uploadType=resumable&part=snippet,status");
+    expect(calls[0]!.url).toContain(
+      "upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+    );
     expect(calls[0]!.headers["x-upload-content-length"]).toBe("1024");
     const meta = JSON.parse(String(calls[0]!.body));
     expect(meta.snippet.title).toBe("Title");
@@ -46,21 +93,54 @@ describe("youtube", () => {
     expect(calls[1]!.method).toBe("PUT");
     expect(calls[1]!.url).toBe("https://upload.example/session1");
     expect(calls[2]!.url).toContain("thumbnails/set?videoId=abc");
-    expect(out).toEqual({ kind: "posted", id: "abc", url: "https://youtube.com/shorts/abc" });
+    expect(out).toEqual({
+      kind: "posted",
+      id: "abc",
+      url: "https://youtube.com/shorts/abc",
+    });
   });
   it("forced private → needs_action pointing at YouTube Studio", async () => {
-    const { f } = stub([init, json({ id: "abc" }), json({}), json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "private" } }] })]);
+    const { f } = stub([
+      init,
+      json({ id: "abc" }),
+      json({}),
+      json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "private" } },
+        ],
+      }),
+    ]);
     const out = await postYouTube(job, ctx(f));
     expect(out.kind).toBe("needs_action");
     expect(out.kind === "needs_action" && out.note).toContain("YouTube Studio");
     expect(out.url).toContain("studio.youtube.com/video/abc");
   });
   it("a refused thumbnail doesn't fail the post", async () => {
-    const { f } = stub([init, json({ id: "abc" }), json({ error: { message: "no" } }, 403), json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
+    const { f } = stub([
+      init,
+      json({ id: "abc" }),
+      json({ error: { message: "no" } }, 403),
+      json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "public" } },
+        ],
+      }),
+    ]);
     expect((await postYouTube(job, ctx(f))).kind).toBe("posted");
   });
   it("rejected upload → non-retryable PlatformError", async () => {
-    const { f } = stub([init, json({ id: "abc" }), json({}), json({ items: [{ status: { uploadStatus: "rejected", rejectionReason: "duplicate" } }] })]);
+    const { f } = stub([
+      init,
+      json({ id: "abc" }),
+      json({}),
+      json({
+        items: [
+          {
+            status: { uploadStatus: "rejected", rejectionReason: "duplicate" },
+          },
+        ],
+      }),
+    ]);
     const e = await postYouTube(job, ctx(f)).catch((x) => x);
     expect(e).toBeInstanceOf(PlatformError);
     expect(e.retryable).toBe(false);
@@ -71,7 +151,10 @@ describe("youtube", () => {
 describe("instagram", () => {
   it("creates a resumable REELS container, uploads the file, waits, publishes, returns the permalink", async () => {
     const { f, calls } = stub([
-      json({ id: "c1", uri: "https://rupload.facebook.com/ig-api-upload/v24.0/c1" }),
+      json({
+        id: "c1",
+        uri: "https://rupload.facebook.com/ig-api-upload/v24.0/c1",
+      }),
       json({ success: true }),
       json({ status_code: "IN_PROGRESS" }),
       json({ status_code: "FINISHED" }),
@@ -85,14 +168,30 @@ describe("instagram", () => {
     expect(form.get("upload_type")).toBe("resumable");
     expect(form.get("caption")).toBe("Cap #a");
     expect(form.get("thumb_offset")).toBe("1400");
-    expect(calls[1]!.url).toBe("https://rupload.facebook.com/ig-api-upload/v24.0/c1");
-    expect(calls[1]!.headers).toMatchObject({ authorization: "OAuth T", offset: "0", file_size: "1024" });
+    expect(calls[1]!.url).toBe(
+      "https://rupload.facebook.com/ig-api-upload/v24.0/c1",
+    );
+    expect(calls[1]!.headers).toMatchObject({
+      authorization: "OAuth T",
+      offset: "0",
+      file_size: "1024",
+    });
     expect(calls[4]!.url).toContain("IG1/media_publish");
-    expect(out).toEqual({ kind: "posted", id: "m1", url: "https://www.instagram.com/reel/x/" });
+    expect(out).toEqual({
+      kind: "posted",
+      id: "m1",
+      url: "https://www.instagram.com/reel/x/",
+    });
   });
   it("container ERROR → non-retryable PlatformError", async () => {
-    const { f } = stub([json({ id: "c1" }), json({ success: true }), json({ status_code: "ERROR", status: "Video too short" })]);
-    const e = await postInstagram(job, { ...ctx(f), igUserId: "IG1" }).catch((x) => x);
+    const { f } = stub([
+      json({ id: "c1" }),
+      json({ success: true }),
+      json({ status_code: "ERROR", status: "Video too short" }),
+    ]);
+    const e = await postInstagram(job, { ...ctx(f), igUserId: "IG1" }).catch(
+      (x) => x,
+    );
     expect(e).toBeInstanceOf(PlatformError);
     expect(e.retryable).toBe(false);
   });
@@ -101,22 +200,36 @@ describe("instagram", () => {
 describe("tiktok", () => {
   it("inbox: inits a FILE_UPLOAD, PUTs the bytes, waits for SEND_TO_USER_INBOX", async () => {
     const { f, calls } = stub([
-      json({ data: { publish_id: "p1", upload_url: "https://up.example/1" }, error: { code: "ok" } }),
+      json({
+        data: { publish_id: "p1", upload_url: "https://up.example/1" },
+        error: { code: "ok" },
+      }),
       () => new Response(null, { status: 201 }),
       json({ data: { status: "PROCESSING_UPLOAD" }, error: { code: "ok" } }),
       json({ data: { status: "SEND_TO_USER_INBOX" }, error: { code: "ok" } }),
     ]);
     const out = await postTikTok(job, { ...ctx(f), mode: "inbox" });
     expect(calls[0]!.url).toContain("/v2/post/publish/inbox/video/init/");
-    expect(JSON.parse(String(calls[0]!.body)).source_info).toEqual({ source: "FILE_UPLOAD", video_size: 1024, chunk_size: 1024, total_chunk_count: 1 });
+    expect(JSON.parse(String(calls[0]!.body)).source_info).toEqual({
+      source: "FILE_UPLOAD",
+      video_size: 1024,
+      chunk_size: 1024,
+      total_chunk_count: 1,
+    });
     expect(calls[1]!.headers["content-range"]).toBe("bytes 0-1023/1024");
     expect(out.kind).toBe("needs_action");
     expect(out.kind === "needs_action" && out.note).toContain("inbox");
   });
   it("direct: uses the allowed privacy level and says so when it isn't public", async () => {
     const { f, calls } = stub([
-      json({ data: { privacy_level_options: ["SELF_ONLY"] }, error: { code: "ok" } }),
-      json({ data: { publish_id: "p2", upload_url: "https://up.example/2" }, error: { code: "ok" } }),
+      json({
+        data: { privacy_level_options: ["SELF_ONLY"] },
+        error: { code: "ok" },
+      }),
+      json({
+        data: { publish_id: "p2", upload_url: "https://up.example/2" },
+        error: { code: "ok" },
+      }),
       () => new Response(null, { status: 201 }),
       json({ data: { status: "PUBLISH_COMPLETE" }, error: { code: "ok" } }),
     ]);
@@ -126,11 +239,21 @@ describe("tiktok", () => {
     expect(body.post_info.privacy_level).toBe("SELF_ONLY");
     expect(body.post_info.title).toBe("Cap #a");
     expect(body.post_info.video_cover_timestamp_ms).toBe(1400);
-    expect(out).toMatchObject({ kind: "posted", note: "Posted as private (app not audited)" });
+    expect(out).toMatchObject({
+      kind: "posted",
+      note: "Posted as private (app not audited)",
+    });
   });
   it("an error code in the body becomes a PlatformError (auth for a bad token)", async () => {
-    const { f } = stub([json({ data: {}, error: { code: "access_token_invalid", message: "bad" } }, 401)]);
-    const e = await postTikTok(job, { ...ctx(f), mode: "inbox" }).catch((x) => x);
+    const { f } = stub([
+      json(
+        { data: {}, error: { code: "access_token_invalid", message: "bad" } },
+        401,
+      ),
+    ]);
+    const e = await postTikTok(job, { ...ctx(f), mode: "inbox" }).catch(
+      (x) => x,
+    );
     expect(e).toBeInstanceOf(PlatformError);
     expect(e.auth).toBe(true);
   });
@@ -139,9 +262,15 @@ describe("tiktok", () => {
 describe("httpError", () => {
   it("maps status codes", () => {
     expect(httpError(new Response(null, { status: 401 }), {}).auth).toBe(true);
-    expect(httpError(new Response(null, { status: 429 }), {}).retryable).toBe(true);
-    expect(httpError(new Response(null, { status: 503 }), {}).retryable).toBe(true);
-    const bad = httpError(new Response(null, { status: 400 }), { error: { message: "nope" } });
+    expect(httpError(new Response(null, { status: 429 }), {}).retryable).toBe(
+      true,
+    );
+    expect(httpError(new Response(null, { status: 503 }), {}).retryable).toBe(
+      true,
+    );
+    const bad = httpError(new Response(null, { status: 400 }), {
+      error: { message: "nope" },
+    });
     expect(bad.retryable).toBe(false);
     expect(bad.auth).toBe(false);
     expect(bad.message).toContain("nope");
@@ -151,77 +280,246 @@ describe("httpError", () => {
 describe("resume after a failure (never upload twice)", () => {
   it("youtube: saves the video id once uploaded, and a resumed attempt only checks status", async () => {
     const saved: Record<string, string>[] = [];
-    const { f } = stub([json({}, 200, { location: "https://upload.example/s" }), json({ id: "abc" }), json({}), () => new Response("boom", { status: 503 })]);
-    await expect(postYouTube(job, { ...ctx(f), checkpoint: (p) => void saved.push(p) })).rejects.toMatchObject({ retryable: true });
-    expect(saved).toContainEqual({ videoId: "abc" });
-    const again = stub([json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
-    expect(await postYouTube({ ...job, resume: { videoId: "abc" } }, ctx(again.f))).toMatchObject({ kind: "posted", id: "abc" });
+    const { f } = stub([
+      json({}, 200, { location: "https://upload.example/s" }),
+      json({ id: "abc" }),
+      json({}),
+      () => new Response("boom", { status: 503 }),
+    ]);
+    await expect(
+      postYouTube(job, { ...ctx(f), checkpoint: (p) => void saved.push(p) }),
+    ).rejects.toMatchObject({ retryable: true });
+    expect(saved).toContainEqual({
+      videoId: "abc",
+      deliveryPhase: "acknowledged",
+    });
+    const again = stub([
+      json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "public" } },
+        ],
+      }),
+    ]);
+    expect(
+      await postYouTube({ ...job, resume: { videoId: "abc" } }, ctx(again.f)),
+    ).toMatchObject({ kind: "posted", id: "abc" });
     expect(again.calls).toHaveLength(1);
     expect(again.calls[0]!.url).toContain("videos?part=status");
   });
   it("instagram: a published media id resumes to the permalink; a failed permalink fetch still counts as posted", async () => {
-    const { f, calls } = stub([() => { throw new Error("socket hang up"); }]);
-    expect(await postInstagram({ ...job, resume: { mediaId: "m1" } }, { ...ctx(f), igUserId: "IG1" })).toMatchObject({ kind: "posted", id: "m1" });
+    const { f, calls } = stub([
+      () => {
+        throw new Error("socket hang up");
+      },
+    ]);
+    expect(
+      await postInstagram(
+        { ...job, resume: { mediaId: "m1" } },
+        { ...ctx(f), igUserId: "IG1" },
+      ),
+    ).toMatchObject({ kind: "posted", id: "m1" });
     expect(calls).toHaveLength(1);
   });
   it("instagram: an uploaded container resumes at the status check", async () => {
-    const { f, calls } = stub([json({ status_code: "FINISHED" }), json({ id: "m2" }), json({ permalink: "https://ig/x" })]);
-    expect(await postInstagram({ ...job, resume: { container: "c1", uploaded: "1" } }, { ...ctx(f), igUserId: "IG1" })).toMatchObject({ kind: "posted", id: "m2" });
+    const { f, calls } = stub([
+      json({ status_code: "FINISHED" }),
+      json({ id: "m2" }),
+      json({ permalink: "https://ig/x" }),
+    ]);
+    expect(
+      await postInstagram(
+        {
+          ...job,
+          resume: { container: "c1", uploaded: "1", deliveryPhase: "prepared" },
+        },
+        { ...ctx(f), igUserId: "IG1" },
+      ),
+    ).toMatchObject({ kind: "posted", id: "m2" });
     expect(calls[0]!.url).toContain("/c1?fields=status_code");
   });
   it("tiktok: a publish id resumes at the status check", async () => {
-    const { f, calls } = stub([json({ data: { status: "SEND_TO_USER_INBOX" }, error: { code: "ok" } })]);
-    expect((await postTikTok({ ...job, resume: { publishId: "p9" } }, { ...ctx(f), mode: "inbox" })).kind).toBe("needs_action");
+    const { f, calls } = stub([
+      json({ data: { status: "SEND_TO_USER_INBOX" }, error: { code: "ok" } }),
+    ]);
+    expect(
+      (
+        await postTikTok(
+          { ...job, resume: { publishId: "p9" } },
+          { ...ctx(f), mode: "inbox" },
+        )
+      ).kind,
+    ).toBe("needs_action");
     expect(calls).toHaveLength(1);
     expect(JSON.parse(String(calls[0]!.body))).toEqual({ publish_id: "p9" });
   });
 });
 
 describe("error buckets", () => {
-  const graph = (code: number, status = 400) => httpError(new Response(null, { status }), { error: { message: "x", code } });
+  const graph = (code: number, status = 400) =>
+    httpError(new Response(null, { status }), {
+      error: { message: "x", code },
+    });
   it("Meta: code 190 (bad token) means reconnect; rate limits back off", () => {
     expect(graph(190)).toMatchObject({ auth: true, retryable: false });
-    for (const c of [4, 17, 32, 613]) expect(graph(c)).toMatchObject({ auth: false, retryable: true });
+    for (const c of [4, 17, 32, 613])
+      expect(graph(c)).toMatchObject({ auth: false, retryable: true });
   });
   it("YouTube: quota and rate limits back off instead of asking to reconnect", () => {
-    const yt = (reason: string) => httpError(new Response(null, { status: 403 }), { error: { message: "x", errors: [{ reason }] } });
+    const yt = (reason: string) =>
+      httpError(new Response(null, { status: 403 }), {
+        error: { message: "x", errors: [{ reason }] },
+      });
     expect(yt("quotaExceeded")).toMatchObject({ auth: false, retryable: true });
-    expect(yt("rateLimitExceeded")).toMatchObject({ auth: false, retryable: true });
+    expect(yt("rateLimitExceeded")).toMatchObject({
+      auth: false,
+      retryable: true,
+    });
     expect(yt("forbidden")).toMatchObject({ auth: true });
   });
 });
 
 describe("tiktokAccount", () => {
   it("asks only for fields user.info.basic allows", async () => {
-    const { f, calls } = stub([json({ data: { user: { open_id: "o1", display_name: "Mia", avatar_url: "a" } }, error: { code: "ok" } })]);
-    expect(await tiktokAccount(ctx(f))).toMatchObject({ id: "o1", name: "Mia" });
+    const { f, calls } = stub([
+      json({
+        data: { user: { open_id: "o1", display_name: "Mia", avatar_url: "a" } },
+        error: { code: "ok" },
+      }),
+    ]);
+    expect(await tiktokAccount(ctx(f))).toMatchObject({
+      id: "o1",
+      name: "Mia",
+    });
     expect(calls[0]!.url).not.toContain("username");
   });
 });
 
 describe("youtube: made for kids", () => {
   it("declares a kids' story as made for kids", async () => {
-    const { f, calls } = stub([json({}, 200, { location: "https://upload.example/k" }), json({ id: "k1" }), json({}), json({ items: [{ status: { uploadStatus: "processed", privacyStatus: "public" } }] })]);
+    const { f, calls } = stub([
+      json({}, 200, { location: "https://upload.example/k" }),
+      json({ id: "k1" }),
+      json({}),
+      json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "public" } },
+        ],
+      }),
+    ]);
     await postYouTube({ ...job, madeForKids: true }, ctx(f));
-    expect(JSON.parse(String(calls[0]!.body)).status.selfDeclaredMadeForKids).toBe(true);
+    expect(
+      JSON.parse(String(calls[0]!.body)).status.selfDeclaredMadeForKids,
+    ).toBe(true);
   });
 });
 
 describe("approved TikTok visibility policy", () => {
   it("bound assisted inbox cannot dispatch as direct", async () => {
-    const {f,calls}=stub([]);
-    await expect(postTikTok({...job,deliveryOptions:{mode:"inbox",privacyPolicy:"assisted-inbox"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("delivery mode differs");
+    const { f, calls } = stub([]);
+    await expect(
+      postTikTok(
+        {
+          ...job,
+          deliveryOptions: { mode: "inbox", privacyPolicy: "assisted-inbox" },
+        },
+        { ...ctx(f), mode: "direct" },
+      ),
+    ).rejects.toThrow("delivery mode differs");
     expect(calls).toHaveLength(0);
   });
   it("unapproved provider privacy never initializes an upload", async () => {
-    const {f,calls}=stub([json({data:{privacy_level_options:["MUTUAL_FOLLOW_FRIENDS"]},error:{code:"ok"}})]);
-    await expect(postTikTok({...job,deliveryOptions:{mode:"direct",privacyPolicy:"public-or-self-only"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("no privacy allowed");
+    const { f, calls } = stub([
+      json({
+        data: { privacy_level_options: ["MUTUAL_FOLLOW_FRIENDS"] },
+        error: { code: "ok" },
+      }),
+    ]);
+    await expect(
+      postTikTok(
+        {
+          ...job,
+          deliveryOptions: {
+            mode: "direct",
+            privacyPolicy: "public-or-self-only",
+          },
+        },
+        { ...ctx(f), mode: "direct" },
+      ),
+    ).rejects.toThrow("no privacy allowed");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain("creator_info/query");
   });
-  it("unknown resumed privacy cannot exceed approved policy",async()=>{
-    const {f,calls}=stub([]);
-    await expect(postTikTok({...job,deliveryOptions:{mode:"direct",privacyPolicy:"public-or-self-only"},resume:{publishId:"prior",privacy:"MUTUAL_FOLLOW_FRIENDS"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("outside approval");
+  it("unknown resumed privacy cannot exceed approved policy", async () => {
+    const { f, calls } = stub([]);
+    await expect(
+      postTikTok(
+        {
+          ...job,
+          deliveryOptions: {
+            mode: "direct",
+            privacyPolicy: "public-or-self-only",
+          },
+          resume: { publishId: "prior", privacy: "MUTUAL_FOLLOW_FRIENDS" },
+        },
+        { ...ctx(f), mode: "direct" },
+      ),
+    ).rejects.toThrow("outside approval");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("durable publishing phases", () => {
+  it("records the Instagram mutation boundary before sending media_publish", async () => {
+    const saved: Record<string, string> = {};
+    const { f } = stub([
+      json({ status_code: "FINISHED" }),
+      () => {
+        expect(saved.deliveryPhase).toBe("attempted");
+        const response = new Response();
+        response.text = async () => {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        };
+        return response;
+      },
+    ]);
+    await expect(
+      postInstagram(
+        {
+          ...job,
+          resume: { container: "c1", uploaded: "1", deliveryPhase: "prepared" },
+        },
+        {
+          ...ctx(f),
+          igUserId: "IG1",
+          checkpoint: (p) => {
+            Object.assign(saved, p);
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(TransportError);
+    expect(saved.deliveryPhase).toBe("attempted");
+    expect(saved.mediaId).toBeUndefined();
+    const retry = stub([]);
+    await expect(
+      postInstagram(
+        { ...job, resume: { container: "c1", uploaded: "1", ...saved } },
+        { ...ctx(retry.f), igUserId: "IG1" },
+      ),
+    ).rejects.toThrow("delivery uncertain");
+    expect(retry.calls).toHaveLength(0);
+  });
+  it("retains structured identity for response-body transport errors", async () => {
+    const response = new Response();
+    const aborted = new DOMException(
+      "The operation was aborted.",
+      "AbortError",
+    );
+    response.text = async () => {
+      throw aborted;
+    };
+    await expect(readJson(response)).rejects.toMatchObject({
+      name: "TransportError",
+      cause: aborted,
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { fence, currentWork, assertWork } from "./worker/context";
 import { enqueueWork } from "./worker/api";
+import { canResumeDelivery, isTransportFailure } from "./platforms/types";
 import { scopedFetch } from "./worker/http";
 import { eligibility } from "./publication-policy";
 import { existsSync } from "node:fs";
@@ -220,7 +221,13 @@ export async function tick(d?: PosterDeps): Promise<void> {
           mutateQueue((all) =>
             patch(all, e.key, (x) =>
               note(
-                { ...x, status: "needs_action", error: msg },
+                {
+                  ...x,
+                  status: "needs_action",
+                  error: msg,
+                  nextTryAt: undefined,
+                  slotAt: undefined,
+                },
                 msg,
                 deps.now(),
               ),
@@ -275,17 +282,15 @@ export async function tick(d?: PosterDeps): Promise<void> {
           };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          const progress = queue()
+            .list()
+            .find((x) => x.key === e.key)?.progress;
           if (
-            currentWork() &&
-            /Network error|deadline|timed out|TimeoutError|AbortError/i.test(
-              message,
-            ) &&
-            !queue()
-              .list()
-              .find((x) => x.key === e.key)?.progress
+            !canResumeDelivery(e.platform, progress) &&
+            (isTransportFailure(err) || progress?.deliveryPhase === "attempted")
           )
             return void stop(
-              "Delivery uncertain after a network deadline. Check the destination before retrying.",
+              "Delivery uncertain. Check the destination before retrying.",
             );
           if (err instanceof AuthError)
             r = { error: { message, retryable: false, auth: true } };
