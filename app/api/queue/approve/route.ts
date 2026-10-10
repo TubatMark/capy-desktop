@@ -1,3 +1,4 @@
+import { queueGroup } from "@/lib/queue-source";
 import { resolvePublicationFiles } from "@/server/poster";
 import { decide, eligibility, hashManifest } from "@/server/publication-policy";
 import { NextResponse } from "next/server";
@@ -10,7 +11,8 @@ import { PLATFORMS, type QueueEntry } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 const Body = z.strictObject({
-  jobId: z.string().min(1).max(64),
+  jobId: z.string().min(1).max(64).optional(),
+  group: z.string().min(1).max(256).optional(),
   n: z.number().int().positive().optional(),
   platforms: z.array(z.enum(PLATFORMS as [string, ...string[]])).optional(),
   /** The user confirmed posting clips the AI reviewer blocked. */
@@ -21,10 +23,11 @@ const Body = z.strictObject({
 export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }, { status: 400 });
-  const { jobId, n, platforms, force } = parsed.data;
+  const { jobId, group, n, platforms, force } = parsed.data;
+  if ((!jobId && !group) || (jobId && group)) return NextResponse.json({error:"Select one queue source"},{status:400});
   const waiting = queue()
     .list()
-    .filter((e) => e.jobId === jobId && e.status === "review" && (n === undefined || e.n === n));
+    .filter((e) => (group ? queueGroup(e)===group : !e.source && e.jobId === jobId && (n === undefined || e.n === n)) && e.status === "review");
   if (!waiting.length) return NextResponse.json({ error: "Nothing from that video is waiting for review" }, { status: 404 });
   if (!force && waiting.some((e) => e.aiReview?.verdict === "block")) {
     return NextResponse.json({ error: "The AI reviewer blocked a clip here. Confirm to post it anyway.", blocked: true }, { status: 409 });
@@ -43,7 +46,7 @@ export async function POST(req: Request) {
   let scheduled: QueueEntry[] = [];
   queue().mutate((e) => {
     const ready = e.map(x=>prepared.find(p=>p.key===x.key) ?? x);
-    const r = approve(ready, jobId, n, { override: !!force, platforms: platforms as QueueEntry["platform"][] | undefined, audienceTz: audienceTz(effective().postingAudience), now: new Date() });
+    const r = approve(ready, jobId ?? "", n, { group, override: !!force, platforms: platforms as QueueEntry["platform"][] | undefined, audienceTz: audienceTz(effective().postingAudience), now: new Date() });
     scheduled = r.scheduled;
     return r.entries;
   });

@@ -1,3 +1,4 @@
+import { queueGroup } from "../lib/queue-source";
 import { legacyState, mutateLegacy } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
 import { allocateSlot, fmtIn } from "../lib/post-time";
@@ -189,26 +190,14 @@ export function approve(
     audienceTz: string;
     now: Date;
     override?: boolean;
+    group?: string;
   },
 ): { entries: QueueEntry[]; scheduled: QueueEntry[] } {
   let out = [...entries];
-  const ns = [
-    ...new Set(
-      out
-        .filter(
-          (e) =>
-            e.jobId === jobId &&
-            e.status === "review" &&
-            (n === undefined || e.n === n),
-        )
-        .map((e) => e.n),
-    ),
-  ].sort((a, b) => a - b);
+  const groups = [...new Set(out.filter(e=>e.status==="review" && (o.group ? queueGroup(e)===o.group : !e.source && e.jobId===jobId && (n===undefined || e.n===n))).map(queueGroup))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   const scheduled: QueueEntry[] = [];
-  for (const cn of ns) {
-    const mine = out.filter(
-      (e) => e.jobId === jobId && e.n === cn && e.status === "review",
-    );
+  for (const group of groups) {
+    const mine=out.filter(e=>queueGroup(e)===group && e.status==="review");
     const selected = mine.filter(
       (e) => !o.platforms || o.platforms.includes(e.platform),
     );
@@ -369,8 +358,8 @@ export function reconcileMissed(
   );
   const groups = new Map<string, QueueEntry[]>();
   for (const e of late)
-    groups.set(`${e.jobId}:${e.n}`, [
-      ...(groups.get(`${e.jobId}:${e.n}`) ?? []),
+    groups.set(queueGroup(e), [
+      ...(groups.get(queueGroup(e)) ?? []),
       e,
     ]);
   for (const group of groups.values()) {
@@ -558,7 +547,7 @@ export function summary(entries: QueueEntry[], now: Date): QueueSummary {
     review: new Set(
       entries
         .filter((e) => e.status === "review")
-        .map((e) => `${e.jobId}:${e.n}`),
+        .map((e) => queueGroup(e)),
     ).size,
     activeCount: active.length,
     nextPost: next

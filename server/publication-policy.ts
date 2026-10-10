@@ -1,3 +1,6 @@
+import { runtimeStore } from "./db/runtime";
+import type { ProjectDocument, RenderArtifact } from "../lib/studio/types";
+import { StudioQueueSourceSchema } from "../lib/queue-source";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { PublishPackageSchema, evaluatePublication, type PublishPackage, type PublishPackageInput, type PublicationContext, type PublicationDeliveryOptions } from "../lib/publication";
@@ -34,7 +37,12 @@ export const mediaOptions = (e: QueueEntry) => hashManifest({fp:e.fp,thumbAt:e.t
 export function publicationContext(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)): PublicationContext {
   const pkg = e.publishPackage;
   const { packageHash: _hash, ...snapshot } = pkg ?? {};
-  return {deliveryOptions:deliveryOptions(e.platform),artifactHash:hashFile(files?.file),textHash:hashManifest(e.text),thumbnailHash:hashFile(files?.thumbFile),thumbnailRevision:files?.thumbFile ? hashFile(files.thumbFile) : undefined,mediaOptionsHash:mediaOptions(e),connectedAccountId:accountId,platform:e.platform,review:e.aiReview,reviewHash:hashManifest(e.aiReview),packageReviewHash:hashManifest(pkg?.review),policyVersion:PUBLICATION_POLICY_VERSION,approval:e.publicationDecision,packageHash:packageDigest(snapshot)};
+  const source=StudioQueueSourceSchema.safeParse(e.source);
+  const artifact=source.success ? runtimeStore().get<RenderArtifact>("renders",source.data.renderId)?.value : undefined;
+  const current=source.success ? runtimeStore().get<ProjectDocument>("projects",source.data.projectId)?.value : undefined;
+  const studio=e.source || pkg?.artifact.projectId ? {currentRevision:current?.revision,projectId:source.success?source.data.projectId:undefined,artifactId:artifact?.id,artifactRevision:artifact?.revision,artifactChecksum:artifact && source.success && artifact.projectId===source.data.projectId && artifact.revision===source.data.revision && artifact.checksum===source.data.renderChecksum ? artifact.checksum:undefined}:undefined;
+  const actualThumb=hashFile(files?.thumbFile);
+  return {studio,deliveryOptions:deliveryOptions(e.platform),artifactHash:hashFile(files?.file),textHash:hashManifest(e.text),thumbnailHash:hashFile(files?.thumbFile),thumbnailRevision:actualThumb && pkg?.thumbnail?.designId && pkg.thumbnail.checksum===actualThumb ? pkg.thumbnail.revision : actualThumb,mediaOptionsHash:mediaOptions(e),connectedAccountId:accountId,platform:e.platform,review:e.aiReview,reviewHash:hashManifest(e.aiReview),packageReviewHash:hashManifest(pkg?.review),policyVersion:PUBLICATION_POLICY_VERSION,approval:e.publicationDecision,packageHash:packageDigest(snapshot)};
 }
 export function eligibility(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)) { return evaluatePublication(e.publishPackage, publicationContext(e,files,accountId)); }
 /** A fresh explicit human decision can adopt legacy media only after resolving and hashing it. */
@@ -43,6 +51,10 @@ export function decide(e: QueueEntry, override: boolean, now: Date): QueueEntry 
   const accountId = connectedAccountId(e.platform);
   if (!checksum || !accountId || (e.publicationFiles?.thumbFile && !hashFile(e.publicationFiles.thumbFile))) return e;
   const thumbnailHash = hashFile(e.publicationFiles?.thumbFile);
-  const pkg = buildPublishPackage({deliveryOptions:deliveryOptions(e.platform),id:`${e.key}:${now.getTime()}`,artifact:{id:e.key,checksum},text:e.text,textHash:hashManifest(e.text),thumbnail:thumbnailHash ? {revision:thumbnailHash,checksum:thumbnailHash} : undefined,platform:e.platform,accountId,review:e.aiReview,policyVersion:PUBLICATION_POLICY_VERSION,mediaOptionsHash:mediaOptions(e)});
+  const studio=StudioQueueSourceSchema.safeParse(e.source);
+  if(e.source && !studio.success)return e;
+  const identity=studio.success ? {id:studio.data.renderId,projectId:studio.data.projectId,revision:studio.data.revision,checksum} : {id:e.key,checksum};
+  const thumbnail=thumbnailHash && e.publishPackage?.thumbnail?.checksum===thumbnailHash ? e.publishPackage.thumbnail : thumbnailHash ? {revision:thumbnailHash,checksum:thumbnailHash}:undefined;
+  const pkg = buildPublishPackage({deliveryOptions:deliveryOptions(e.platform),id:`${e.key}:${now.getTime()}`,artifact:identity,text:e.text,textHash:hashManifest(e.text),thumbnail,platform:e.platform,accountId,review:e.aiReview,policyVersion:PUBLICATION_POLICY_VERSION,mediaOptionsHash:mediaOptions(e)});
   return {...e,publishPackage:pkg,publicationDecision:{kind:override ? "human_override" : "human",packageHash:pkg.packageHash,at:now.getTime()}};
 }

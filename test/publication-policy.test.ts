@@ -96,3 +96,18 @@ it("changing TikTok assisted inbox to direct requires a new decision",()=>{
   saveAccount("tiktok",{mode:"direct"});expect(eligibility(e).allowed).toBe(false);
   expect(eligibility(decide(e,false,new Date())).allowed).toBe(true);
 });
+
+import { runtimeStore } from '../server/db/runtime';
+import { hashFile } from '../server/publication-policy';
+import { queueGroup } from '../lib/queue-source';
+it('Studio stale revisions cannot approve or post-now, while historical bytes remain intact',()=>{
+ const e:QueueEntry={...entry(),jobId:undefined,n:undefined,key:'studio:r:youtube',source:{kind:'studio',projectId:'p',revision:1,renderId:'r',renderChecksum:hashFile(files.file)!},publishPackage:undefined,publicationDecision:undefined};
+ runtimeStore().put('projects','p',{id:'p',revision:1});runtimeStore().put('renders','r',{id:'r',projectId:'p',revision:1,checksum:hashFile(files.file),path:files.file});
+ const approved=decide(e,false,new Date());expect(approved.publishPackage?.artifact).toMatchObject({id:'r',projectId:'p',revision:1});expect(eligibility(approved).allowed).toBe(true);
+ queue().mutate(()=>[approved]);expect(queue().list()[0]?.source?.renderId).toBe('r');
+ for(const change of ['audio','captions','video']){
+ runtimeStore().put('projects','p',{id:'p',revision:2,change});expect(eligibility(approved).reasons.join(' ')).toContain('revision changed');
+ expect(approve([approved],'',undefined,{group:queueGroup(approved),audienceTz:'UTC',now:new Date()}).scheduled).toHaveLength(0);
+ expect(postNow([approved],approved.key,new Date())[0]?.status).toBe('review');expect(hashFile(files.file)).toBe(e.source!.renderChecksum);
+ }
+});

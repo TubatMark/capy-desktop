@@ -22,14 +22,15 @@ export interface PostText {
 
 /** One clip going to one platform (server/queue.ts owns these). */
 export interface QueueEntry {
+  source?: { kind: "studio"; projectId: string; revision: number; renderId: string; renderChecksum: string };
   publishPackage?: PublishPackage;
   publicationDecision?: PublicationDecision;
   /** Server-resolved media locations; never derive content identity from URLs. */
   publicationFiles?: { file: string; thumbFile?: string };
   /** `${jobId}:${n}:${platform}` */
   key: string;
-  jobId: string;
-  n: number;
+  jobId?: string;
+  n?: number;
   platform: Platform;
   status: QueueStatus;
   clipTitle: string;

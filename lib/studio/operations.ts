@@ -47,7 +47,7 @@ export type EditOperation =
   | {
       type: "layer";
       itemId: string;
-      changes: Pick<TimelineItem, "text" | "fit" | "opacity">;
+      changes: Pick<TimelineItem, "text" | "fit" | "opacity" | "crop" | "blur" | "colorPreset">;
     }
   | { type: "safe-area"; enabled: boolean; inset: number }
   | {
@@ -227,6 +227,9 @@ export function validateProject(
       (!Number.isFinite(i.opacity) || i.opacity < 0 || i.opacity > 1)
     )
       throw Error("Invalid opacity");
+    if (i.blur !== undefined && (!Number.isFinite(i.blur) || i.blur < 0 || i.blur > 30)) throw Error("Invalid blur");
+    if (i.colorPreset !== undefined && !["neutral","warm","cool","monochrome"].includes(i.colorPreset)) throw Error("Invalid color preset");
+    if (i.crop && (![i.crop.x,i.crop.y,i.crop.width,i.crop.height].every(Number.isFinite) || i.crop.x < 0 || i.crop.y < 0 || i.crop.width <= 0 || i.crop.height <= 0 || i.crop.x+i.crop.width > 1 || i.crop.y+i.crop.height > 1)) throw Error("Invalid crop");
     if (i.fit !== undefined && !["contain", "cover"].includes(i.fit))
       throw Error("Invalid layer fit");
     if (

@@ -1,4 +1,5 @@
 "use client";
+import { queueGroup, queueCollection, queueLink } from "@/lib/queue-source";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, RotateCw, Send, Trash2, XCircle } from "lucide-react";
@@ -24,11 +25,11 @@ export function QueueView() {
   const [toast, setToast] = useState<string | null>(null);
   const tz = data?.audienceTz ?? "America/New_York";
 
-  const review = useMemo(() => group(data?.entries.filter((e) => e.status === "review") ?? [], (e) => `${e.jobId}:${e.n}`), [data]);
-  const byVideo = useMemo(() => group([...review.values()].map((es) => es[0]!), (e) => e.jobId), [review]);
+  const review = useMemo(() => group(data?.entries.filter((e) => e.status === "review") ?? [], (e) => queueGroup(e)), [data]);
+  const byVideo = useMemo(() => group([...review.values()].map((es) => es[0]!), (e) => queueCollection(e)), [review]);
   const planned = useMemo(() => {
     const live = data?.entries.filter((e) => e.status !== "review" && e.status !== "rejected") ?? [];
-    const clips = group(live, (e) => `${e.jobId}:${e.n}`);
+    const clips = group(live, (e) => queueGroup(e));
     const rows = [...clips.values()].sort((a, b) => (a[0]!.slotAt ?? a[0]!.updatedAt) - (b[0]!.slotAt ?? b[0]!.updatedAt));
     const day = (es: QueueEntry[]) => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" }).format(new Date(es[0]!.slotAt ?? es[0]!.updatedAt));
     return group(rows, day);
@@ -69,12 +70,12 @@ export function QueueView() {
           <div key={jobId} className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="min-w-0 truncate text-sm text-muted-foreground">{firsts[0]!.videoTitle ?? jobId}</p>
-              {firsts.length > 1 && (
+              {firsts.length > 1 && !firsts[0]!.source && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={async () => {
-                    const all = data.entries.filter((e) => e.jobId === jobId && e.status === "review");
+                    const all = data.entries.filter((e) => queueCollection(e) === jobId && e.status === "review");
                     const blocked = new Set(all.filter((e) => e.aiReview?.verdict === "block").map((e) => e.n)).size;
                     if (blocked && !window.confirm(`The AI reviewer blocked ${blocked} of these clips. Approve all of them anyway?`)) return;
                     try {
@@ -90,7 +91,7 @@ export function QueueView() {
               )}
             </div>
             {firsts.map((f) => (
-              <ReviewCard key={`${f.jobId}:${f.n}`} entries={review.get(`${f.jobId}:${f.n}`)!} nextFree={data.nextFree} tz={tz} onDone={done} />
+              <ReviewCard key={queueGroup(f)} entries={review.get(queueGroup(f))!} nextFree={data.nextFree} tz={tz} onDone={done} />
             ))}
           </div>
         ))}
@@ -103,7 +104,7 @@ export function QueueView() {
           <div key={day} className="space-y-2">
             <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{day}</h3>
             {rows.map((es) => (
-              <ScheduledRow key={`${es[0]!.jobId}:${es[0]!.n}`} entries={es} tz={tz} onChange={done} />
+              <ScheduledRow key={queueGroup(es[0]!)} entries={es} tz={tz} onChange={done} />
             ))}
           </div>
         ))}
@@ -131,7 +132,7 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
           <img src={first.thumbUrl} alt="" className="h-14 w-8 shrink-0 rounded object-cover" />
         )}
         <div className="min-w-0 flex-1">
-          <Link href={first.link ?? `/v/${first.jobId}/clip/${first.n}`} className="block truncate text-sm font-medium hover:underline">
+          <Link href={queueLink(first)} className="block truncate text-sm font-medium hover:underline">
             {first.clipTitle}
           </Link>
           <p className="text-xs text-muted-foreground">{first.slotAt ? fmtSlot(first.slotAt, tz) : "No time set"}</p>

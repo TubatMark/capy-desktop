@@ -97,3 +97,10 @@ it("excludes black scenes without padding a short distinct shortlist with duplic
     ),
   ).toBe(true);
 }, 90_000);
+
+it('Studio clean frames use canonical loop phase at render timestamps across differing project fps',async()=>{
+ const input=await source('testsrc2=size=160x90:rate=30:duration=2');
+ const project:import('../lib/studio/types').ProjectDocument={schemaVersion:1,id:'phase-project',revision:3,canvas:{width:160,height:90},fps:{numerator:30000,denominator:1001},tracks:[{id:'video',kind:'video'}],items:[{id:'loop',trackId:'video',assetId:'original',startFrame:0,durationFrames:59,sourceInUs:100000,sourceOutUs:600000,loop:true,sourcePhaseUs:{numerator:'1000',denominator:'3'},speed:1}],sourceMappings:[{itemId:'loop',assetId:'original',sourceInUs:100000,sourceOutUs:600000}],captionCues:[],thumbnailIds:[]};
+ const frames=await extractFrameCandidates({kind:'project',project,render:{id:'r',projectId:project.id,revision:3,path:input.path,checksum:input.checksum,probe:{durationUs:2000000,width:160,height:90,fps:{numerator:30,denominator:1},hasAudio:false},renderer:'ffmpeg',rendererVersion:'test',reviewIds:[]},assets:[{id:'original',path:input.path,checksum:input.checksum,sourceOffsetUs:8000000}]},new AbortController().signal,{directory:path.dirname(input.path),timesUs:[733333]});
+ expect(frames).toHaveLength(1);expect(frames[0]!.frameKind).toBe('clean');expect(frames[0]!.sourceUs).toBeCloseTo(8000000+100000+((frames[0]!.renderUs+1000/3)%500000),4);
+},30000);

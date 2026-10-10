@@ -1,4 +1,5 @@
 "use client";
+import { queueGroup, queueLink } from "@/lib/queue-source";
 import { useState } from "react";
 import Link from "next/link";
 import { Check, Loader2, X } from "lucide-react";
@@ -30,7 +31,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
     setBusy("approve");
     setErr(null);
     try {
-      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId: first.jobId, n: first.n, platforms: chosen, force: aiReview?.verdict === "block" }) });
+      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ ...(first.source ? {group:queueGroup(first)} : {jobId:first.jobId,n:first.n}), platforms: chosen, force: aiReview?.verdict === "block" }) });
       const at = r.scheduled[0]?.slotAt;
       onDone(at ? `"${first.clipTitle}" scheduled for ${fmtSlot(at, tz)}` : "No free slot in the next 14 days");
     } catch (e) {
@@ -54,7 +55,7 @@ export function ReviewCard({ entries, nextFree, tz, onDone }: { entries: QueueEn
       <video src={first.videoUrl} poster={first.thumbUrl} controls preload="metadata" className="aspect-[9/16] w-full max-w-[200px] rounded-lg bg-black object-contain" />
       <div className="min-w-0 space-y-3">
         <div>
-          <Link href={first.link ?? `/v/${first.jobId}/clip/${first.n}`} className="font-semibold hover:underline">
+          <Link href={queueLink(first)} className="font-semibold hover:underline">
             {first.clipTitle}
           </Link>
           {first.madeForKids && <span className="ml-2 inline-block rounded-md bg-sky-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-800">Made for kids</span>}

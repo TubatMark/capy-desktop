@@ -1,3 +1,4 @@
+import { resolveRender } from "./studio/render";
 import { fence, currentWork, assertWork } from "./worker/context";
 import { enqueueWork } from "./worker/api";
 import { canResumeDelivery, isTransportFailure } from "./platforms/types";
@@ -74,7 +75,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const resolvePublicationFiles = async (
   e: QueueEntry,
 ): Promise<ClipFile> =>
-  e.publicationFiles && existsSync(e.publicationFiles.file)
+  !e.source && e.publicationFiles && existsSync(e.publicationFiles.file)
     ? e.publicationFiles
     : defaultDeps().fileFor(e);
 
@@ -100,6 +101,10 @@ function defaultDeps(): PosterDeps {
       });
     },
     fileFor: async (e) => {
+      if(e.source) {
+        try { const artifact=await resolveRender(e.source.projectId,e.source.renderId,e.source.renderChecksum);return {file:artifact.path,thumbFile:e.publicationFiles?.thumbFile}; } catch {return "missing";}
+      }
+      if(!e.jobId || e.n===undefined)return "missing";
       if (e.jobId.startsWith("story-")) {
         const { stories, storyClipFile } = await import("./stories");
         await stories().init();

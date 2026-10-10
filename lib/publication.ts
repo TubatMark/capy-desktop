@@ -12,7 +12,7 @@ export interface PublishPackageInput {
   artifact: { id: string; checksum: string; projectId?: string; revision?: number };
   text: PostText;
   textHash: string;
-  thumbnail?: { revision: string; checksum: string };
+  thumbnail?: { revision: string; checksum: string; designId?: string; versionId?: string; sourceIdentity?: import("./thumbnails").ThumbnailSourceRef; sourceFrame?: {id:string;assetId:string;sourceUs:number;renderUs:number;checksum:string} };
   platform: Platform;
   accountId: string;
   review?: ContentReview;
@@ -23,6 +23,7 @@ export interface PublishPackageInput {
 export interface PublishPackage extends PublishPackageInput { packageHash: string }
 export interface PublicationDecision { kind: "human" | "human_override"; packageHash: string; at: number }
 export interface PublicationContext {
+  studio?: { currentRevision?: number; projectId?: string; artifactId?: string; artifactRevision?: number; artifactChecksum?: string };
   deliveryOptions: PublicationDeliveryOptions;
   artifactHash?: string;
   textHash: string;
@@ -59,7 +60,9 @@ export const PublishPackageSchema = z.strictObject({
   artifact:z.strictObject({id:z.string().min(1),checksum:z.string().regex(/^[a-f0-9]{64}$/),projectId:z.string().optional(),revision:z.number().int().nonnegative().optional()}),
   text:z.strictObject({title:z.string().optional(),description:z.string().optional(),tags:z.array(z.string()).optional(),caption:z.string().optional()}),
   textHash:z.string().regex(/^[a-f0-9]{64}$/),
-  thumbnail:z.strictObject({revision:z.string().min(1),checksum:z.string().regex(/^[a-f0-9]{64}$/)}).optional(),
+  thumbnail:z.strictObject({revision:z.string().min(1),checksum:z.string().regex(/^[a-f0-9]{64}$/),designId:z.string().min(1).optional(),versionId:z.string().min(1).optional(),sourceIdentity:z.discriminatedUnion("kind",[
+    z.strictObject({kind:z.literal("project"),projectId:z.string().min(1),revision:z.number().int().nonnegative(),renderId:z.string().min(1),renderChecksum:z.string().regex(/^[a-f0-9]{64}$/)}),
+    z.strictObject({kind:z.literal("legacy"),jobId:z.string().min(1),clipN:z.number().int().positive(),revision:z.number().int().nonnegative(),renderChecksum:z.string().regex(/^[a-f0-9]{64}$/)})]).optional(),sourceFrame:z.strictObject({id:z.string().min(1),assetId:z.string().min(1),sourceUs:z.number().finite().nonnegative(),renderUs:z.number().finite().nonnegative(),checksum:z.string().regex(/^[a-f0-9]{64}$/)}).optional()}).optional(),
   platform:z.enum(["youtube","instagram","tiktok"]),accountId:z.string().min(1),
   review:z.strictObject({verdict:z.enum(["ok","caution","block"]),summary:z.string(),issues:z.array(z.strictObject({kind:z.string(),note:z.string()})),title:z.string().optional(),at:z.number().finite()}).optional(),
   policyVersion:z.string().min(1),mediaOptionsHash:z.string().regex(/^[a-f0-9]{64}$/),packageHash:z.string().regex(/^[a-f0-9]{64}$/),
@@ -69,6 +72,10 @@ export function evaluatePublication(pkg: PublishPackage | undefined, c: Publicat
   const reasons: string[] = [];
   if (!pkg) return {allowed:false,reasons:["Missing publication revision; review required"]};
   if (!PublishPackageSchema.safeParse(pkg).success) return {allowed:false,reasons:["Invalid publication snapshot; review required"]};
+  if (pkg.artifact.projectId || c.studio) {
+    if (!c.studio || !pkg.artifact.projectId || pkg.artifact.projectId !== c.studio.projectId || pkg.artifact.revision !== c.studio.currentRevision) reasons.push("Studio project revision changed; export and review again");
+    if (!c.studio || pkg.artifact.id !== c.studio.artifactId || pkg.artifact.revision !== c.studio.artifactRevision || pkg.artifact.checksum !== c.studio.artifactChecksum) reasons.push("Studio render identity changed or missing");
+  }
   if (!pkg.artifact.checksum || !c.artifactHash) reasons.push("Media missing or uncertain");
   else if (pkg.artifact.checksum !== c.artifactHash) reasons.push("Media changed; new decision required");
   if (pkg.textHash !== c.textHash) reasons.push("Posting text changed");

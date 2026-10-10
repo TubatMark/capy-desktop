@@ -92,6 +92,9 @@ export interface TimelineItem {
   linkedVideoId?: string;
   transitionOut?: { kind: "crossfade"; durationFrames: number };
   fit?: "contain" | "cover";
+  crop?: { x: number; y: number; width: number; height: number };
+  blur?: number;
+  colorPreset?: "neutral" | "warm" | "cool" | "monochrome";
   opacity?: number;
   fadeInFrames?: number;
   fadeOutFrames?: number;
@@ -124,7 +127,16 @@ export interface ProjectDocument {
   safeArea?: { enabled: boolean; inset: number };
   thumbnailIds: string[];
 }
+export interface ExportPreset {
+  aspect: "project" | "portrait" | "landscape" | "square";
+  fps: 30;
+  codec: "h264-aac";
+}
 export interface RenderArtifact {
+  preset?: ExportPreset;
+  planHash?: string;
+  normalizationPolicy?: string;
+  createdAt?: number;
   id: string;
   projectId: string;
   revision: number;

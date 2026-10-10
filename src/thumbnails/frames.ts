@@ -1,3 +1,5 @@
+import { sourceFrameTimeUs, sourceTimeUs } from "../../lib/studio/audio";
+import { numberUs } from "../../lib/studio/time";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
@@ -163,10 +165,7 @@ export async function extractFrameCandidates(
         extractionUs = renderUs,
         frameKind: FrameCandidate["frameKind"] = "finished";
       if (source.kind === "project") {
-        const frame = Math.round(
-          (renderUs * source.project.fps.numerator) /
-            (1_000_000 * source.project.fps.denominator),
-        );
+        const frame = (renderUs * source.project.fps.numerator) / (1_000_000 * source.project.fps.denominator);
         const visualTracks = new Set(
           source.project.tracks
             .filter((t) => t.kind === "video" && t.role !== "overlay")
@@ -182,14 +181,9 @@ export async function extractFrameCandidates(
         if (item) {
           const asset = source.assets?.find((a) => a.id === item.assetId);
           assetId = item.assetId!;
-          const localUs =
-            (item.sourceInUs ?? 0) +
-            Math.round(
-              ((frame - item.startFrame) *
-                1_000_000 *
-                source.project.fps.denominator) /
-                source.project.fps.numerator,
-            );
+          const localUs = Number.isSafeInteger(frame)
+            ? numberUs(sourceFrameTimeUs(item, frame, source.project))
+            : sourceTimeUs(item, frame, source.project);
           sourceUs =
             (asset?.kind === "image" ? 0 : localUs) +
             (asset?.sourceOffsetUs ?? 0);

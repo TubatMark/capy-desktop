@@ -1,3 +1,4 @@
+import { registerRenderWorkers } from "./render";
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { run, ExecError } from "../../src/exec";
@@ -197,6 +198,7 @@ function prepareStages(): WorkStage[] {
   ];
 }
 export function registerStudioWorkers() {
+  registerRenderWorkers();
   registerWork("asset-probe", () => prepareStages());
   registerWork("asset-proxy", () => prepareStages());
   registerWork("source-range", () => [

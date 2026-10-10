@@ -23,6 +23,8 @@ import { Timeline } from "./timeline";
 import { History } from "./history";
 import { AudioPanel } from "./audio-panel";
 import { CaptionsPanel } from "./captions-panel";
+import { sourceTimeUs } from "@/lib/studio/audio";
+import { ExportPanel } from "./export-panel";
 import { LayersPanel } from "./layers-panel";
 import { AudioPreview } from "./audio-preview";
 import { LayerPreview } from "./layer-preview";
@@ -289,7 +291,7 @@ export function StudioEditor({ id }: { id: string }) {
   useEffect(() => {
     if (!active || !video.current) return;
     const desired =
-      (active.sourceInUs ?? 0) / 1000000 + (frame - active.startFrame) / fps;
+      sourceTimeUs(active, frame, document!) / 1000000;
     if (Math.abs(video.current.currentTime - desired) > 0.075)
       video.current.currentTime = desired;
     if (playing) void video.current.play().catch(() => setPlaying(false));
@@ -585,6 +587,7 @@ export function StudioEditor({ id }: { id: string }) {
           className="min-w-0 rounded-xl border bg-card p-4"
           aria-label="Preview"
         >
+          <p className="mb-2 text-xs text-muted-foreground">Draft audition · render below for exact output</p>
           <AudioPreview
             document={document}
             assets={assets}
@@ -623,8 +626,7 @@ export function StudioEditor({ id }: { id: string }) {
                   onLoadedMetadata={() => {
                     if (video.current && active)
                       video.current.currentTime =
-                        (active.sourceInUs ?? 0) / 1000000 +
-                        (frame - active.startFrame) / fps;
+                        sourceTimeUs(active, frame, document) / 1000000;
                   }}
                 />
               )
@@ -847,6 +849,7 @@ export function StudioEditor({ id }: { id: string }) {
           onSelect={setSelected}
         />
       </div>
+      <ExportPanel document={document} saved={saveState === "saved"} item={item} onEdit={edit} />
       <History
         entries={history}
         onRestore={(doc) => edit({ type: "restore", document: doc })}

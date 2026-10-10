@@ -1,3 +1,4 @@
+import { StudioQueueSourceSchema } from "../../lib/queue-source";
 import { z } from "zod";
 const number = z.number().finite();
 const string = z.string();
@@ -231,8 +232,9 @@ export const queueSchema = z.array(
   z
     .object({
       key: string,
-      jobId: string,
-      n: number.int().positive(),
+      jobId: string.optional(),
+      n: number.int().positive().optional(),
+      source: StudioQueueSourceSchema.optional(),
       platform: z.enum(["youtube", "instagram", "tiktok"]),
       status: z.enum([
         "review",
@@ -281,7 +283,7 @@ export const queueSchema = z.array(
         .object({ file: string, thumbFile: string.optional() })
         .optional(),
     })
-    .passthrough(),
+    .passthrough().refine(e=>e.source ? e.jobId===undefined && e.n===undefined : typeof e.jobId==="string" && e.n!==undefined, "Invalid queue source identity"),
 );
 export function validateLegacy(
   kind: string,
