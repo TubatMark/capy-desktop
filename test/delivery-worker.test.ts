@@ -510,91 +510,134 @@ it("TikTok partial acceptance becomes resumable on a later production worker pas
     vi.unstubAllGlobals();
   }
 });
-it("crash after video acknowledgement recovers the proven unattempted thumbnail exactly once", async () => {
-  const thumb = path.join(root, "selected.jpg");
-  writeFileSync(thumb, "approved thumbnail bytes");
-  let e = seed();
-  e = {
-    ...decide(
-      { ...e, publicationFiles: { file, thumbFile: thumb } },
-      false,
-      new Date(),
-    ),
-    status: "scheduled",
-    slotAt: Date.now(),
-  };
-  queue().mutate(() => [e]);
-  const store = await import("../server/delivery-store");
-  const { tickDeliveries } = await import("../server/delivery");
-  const original = store.saveDeliveryHandles;
-  const aborted = new AbortController();
-  let thumbCalls = 0;
-  let thumbBytes = "";
-  const fetcher = (async (url, init) => {
-    if (String(url).includes("uploadType="))
-      return new Response(null, {
-        headers: { location: "https://fixture/session" },
+it.each([false, true])(
+  "crash after video acknowledgement recovers thumbnail once (remote schedule: %s)",
+  async (scheduled) => {
+    const thumb = path.join(root, "selected.jpg");
+    writeFileSync(thumb, "approved thumbnail bytes");
+    let e: import("../lib/types").QueueEntry = seed();
+    e = {
+      ...decide(
+        { ...e, publicationFiles: { file, thumbFile: thumb } },
+        false,
+        new Date(),
+      ),
+      status: "scheduled",
+      slotAt: Date.now(),
+    };
+    queue().mutate(() => [e]);
+    const initialNow = Date.now();
+    if (scheduled) {
+      const { approveRemoteSchedule } =
+        await import("../server/delivery-schedule");
+      const { destinationClientIdentity } =
+        await import("../server/platform-capabilities");
+      const { loadAccounts } = await import("../server/accounts");
+      runtimeStore().put(
+        "destination-capabilities",
+        "youtube:fixture-account",
+        {
+          accountId: "fixture-account",
+          clientIdentity: destinationClientIdentity(
+            "youtube",
+            loadAccounts().youtube,
+          ),
+          checkedAt: initialNow,
+          schedulingVerified: true,
+        },
+      );
+      approveRemoteSchedule(e.key, {
+        publishAt: initialNow + 180000,
+        uploadAheadMinutes: 10,
+        acknowledgeRemoteSchedule: true,
       });
-    if (String(url) === "https://fixture/session")
-      return Response.json({ id: "thumbnail-video" });
-    if (String(url).includes("thumbnails/set")) {
-      thumbCalls++;
-      thumbBytes = Buffer.from(
-        await (init!.body as Blob).arrayBuffer(),
-      ).toString();
-      return Response.json({ items: [{}] });
+      e = queue().list()[0]!;
     }
-    return Response.json({
-      items: [
-        { status: { uploadStatus: "processed", privacyStatus: "public" } },
-      ],
-    });
-  }) as typeof fetch;
-  const spy = vi
-    .spyOn(store, "saveDeliveryHandles")
-    .mockImplementation((d, values, fs) => {
-      const saved = original(d, values, fs);
-      if (values.videoId && !values.thumbnailStatus) {
-        aborted.abort(Error("crash after acknowledgement"));
-        throw aborted.signal.reason;
+    const store = await import("../server/delivery-store");
+    const { tickDeliveries } = await import("../server/delivery");
+    const original = store.saveDeliveryHandles;
+    const aborted = new AbortController();
+    let thumbCalls = 0,
+      initializationCalls = 0,
+      byteCalls = 0;
+    let thumbBytes = "";
+    const fetcher = (async (url, init) => {
+      if (String(url).includes("uploadType=")) {
+        initializationCalls++;
+        return new Response(null, {
+          headers: { location: "https://fixture/session" },
+        });
       }
-      return saved;
+      if (String(url) === "https://fixture/session") {
+        byteCalls++;
+        return Response.json({ id: "thumbnail-video" });
+      }
+      if (String(url).includes("thumbnails/set")) {
+        thumbCalls++;
+        thumbBytes = Buffer.from(
+          await (init!.body as Blob).arrayBuffer(),
+        ).toString();
+        return Response.json({ items: [{}] });
+      }
+      return Response.json({
+        items: [
+          { status: { uploadStatus: "processed", privacyStatus: "public" } },
+        ],
+      });
+    }) as typeof fetch;
+    const spy = vi
+      .spyOn(store, "saveDeliveryHandles")
+      .mockImplementation((d, values, fs) => {
+        const saved = original(d, values, fs);
+        if (values.videoId && !values.thumbnailStatus) {
+          aborted.abort(Error("crash after acknowledgement"));
+          throw aborted.signal.reason;
+        }
+        return saved;
+      });
+    await run(async () => {
+      await expect(
+        deliverPackage(e.publishPackage!.id, aborted.signal, {
+          fetch: fetcher,
+          token: async () => "fake",
+        }),
+      ).rejects.toThrow(/crash/);
     });
-  await run(async () => {
-    await expect(
-      deliverPackage(e.publishPackage!.id, aborted.signal, {
+    spy.mockRestore();
+    if (scheduled) vi.spyOn(Date, "now").mockReturnValue(initialNow + 240000);
+    expect(thumbCalls).toBe(0);
+    await run(() =>
+      reconcileDelivery(deliveryForPackage(e.publishPackage!.packageHash)!.id, {
         fetch: fetcher,
         token: async () => "fake",
       }),
-    ).rejects.toThrow(/crash/);
-  });
-  spy.mockRestore();
-  expect(thumbCalls).toBe(0);
-  await run(() =>
-    reconcileDelivery(deliveryForPackage(e.publishPackage!.packageHash)!.id, {
-      fetch: fetcher,
-      token: async () => "fake",
-    }),
-  );
-  expect(deliveryForPackage(e.publishPackage!.packageHash)!.state).toBe(
-    "public",
-  );
-  expect(thumbCalls).toBe(0);
-  vi.stubGlobal("fetch", fetcher);
-  try {
-    await run(() => tickDeliveries(new AbortController().signal));
-    await run(() => tickDeliveries(new AbortController().signal));
-  } finally {
-    vi.unstubAllGlobals();
-  }
-  const d = deliveryForPackage(e.publishPackage!.packageHash)!;
-  expect(thumbCalls).toBe(1);
-  expect(thumbBytes).toBe("approved thumbnail bytes");
-  expect(d.thumbnail).toMatchObject({
-    status: "accepted",
-    checksum: e.publishPackage!.thumbnail!.checksum,
-  });
-});
+    );
+    expect(deliveryForPackage(e.publishPackage!.packageHash)!.state).toBe(
+      "public",
+    );
+    expect(thumbCalls).toBe(0);
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await run(() => tickDeliveries(new AbortController().signal));
+      await run(() => tickDeliveries(new AbortController().signal));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const d = deliveryForPackage(e.publishPackage!.packageHash)!;
+    expect(thumbCalls).toBe(1);
+    expect({ initializationCalls, byteCalls }).toEqual({
+      initializationCalls: 1,
+      byteCalls: 1,
+    });
+    expect(d.state).toBe("public");
+    expect(queue().list()[0]!.status).toBe("posted");
+    expect(thumbBytes).toBe("approved thumbnail bytes");
+    expect(d.thumbnail).toMatchObject({
+      status: "accepted",
+      checksum: e.publishPackage!.thumbnail!.checksum,
+    });
+  },
+);
 it("public commit before lost queue projection is repaired with no network on the next pass", async () => {
   const e = seed();
   const store = await import("../server/delivery-store");

@@ -131,6 +131,7 @@ function gate(
       "Publication authorization is no longer executable; review required",
     );
   if (
+    !pendingThumbnail &&
     d.package.deliveryOptions.mode === "scheduled" &&
     d.package.deliveryOptions.publishAt <= Date.now() + 60000
   )
