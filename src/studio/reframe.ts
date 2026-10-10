@@ -1,4 +1,4 @@
-import type { TimelineItem } from "../../lib/studio/types";
+import type { AssetRef, TimelineItem } from "../../lib/studio/types";
 export interface SpeakerRegion {
   sourceChecksum: string;
   confirmedByUser: true;
@@ -36,4 +36,22 @@ export function reframeFromSpeaker(
       "Speaker region must be user-confirmed and cover the selected source span",
     );
   return structuredClone(c);
+}
+
+/** Confirmation is scoped to the exact selected occurrence and source window. */
+export function speakerSourceFingerprint(
+  item: TimelineItem | undefined,
+  asset: AssetRef | undefined,
+): string {
+  return JSON.stringify([
+    item?.id,
+    item?.assetId,
+    asset?.checksum,
+    item?.sourceInUs,
+    item?.sourceOutUs,
+    item?.sourcePhaseUs,
+    item?.durationFrames,
+    item?.speed,
+    item?.freeze,
+  ]);
 }

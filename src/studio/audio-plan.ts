@@ -107,54 +107,6 @@ export function buildAudioPlan(
       offset = integerUs(0);
       if (!item.loop) break;
     }
-    if (item.speed !== 1) {
-      // Source-word boundaries are semantic timing anchors. Pitch stretching
-      // each bounded span keeps WSOLA's content-dependent latency from moving
-      // a spoken word into the preceding silence or the next caption.
-      const words =
-        doc.sourceWords?.find((s) => s.assetId === item.assetId)?.words ?? [];
-      const anchored = segments.flatMap((segment) => {
-        const edges = [
-          segment.sourceStartUs,
-          ...words
-            .flatMap((w) => [integerUs(w.startUs), integerUs(w.endUs)])
-            .filter(
-              (t) =>
-                compareUs(t, segment.sourceStartUs) > 0 &&
-                compareUs(t, segment.sourceEndUs) < 0,
-            ),
-          segment.sourceEndUs,
-        ].sort(compareUs);
-        return edges.slice(0, -1).flatMap((sourceStartUs, index) => {
-          const sourceEndUs = edges[index + 1]!;
-          if (compareUs(sourceStartUs, sourceEndUs) === 0) return [];
-          const timelineStartUs = addUs(
-            segment.timelineStartUs,
-            scaleUs(
-              subtractUs(sourceStartUs, segment.sourceStartUs),
-              1 / item.speed,
-            ),
-          );
-          const durationUs = scaleUs(
-            subtractUs(sourceEndUs, sourceStartUs),
-            1 / item.speed,
-          );
-          return [
-            {
-              timelineStartUs,
-              durationUs,
-              sourceStartUs,
-              sourceEndUs,
-              startFrame: (numberUs(timelineStartUs) * fps) / 1e6,
-              durationFrames: (numberUs(durationUs) * fps) / 1e6,
-              sourceInUs: numberUs(sourceStartUs),
-              sourceOutUs: numberUs(sourceEndUs),
-            },
-          ];
-        });
-      });
-      segments.splice(0, segments.length, ...anchored);
-    }
     const video = item.linkedVideoId
       ? doc.items.find((v) => v.id === item.linkedVideoId)
       : item;

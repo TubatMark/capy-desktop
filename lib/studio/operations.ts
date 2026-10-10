@@ -554,7 +554,12 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       const ratio = item!.speed / op.speed;
       item!.durationFrames = Math.max(
         1,
-        Math.round(item!.durationFrames * ratio),
+        Math.round(
+          ((item!.sourceOutUs! -
+            numberUs(sourceFrameTimeUs(item!, item!.startFrame, next))) *
+            next.fps.numerator) /
+            (1e6 * next.fps.denominator * op.speed),
+        ),
       );
       for (const key of ["fadeInFrames", "fadeOutFrames"] as const)
         if (item![key] !== undefined)
@@ -607,6 +612,7 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         startFrame: item!.startFrame + op.frame,
         durationFrames: item!.durationFrames - op.frame,
       };
+      if (right.template) right.template.instanceId = right.id;
       if (item!.assetId) {
         const available = item!.sourceAvailableOutUs ?? item!.sourceOutUs!;
         const boundary = minimumUs(

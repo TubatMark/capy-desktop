@@ -293,7 +293,7 @@ test("advanced edits are reversible and microphone recordings create assets only
   const advancedRender = await (
     await request.get(`/api/studio/projects/${doc.id}/render`)
   ).json();
-  expect(advancedRender.artifacts[0].rendererVersion).toBe("ffmpeg-studio-4");
+  expect(advancedRender.artifacts[0].rendererVersion).toBe("ffmpeg-studio-5");
   expect(advancedRender.artifacts[0].probe.durationUs).toBe(2000000);
   const assetCount = async () =>
     ((await (await request.get("/api/studio/assets")).json()) as unknown[])
@@ -375,4 +375,100 @@ test("advanced edits are reversible and microphone recordings create assets only
     path: "/tmp/capy-b7-render-evidence/advanced-browser.png",
     fullPage: true,
   });
+});
+
+test("speaker confirmation is invalidated by selection and source trims", async ({
+  page,
+  request,
+}) => {
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video" },
+    })
+  ).json();
+  await expect
+    .poll(async () => {
+      const all = await (await request.get("/api/studio/assets")).json();
+      return all.find((a: any) => a.id === imported.id)?.status;
+    })
+    .toBe("ready");
+  const doc = await (
+    await request.post("/api/studio/projects", {
+      data: {
+        name: "Speaker evidence fixture",
+        sources: [{ assetId: imported.id }, { assetId: imported.id }],
+      },
+    })
+  ).json();
+  await page.goto(`/studio/${doc.id}`);
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  const confirm = page.getByRole("checkbox", {
+    name: "I confirmed a speaker region for this entire source span",
+  });
+  await confirm.check();
+  await expect(confirm).toBeChecked();
+  await page.getByTestId("timeline-item").nth(1).click();
+  await expect(confirm).not.toBeChecked();
+  let pending = page.waitForRequest(
+    (r) => r.url().endsWith("/suggestions") && r.method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Suggest reframe", exact: true })
+    .click();
+  expect((await pending).postDataJSON().speakerRegions).toBeUndefined();
+  await expect(
+    page.getByRole("button", { name: "Accept suggested edit", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Dismiss suggestion", exact: true })
+    .click();
+  await confirm.check();
+  pending = page.waitForRequest(
+    (r) => r.url().endsWith("/suggestions") && r.method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Suggest reframe", exact: true })
+    .click();
+  const second = (await pending).postDataJSON();
+  expect(second.speakerRegions[doc.items[1].id]).toMatchObject({
+    confirmedByUser: true,
+    startUs: 0,
+    endUs: 2000000,
+  });
+  await expect(
+    page.getByRole("button", { name: "Accept suggested edit", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Dismiss suggestion", exact: true })
+    .click();
+  await page.getByLabel("Trim in frames", { exact: true }).fill("15");
+  await page.getByLabel("Trim out frames", { exact: true }).fill("45");
+  await page.getByRole("button", { name: "Apply trim", exact: true }).click();
+  await expect(confirm).not.toBeChecked();
+  await expect(page.getByTestId("save-status")).toContainText("Saved");
+  pending = page.waitForRequest(
+    (r) => r.url().endsWith("/suggestions") && r.method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Suggest reframe", exact: true })
+    .click();
+  expect((await pending).postDataJSON().speakerRegions).toBeUndefined();
+  await expect(
+    page.getByRole("button", { name: "Accept suggested edit", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Dismiss suggestion", exact: true })
+    .click();
+  await confirm.check();
+  pending = page.waitForRequest(
+    (r) => r.url().endsWith("/suggestions") && r.method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Suggest reframe", exact: true })
+    .click();
+  expect(
+    (await pending).postDataJSON().speakerRegions[doc.items[1].id],
+  ).toMatchObject({ confirmedByUser: true, startUs: 500000, endUs: 1500000 });
+  await page.getByLabel("Speaker region x", { exact: true }).fill("0.1");
+  await expect(confirm).not.toBeChecked();
 });

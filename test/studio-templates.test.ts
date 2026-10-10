@@ -63,3 +63,34 @@ it("duplicates a local template with a fresh instance identity and preserved ver
   });
   expect(applyEdit(copy.document, copy.inverse).document).toEqual(original);
 });
+it("splits a template after removing motion without changing its version", () => {
+  let doc = applyTemplate(project(), {
+    id: "local-title",
+    version: 1,
+    instanceId: "title",
+    parameters: {
+      text: "Reusable",
+      placement: "intro",
+      durationFrames: 30,
+      color: "#ffffff",
+    },
+  }).document;
+  doc = applyEdit(doc, {
+    type: "keyframes",
+    itemId: "title",
+    keyframes: [],
+  }).document;
+  const split = applyEdit(doc, {
+    type: "split",
+    itemId: "title",
+    frame: 15,
+    newId: "tail",
+  });
+  expect(split.document.items.find((i) => i.id === "tail")?.template).toEqual({
+    id: "local-title",
+    version: 1,
+    instanceId: "tail",
+    font: "Arial",
+  });
+  expect(applyEdit(split.document, split.inverse).document).toEqual(doc);
+});

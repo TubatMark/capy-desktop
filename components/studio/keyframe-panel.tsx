@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   AssetRef,
   ProjectDocument,
@@ -7,6 +7,10 @@ import type {
 } from "@/lib/studio/types";
 import type { EditOperation } from "@/lib/studio/operations";
 import { motionAtFrame } from "@/lib/studio/templates";
+import {
+  speakerSourceFingerprint,
+  type SpeakerRegion,
+} from "@/src/studio/reframe";
 import { applyBoundSuggestions } from "@/lib/studio/retiming";
 export function KeyframePanel({
   document,
@@ -25,8 +29,18 @@ export function KeyframePanel({
     [status, setStatus] = useState(""),
     [busy, setBusy] = useState(false),
     [fit, setFit] = useState<"contain" | "cover">("contain"),
-    [speaker, setSpeaker] = useState(false),
+    [confirmation, setConfirmation] = useState<{
+      fingerprint: string;
+      evidence: SpeakerRegion;
+    }>(),
     [region, setRegion] = useState({ x: 0.25, y: 0, width: 0.5, height: 1 });
+  const fingerprint = speakerSourceFingerprint(item, asset);
+  const speaker = confirmation?.fingerprint === fingerprint;
+  useEffect(() => {
+    setConfirmation(undefined);
+    setProposal([]);
+    setStatus("");
+  }, [fingerprint]);
   const local = item
     ? Math.max(0, Math.min(item.durationFrames - 1, frame - item.startFrame))
     : 0;
@@ -53,13 +67,7 @@ export function KeyframePanel({
             ...(kind === "reframe" && speaker && asset
               ? {
                   speakerRegions: {
-                    [item.id]: {
-                      sourceChecksum: asset.checksum,
-                      confirmedByUser: true,
-                      startUs: item.sourceInUs,
-                      endUs: item.sourceOutUs,
-                      crop: region,
-                    },
+                    [item.id]: confirmation!.evidence,
                   },
                 }
               : {}),
@@ -196,11 +204,26 @@ export function KeyframePanel({
                 <input
                   type="checkbox"
                   checked={speaker}
-                  onChange={(e) => setSpeaker(e.target.checked)}
+                  onChange={(e) =>
+                    setConfirmation(
+                      e.target.checked && asset
+                        ? {
+                            fingerprint,
+                            evidence: {
+                              sourceChecksum: asset.checksum,
+                              confirmedByUser: true,
+                              startUs: item.sourceInUs!,
+                              endUs: item.sourceOutUs!,
+                              crop: structuredClone(region),
+                            },
+                          }
+                        : undefined,
+                    )
+                  }
                 />{" "}
                 I confirmed a speaker region for this entire source span
               </label>
-              {speaker && (
+              {
                 <div className="grid grid-cols-2 gap-2">
                   {(["x", "y", "width", "height"] as const).map((k) => (
                     <label className="text-xs" key={k}>
@@ -213,14 +236,15 @@ export function KeyframePanel({
                         max="1"
                         step="0.05"
                         value={region[k]}
-                        onChange={(e) =>
-                          setRegion({ ...region, [k]: Number(e.target.value) })
-                        }
+                        onChange={(e) => {
+                          setRegion({ ...region, [k]: Number(e.target.value) });
+                          setConfirmation(undefined);
+                        }}
                       />
                     </label>
                   ))}
                 </div>
-              )}
+              }
               <p className="text-xs text-muted-foreground">
                 Speaker crops use your confirmed region and source checksum.
                 Automatic speaker recognition is unavailable. Split at speaker

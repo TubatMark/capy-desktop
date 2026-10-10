@@ -16,8 +16,8 @@ import { buildAudioPlan, audioGainAtFrame, type AudioPlan } from "./audio-plan";
 import { run, withCancel, throwIfCancelled } from "../exec";
 
 export const NORMALIZATION_POLICY =
-  "sdr-cfr-v3: pitch-preserving-atempo-word-anchors; declarative-linear-motion; freeze-silent; display-rotation; requested-source-clock-nearest-presentation; display-aspect-preserving-square-pixel-resample-before-crop-fit; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
-export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-4";
+  "sdr-cfr-v4: duration-controlled-stereo-similarity-overlap-add; declarative-linear-motion; freeze-silent; display-rotation; requested-source-clock-nearest-presentation; display-aspect-preserving-square-pixel-resample-before-crop-fit; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
+export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-5";
 export const DEFAULT_EXPORT_PRESET: ExportPreset = {
   aspect: "portrait",
   fps: 30,
@@ -274,7 +274,143 @@ function wrapCaption(text: string, columns: number) {
 const safeColor = (v: string) => (/^#[0-9a-f]{6}$/i.test(v) ? v : "#ffffff");
 const filterPath = (v: string) =>
   v.replaceAll("\\", "\\\\").replaceAll(":", "\\:").replaceAll("'", "'\\''");
-/** Mix sample positions from authoritative rational spans; rounding occurs only at the PCM boundary. */
+/**
+ * Duration-controlled, stereo-coherent similarity overlap-add. Every grain's
+ * center follows the exact source clock; correlation adjusts phase by at most
+ * 8 ms, never the cumulative clock. The 20 ms window / 5 ms hop covers short
+ * transients without treating transcript boundaries as audio cuts.
+ * Memory is one source window and one output window, independent of clip length.
+ */
+async function stretchTempo(
+  source: Awaited<ReturnType<typeof open>>,
+  target: string,
+  startUs: number,
+  endUs: number,
+  speed: number,
+) {
+  if (speed !== 0.5 && speed !== 2) throw Error("Unsupported tempo ratio");
+  const rate = 48000,
+    window = 960,
+    hop = 240,
+    search = 384;
+  const sourceStart = Math.round((startUs * rate) / 1e6);
+  const sourceEnd = Math.min(
+    Math.round((endUs * rate) / 1e6),
+    Math.floor((await source.stat()).size / 8),
+  );
+  if (sourceEnd <= sourceStart)
+    throw Error("No decoded audio in selected source span");
+  const count = Math.round((sourceEnd - sourceStart) / speed);
+  const weights = new Float64Array(window),
+    mix = new Float64Array(window * 2);
+  const hann = Float64Array.from(
+    { length: window },
+    (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * (i + 0.5)) / window),
+  );
+  const readBuffer = Buffer.alloc((window + 2 * search) * 8),
+    output = Buffer.alloc(hop * 8);
+  let previous: Float32Array | undefined;
+  const writer = await open(target, "w");
+  try {
+    for (
+      let outputStart = -window + hop;
+      outputStart < count;
+      outputStart += hop
+    ) {
+      throwIfCancelled();
+      const nominal =
+        sourceStart +
+        Math.round((outputStart + window / 2) * speed - window / 2);
+      const readStart = Math.max(sourceStart, nominal - search),
+        readEnd = Math.min(sourceEnd, nominal + search + window);
+      const requested = Math.max(0, readEnd - readStart) * 8;
+      const bytes = requested
+        ? (await source.read(readBuffer, 0, requested, readStart * 8)).bytesRead
+        : 0;
+      const samples = new Float32Array(
+        readBuffer.buffer,
+        readBuffer.byteOffset,
+        bytes / 4,
+      );
+      for (const value of samples)
+        if (!Number.isFinite(value))
+          throw Error("Invalid decoded audio sample");
+      const value = (index: number, channel: number) =>
+        samples[(index - readStart) * 2 + channel] ?? 0;
+      let chosen = nominal,
+        best = -Infinity;
+      if (previous) {
+        for (let delta = -search; delta <= search; delta += 8) {
+          let dot = 0,
+            a2 = 0,
+            b2 = 0;
+          for (let i = 0; i < window - hop; i += 8)
+            for (let channel = 0; channel < 2; channel++) {
+              const a = previous[(i + hop) * 2 + channel]!,
+                b = value(nominal + delta + i, channel);
+              dot += a * b;
+              a2 += a * a;
+              b2 += b * b;
+            }
+          // The distance penalty makes silence use its nominal source clock.
+          const score =
+            (a2 * b2 > 1e-14 ? dot / Math.sqrt(a2 * b2) : 0) -
+            (Math.abs(delta) / search) * 0.025;
+          if (score > best) {
+            best = score;
+            chosen = nominal + delta;
+          }
+        }
+      }
+      previous = new Float32Array(window * 2);
+      for (let i = 0; i < window; i++) {
+        const sourceIndex = chosen + i,
+          available =
+            sourceIndex >= readStart && sourceIndex < readStart + bytes / 8;
+        for (let channel = 0; channel < 2; channel++)
+          previous[i * 2 + channel] = value(sourceIndex, channel);
+        if (!available) continue;
+        const weight = hann[i]!;
+        weights[i]! += weight;
+        mix[i * 2]! += previous[i * 2]! * weight;
+        mix[i * 2 + 1]! += previous[i * 2 + 1]! * weight;
+      }
+      if (outputStart >= 0) {
+        const length = Math.min(hop, count - outputStart);
+        for (let i = 0; i < length; i++) {
+          let edge: Buffer | undefined;
+          if (weights[i]! <= 1e-12) {
+            // Only possible at a very short clip boundary. Preserve an actual
+            // source sample rather than manufacturing missing-span silence.
+            edge = Buffer.alloc(8);
+            const index = Math.min(
+              sourceEnd - 1,
+              sourceStart + Math.floor((outputStart + i) * speed),
+            );
+            if ((await source.read(edge, 0, 8, index * 8)).bytesRead !== 8)
+              throw Error("Incomplete source audio");
+          }
+          for (let channel = 0; channel < 2; channel++) {
+            const sample = edge
+              ? edge.readFloatLE(channel * 4)
+              : mix[i * 2 + channel]! / weights[i]!;
+            if (!Number.isFinite(sample))
+              throw Error("Invalid stretched audio sample");
+            output.writeFloatLE(sample, (i * 2 + channel) * 4);
+          }
+        }
+        await writer.write(output, 0, length * 8);
+      }
+      weights.copyWithin(0, hop);
+      weights.fill(0, window - hop);
+      mix.copyWithin(0, hop * 2);
+      mix.fill(0, (window - hop) * 2);
+    }
+  } finally {
+    await writer.close();
+  }
+}
+
 async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
   const rate = 48000,
     count = Math.round(plan.duration * rate),
@@ -284,11 +420,8 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
   const out = path.join(dir, "mix.f32");
   const writer = await open(out, "w");
   try {
-    for (const id of new Set(
-      clips.filter((c) => c.speed === 1).map((c) => `${c.assetId}@${c.speed}`),
-    )) {
-      const clip = clips.find((c) => `${c.assetId}@${c.speed}` === id)!;
-      const a = plan.assets.find((a) => a.id === clip.assetId)!;
+    for (const id of new Set(clips.map((c) => c.assetId))) {
+      const a = plan.assets.find((a) => a.id === id)!;
       const file = path.join(dir, `audio-${decoded.size}.f32`);
       await run("ffmpeg", [
         "-v",
@@ -298,7 +431,6 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
         a.location,
         "-map",
         "0:a:0",
-        ...(clip.speed === 1 ? [] : ["-af", `atempo=${clip.speed}`]),
         "-ar",
         String(rate),
         "-ac",
@@ -308,32 +440,20 @@ async function mixAudio(plan: NormalizedPlan, dir: string): Promise<string> {
         "-y",
         file,
       ]);
-      decoded.set(id, await open(file, "r"));
+      decoded.set(`${id}@1`, await open(file, "r"));
     }
     for (const clip of clips.filter((c) => c.speed !== 1)) {
       const asset = plan.assets.find((a) => a.id === clip.assetId)!;
       for (const [index, segment] of clip.segments.entries()) {
         throwIfCancelled();
         const file = path.join(dir, `tempo-${decoded.size}.f32`);
-        await run("ffmpeg", [
-          "-v",
-          "error",
-          "-nostdin",
-          "-i",
-          asset.location,
-          "-map",
-          "0:a:0",
-          "-af",
-          `atrim=start=${numberUs(segment.sourceStartUs) / 1e6}:end=${numberUs(segment.sourceEndUs) / 1e6},asetpts=PTS-STARTPTS,atempo=${clip.speed}`,
-          "-ar",
-          String(rate),
-          "-ac",
-          "2",
-          "-f",
-          "f32le",
-          "-y",
+        await stretchTempo(
+          decoded.get(`${asset.id}@1`)!,
           file,
-        ]);
+          numberUs(segment.sourceStartUs),
+          numberUs(segment.sourceEndUs),
+          clip.speed,
+        );
         decoded.set(`${clip.itemId}:tempo:${index}`, await open(file, "r"));
       }
     }

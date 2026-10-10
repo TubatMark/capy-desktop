@@ -1,3 +1,4 @@
+import { speakerSourceFingerprint } from "../src/studio/reframe";
 import { applyEdit } from "../lib/studio/operations";
 import { expect, it } from "vitest";
 import {
@@ -101,4 +102,29 @@ it("silence proposals trim measured edges only and preserve unselected items and
   if (malicious[0]?.type === "suggested")
     malicious[0].operations = [{ type: "remove", itemId: "other" }];
   expect(() => applySuggestions(doc, malicious, ["a"])).toThrow(/selected/);
+});
+it("speaker confirmation fingerprints distinguish occurrence checksum trim and phase", () => {
+  const item = project().items[0]!,
+    asset = {
+      id: "asset",
+      kind: "video" as const,
+      status: "ready" as const,
+      location: "/safe",
+      checksum: "abc",
+    };
+  const confirmed = speakerSourceFingerprint(item, asset);
+  for (const changed of [
+    { ...item, id: "other" },
+    { ...item, sourceInUs: 100000 },
+    { ...item, sourceOutUs: 3000000 },
+    { ...item, durationFrames: 100 },
+    { ...item, sourcePhaseUs: { numerator: "1", denominator: "3" } },
+  ])
+    expect(speakerSourceFingerprint(changed, asset)).not.toBe(confirmed);
+  expect(
+    speakerSourceFingerprint(item, { ...asset, checksum: "replaced" }),
+  ).not.toBe(confirmed);
+  expect(speakerSourceFingerprint({ ...item, startFrame: 30 }, asset)).toBe(
+    confirmed,
+  );
 });

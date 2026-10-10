@@ -52,3 +52,20 @@ it("rejects unsafe retiming and unsupported saved fields", () => {
   });
   expect(() => validateProject(d)).toThrow();
 });
+it("odd-length speed cycles derive duration from stable source extent", () => {
+  for (const frames of [1, 3, 5, 7, 31]) {
+    let doc = project();
+    doc.items[0]!.durationFrames = frames;
+    doc.items[0]!.sourceOutUs = Math.round((frames / 30) * 1e6);
+    doc = mapSources(doc);
+    for (const speed of [0.5, 2, 0.5, 1, 2, 1]) {
+      doc = retimeItem(doc, "a", speed).document;
+      expect(doc.items[0]!.durationFrames).toBe(
+        Math.max(
+          1,
+          Math.round((Math.round((frames / 30) * 1e6) * 30) / 1e6 / speed),
+        ),
+      );
+    }
+  }
+});

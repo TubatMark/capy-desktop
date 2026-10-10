@@ -1,5 +1,6 @@
+import { mapSources } from "../lib/studio/operations";
 import { beforeAll, expect, it } from "vitest";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { run } from "../src/exec";
@@ -254,4 +255,249 @@ it("retimed decoded speech marker aligns with remapped captions within one proje
       1 / 30,
     );
   }
+}, 30000);
+
+it("short and adjacent word boundaries preserve decoded content without changing the mix", async () => {
+  for (const speed of [0.5, 2]) {
+    let source = project();
+    source.items[0]!.durationFrames = 6;
+    source.items[0]!.sourceOutUs = 200000;
+    source.sourceWords = [
+      {
+        assetId: "asset",
+        words: Array.from({ length: 20 }, (_, i) => ({
+          id: `short-${i}`,
+          text: "word",
+          startUs: i * 10000,
+          endUs: Math.min(200000, i * 10000 + 15000),
+        })),
+      },
+    ];
+    source = mapSources(source);
+    const doc = retimeItem(source, "a", speed).document;
+    doc.captionCues = [];
+    const result = await render(doc, `dense-words-${speed}`),
+      samples = await pcm(result.path, `dense-words-${speed}`);
+    for (let n = 240; n < Math.floor((0.2 / speed) * 48000) - 240; n += 240) {
+      let power = 0;
+      for (let k = n; k < n + 240; k++)
+        power += samples.readFloatLE(k * 4) ** 2;
+      expect(Math.sqrt(power / 240)).toBeGreaterThan(0.025);
+    }
+    const noWords = structuredClone(doc);
+    noWords.sourceWords = [];
+    noWords.captionCues = [];
+    const plain = await render(noWords, `without-words-${speed}`);
+    expect(await pcm(plain.path, `without-words-${speed}`)).toEqual(samples);
+    const tiny = project();
+    tiny.items[0]!.sourceInUs = 1000000;
+    tiny.items[0]!.sourceOutUs = 1010000;
+    tiny.items[0]!.durationFrames = 1;
+    tiny.sourceWords = [];
+    mapSources(tiny);
+    const tinyDoc = retimeItem(tiny, "a", speed).document;
+    const tinyRender = await render(tinyDoc, `ten-ms-${speed}`),
+      tinyPcm = await pcm(tinyRender.path, `ten-ms-${speed}`);
+    let energy = 0;
+    const length = Math.floor((0.01 / speed) * 48000);
+    for (let n = 0; n < length; n++) energy += tinyPcm.readFloatLE(n * 4) ** 2;
+    expect(Math.sqrt(energy / length)).toBeGreaterThan(0.025);
+  }
+}, 30000);
+
+it("sixty-second retimed speech markers have no cumulative timing drift", async () => {
+  const file = path.join(root, "sixty-second-markers.mp4");
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=red:s=160x90:r=30:d=60",
+    "-f",
+    "lavfi",
+    "-i",
+    "aevalsrc=if(between(mod(t\\,1)\\,0.5\\,0.75)\\,0.5*sin(2*PI*440*t)\\,0):s=48000:d=60",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-c:a",
+    "aac",
+    "-shortest",
+    "-y",
+    file,
+  ]);
+  const marker = {
+    ...asset,
+    location: file,
+    durationUs: 60000000,
+    checksum: createHash("sha256")
+      .update(await readFile(file))
+      .digest("hex"),
+  };
+  for (const speed of [0.5, 2]) {
+    const source = project();
+    source.canvas = { width: 160, height: 90 };
+    source.items[0]!.durationFrames = 1800;
+    source.items[0]!.sourceOutUs = 60000000;
+    source.sourceWords = [
+      {
+        assetId: "asset",
+        words: Array.from({ length: 60 }, (_, i) => ({
+          id: `marker-${i}`,
+          text: "beat",
+          startUs: (i + 0.5) * 1e6,
+          endUs: (i + 0.75) * 1e6,
+        })),
+      },
+    ];
+    mapSources(source);
+    const doc = retimeItem(source, "a", speed).document,
+      plan = await compileNormalizedProject(doc, [marker]),
+      out = await renderNormalizedProject(
+        plan,
+        new AbortController().signal,
+        path.join(root, `sixty-${speed}`),
+      );
+    expect(out.probe.durationUs).toBe(60000000 / speed);
+    const samples = await pcm(out.path, `sixty-${speed}`),
+      onsets: number[] = [];
+    let active = false;
+    for (let n = 0; n + 240 < samples.length / 4; n += 240) {
+      let power = 0;
+      for (let k = n; k < n + 240; k++)
+        power += samples.readFloatLE(k * 4) ** 2;
+      const signal = Math.sqrt(power / 240) > 0.025;
+      if (
+        signal &&
+        !active &&
+        (!onsets.length || n / 48000 - onsets.at(-1)! > 0.5 / speed)
+      )
+        onsets.push(n / 48000);
+      active = signal;
+    }
+    expect(onsets).toHaveLength(60);
+    for (let n = 0; n < 60; n++)
+      expect(Math.abs(onsets[n]! - (n + 0.5) / speed)).toBeLessThan(1 / 30);
+    expect(doc.captionCues.map((c) => c.startFrame)).toEqual(
+      Array.from({ length: 60 }, (_, i) => ((i + 0.5) * 30) / speed).map(
+        Math.round,
+      ),
+    );
+  }
+}, 90000);
+
+it("stretched stereo stays coherent and preserves low and high pitch", async () => {
+  for (const frequency of [80, 1000]) {
+    const file = path.join(root, `stereo-phase-${frequency}.mp4`);
+    await run("ffmpeg", [
+      "-v",
+      "error",
+      "-i",
+      asset.location,
+      "-f",
+      "lavfi",
+      "-i",
+      `aevalsrc=0.4*sin(2*PI*${frequency}*t)|-0.4*sin(2*PI*${frequency}*t):s=48000:d=4`,
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-y",
+      file,
+    ]);
+    const stereo = {
+      ...asset,
+      location: file,
+      checksum: createHash("sha256")
+        .update(await readFile(file))
+        .digest("hex"),
+    };
+    for (const speed of [0.5, 2]) {
+      const doc = retimeItem(project(), "a", speed).document,
+        plan = await compileNormalizedProject(doc, [stereo]),
+        out = await renderNormalizedProject(
+          plan,
+          new AbortController().signal,
+          path.join(root, `stereo-${frequency}-${speed}`),
+        );
+      const raw = path.join(root, `stereo-${frequency}-${speed}.f32`);
+      await run("ffmpeg", [
+        "-v",
+        "error",
+        "-i",
+        out.path,
+        "-vn",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-f",
+        "f32le",
+        "-y",
+        raw,
+      ]);
+      const samples = await readFile(raw);
+      let leftPower = 0,
+        rightPower = 0,
+        dot = 0,
+        crossings = 0;
+      for (let n = 24000; n < 72000; n++) {
+        const left = samples.readFloatLE(n * 8),
+          right = samples.readFloatLE(n * 8 + 4);
+        expect(Number.isFinite(left) && Number.isFinite(right)).toBe(true);
+        leftPower += left * left;
+        rightPower += right * right;
+        dot += left * right;
+        if (samples.readFloatLE((n - 1) * 8) <= 0 && left > 0) crossings++;
+      }
+      expect(Math.sqrt(leftPower / 48000)).toBeGreaterThan(0.2);
+      expect(Math.sqrt(rightPower / 48000)).toBeGreaterThan(0.2);
+      expect(dot / Math.sqrt(leftPower * rightPower)).toBeLessThan(-0.98);
+      expect(crossings).toBeGreaterThanOrEqual(frequency * 0.97);
+      expect(crossings).toBeLessThanOrEqual(frequency * 1.03);
+    }
+  }
+}, 30000);
+
+it("cancels during streamed tempo processing and removes partial artifacts", async () => {
+  const doc = retimeItem(project(), "a", 0.5).document;
+  const plan = await compileNormalizedProject(doc, [asset]);
+  const controller = new AbortController();
+  const dir = path.join(root, "cancel-tempo");
+  let settled = false,
+    cancelledDuringTempo = false;
+  const result = renderNormalizedProject(plan, controller.signal, dir)
+    .then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    .finally(() => {
+      settled = true;
+    });
+  while (!settled) {
+    const size = await stat(path.join(dir, "tempo-1.f32")).then(
+      (s) => s.size,
+      () => 0,
+    );
+    if (size > 0) {
+      cancelledDuringTempo = true;
+      controller.abort();
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  expect(await result).toMatchObject({ name: "CancelledError" });
+  expect(cancelledDuringTempo).toBe(true);
+  expect(
+    await stat(dir).then(
+      () => true,
+      () => false,
+    ),
+  ).toBe(false);
 }, 30000);
