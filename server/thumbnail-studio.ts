@@ -328,6 +328,7 @@ async function prepareThumbnailSave(
   doc: ThumbnailStudioDocument,
   expectedRevision: number,
   deps = thumbnailDependencies(),
+  options: { restoredFromRevision?: number } = {},
 ): Promise<{
   current: ThumbnailStudioDocument;
   saved: ThumbnailStudioDocument;
@@ -345,6 +346,21 @@ async function prepareThumbnailSave(
     doc.layout !== current.layout
   )
     throw fail("Thumbnail source identity is immutable");
+  // Restored layers already occupy their historical aspect's coordinate space.
+  // Resolve that space from the durable revision, never a client aspect claim.
+  let coordinateAspect = current.aspectPreset;
+  if (options.restoredFromRevision !== undefined) {
+    revision(options.restoredFromRevision);
+    const historical = getThumbnail(doc.id, options.restoredFromRevision, deps);
+    if (
+      hashManifest(historical.sourceIdentity) !==
+        hashManifest(current.sourceIdentity) ||
+      historical.renderChecksum !== current.renderChecksum ||
+      historical.layout !== current.layout
+    )
+      throw fail("Historical thumbnail source identity does not match");
+    coordinateAspect = historical.aspectPreset;
+  }
   const layers = z
     .array(layerSchema)
     .min(2)
@@ -365,9 +381,9 @@ async function prepareThumbnailSave(
     layers,
   };
   const frame = frameFor(next, deps);
-  if (aspect !== current.aspectPreset)
+  if (aspect !== coordinateAspect)
     next.layers = reflowThumbnail(
-      { ...next, aspectPreset: current.aspectPreset },
+      { ...next, aspectPreset: coordinateAspect },
       aspect,
       frame,
     );
@@ -423,9 +439,10 @@ export async function saveThumbnail(
   doc: ThumbnailStudioDocument,
   expectedRevision: number,
   deps = thumbnailDependencies(),
+  options: { restoredFromRevision?: number } = {},
 ): Promise<ThumbnailStudioDocument> {
   return commitThumbnailSave(
-    await prepareThumbnailSave(doc, expectedRevision, deps),
+    await prepareThumbnailSave(doc, expectedRevision, deps, options),
     expectedRevision,
     deps,
   );

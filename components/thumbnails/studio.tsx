@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   FrameCandidate,
   ThumbnailAspect,
@@ -53,9 +53,16 @@ export function ThumbnailStudio({
     [error, setError] = useState(""),
     [status, setStatus] = useState(""),
     [dirty, setDirty] = useState(false),
+    [restoredFromRevision, setRestoredFromRevision] = useState<number>(),
     [packageId, setPackageId] = useState("");
+  const draftEpoch = useRef(0),
+    busyRef = useRef(false);
   const load = useCallback(
-    async (selectedId?: string) => {
+    async (
+      selectedId?: string,
+      options: { preserveDraft?: boolean; epoch?: number } = {},
+    ) => {
+      const epoch = options.epoch ?? draftEpoch.current;
       const target = selectedId ?? (id !== "new" ? id : undefined);
       const url = target
         ? `/api/thumbnails/${target}`
@@ -64,12 +71,22 @@ export function ThumbnailStudio({
       setData(next);
       setSource(next.document?.sourceIdentity ?? next.source);
       if (next.document) {
+        if (options.preserveDraft || draftEpoch.current !== epoch) {
+          // Refresh frames/history without discarding local edits. Footage drift
+          // still surfaces immediately and the durable save CAS remains intact.
+          if (next.document.reviewState === "stale")
+            setDoc((draft) =>
+              draft ? { ...draft, reviewState: "stale" } : draft,
+            );
+          return next;
+        }
         setDoc(next.document);
         setAspect(next.document.aspectPreset);
         setSelectedFrame(
           next.document.layers.find((l) => l.id === "source")?.assetId,
         );
         setDirty(false);
+        setRestoredFromRevision(undefined);
       }
       return next;
     },
@@ -78,14 +95,18 @@ export function ThumbnailStudio({
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
-  async function action(fn: () => Promise<void>) {
+  async function action(fn: (epoch: number) => Promise<void>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const epoch = draftEpoch.current;
     setBusy(true);
     setError("");
     try {
-      await fn();
+      await fn(epoch);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -109,7 +130,7 @@ export function ThumbnailStudio({
     framesOnly = false,
   ) {
     if (!source) return;
-    await action(async () => {
+    await action(async (epoch) => {
       setStatus(
         framesOnly
           ? "Extracting source frames…"
@@ -129,9 +150,9 @@ export function ThumbnailStudio({
         allowCloud: !framesOnly,
       });
       await awaitJob(job.id);
-      const next = await load(doc?.id);
+      const next = await load(doc?.id, { preserveDraft: framesOnly, epoch });
       if (!doc && !framesOnly && next.designs[0])
-        await load(next.designs[0].id);
+        await load(next.designs[0].id, { epoch });
       setStatus(
         framesOnly
           ? "Frames ready. Choose one to replace the source locally."
@@ -141,24 +162,26 @@ export function ThumbnailStudio({
   }
   async function save() {
     if (!doc) return;
-    await action(async () => {
+    await action(async (epoch) => {
+      setStatus("Saving local edits…");
       const res = await fetch(`/api/thumbnails/${doc.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           document: doc,
           expectedRevision: doc.editRevision,
+          restoredFromRevision,
         }),
       });
       const next = await res.json();
       if (!res.ok) throw Error(next.error);
-      await load(doc.id);
+      await load(doc.id, { epoch });
       setStatus("Saved locally. No image generation call.");
     });
   }
   async function regenerate(kind: "variation" | "background") {
     if (!doc) return;
-    await action(async () => {
+    await action(async (epoch) => {
       const record = await request<{ id: string; jobId: string }>(
         `/api/thumbnails/${doc.id}/regenerate`,
         {
@@ -176,7 +199,7 @@ export function ThumbnailStudio({
         throw Error(
           result.error ?? "Regeneration did not replace the selected design",
         );
-      await load(doc.id);
+      await load(doc.id, { epoch });
       setStatus("Regeneration saved as a new version.");
     });
   }
@@ -210,6 +233,8 @@ export function ThumbnailStudio({
     });
   }
   const edit = (next: ThumbnailStudioDocument) => {
+    if (busyRef.current) return;
+    draftEpoch.current++;
     setDoc(next);
     setDirty(true);
   };
@@ -242,9 +267,9 @@ export function ThumbnailStudio({
         designs={data.designs}
         selected={doc?.id}
         onSelect={(next) => {
-          if (busy || dirty) return;
-          void action(async () => {
-            await load(next.id);
+          if (busyRef.current || dirty) return;
+          void action(async (epoch) => {
+            await load(next.id, { epoch });
           });
         }}
       />
@@ -254,6 +279,7 @@ export function ThumbnailStudio({
             Headline
             <input
               className="block rounded border p-2"
+              disabled={busy || !source}
               value={headline}
               maxLength={120}
               onChange={(e) => setHeadline(e.target.value)}
@@ -276,21 +302,23 @@ export function ThumbnailStudio({
             className="ml-2 rounded border p-2"
             value={aspect}
             onChange={(e) => {
+              if (busyRef.current) return;
               const selected = e.target.value as ThumbnailAspect;
               setAspect(selected);
               if (doc)
-                void action(async () => {
+                void action(async (epoch) => {
                   const res = await fetch(`/api/thumbnails/${doc.id}`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       document: { ...doc, aspectPreset: selected },
                       expectedRevision: doc.editRevision,
+                      restoredFromRevision,
                     }),
                   });
                   const response = await res.json();
                   if (!res.ok) throw Error(response.error);
-                  await load(doc.id);
+                  await load(doc.id, { epoch });
                   setStatus("Preset recomposed locally as a new version.");
                 });
             }}
@@ -399,10 +427,26 @@ export function ThumbnailStudio({
               {data.history?.map((version) => (
                 <button
                   key={version.editRevision}
+                  disabled={busy}
                   className="mr-2 rounded border p-2 text-sm"
                   onClick={() => {
-                    edit({ ...version, editRevision: doc.editRevision });
+                    if (busyRef.current) return;
+                    edit({
+                      ...version,
+                      editRevision: doc.editRevision,
+                      reviewState:
+                        doc.reviewState === "stale"
+                          ? "stale"
+                          : version.reviewState,
+                    });
+                    setRestoredFromRevision(version.editRevision);
                     setAspect(version.aspectPreset);
+                    setSelectedFrame(
+                      version.layers.find((l) => l.id === "source")?.assetId,
+                    );
+                    setStatus(
+                      "Historical geometry restored locally. Save edits to create a new version.",
+                    );
                   }}
                 >
                   Restore {version.name} · v{version.editRevision}
@@ -415,11 +459,11 @@ export function ThumbnailStudio({
                 className="rounded border p-2"
                 disabled={busy || dirty || doc.reviewState === "stale"}
                 onClick={() =>
-                  action(async () => {
+                  action(async (epoch) => {
                     await request(`/api/thumbnails/${doc.id}/review`, {
                       revision: doc.editRevision,
                     });
-                    await load(doc.id);
+                    await load(doc.id, { epoch });
                     setStatus(
                       "Exact thumbnail version reviewed. Package approval is a separate decision.",
                     );
@@ -451,12 +495,12 @@ export function ThumbnailStudio({
                   busy || dirty || !packageId || doc.reviewState === "stale"
                 }
                 onClick={() =>
-                  action(async () => {
+                  action(async (epoch) => {
                     await request(`/api/thumbnails/${doc.id}/attach`, {
                       packageId,
                       revision: doc.editRevision,
                     });
-                    await load(doc.id);
+                    await load(doc.id, { epoch });
                     setPackageId("");
                     setStatus(
                       "Attached exact version. The package needs a new approval. Platform upload has not run.",
@@ -482,6 +526,7 @@ export function ThumbnailStudio({
         selected={selectedFrame}
         busy={busy}
         onSelect={(frame) => {
+          if (busyRef.current) return;
           setSelectedFrame(frame.id);
           if (doc)
             edit({

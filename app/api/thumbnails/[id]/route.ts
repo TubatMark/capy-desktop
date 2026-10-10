@@ -52,10 +52,17 @@ export async function GET(req: Request, ctx: Context) {
 export async function PUT(req: Request, ctx: Context) {
   try {
     const { id } = await ctx.params,
-      { document, expectedRevision } = await req.json();
+      { document, expectedRevision, restoredFromRevision } = await req.json();
     if (document?.id !== id) throw Error("Thumbnail ID mismatch");
     return Response.json(
-      presentThumbnail(await saveThumbnail(document, expectedRevision)),
+      presentThumbnail(
+        await saveThumbnail(
+          document,
+          expectedRevision,
+          thumbnailDependencies(),
+          { restoredFromRevision },
+        ),
+      ),
     );
   } catch (error) {
     return errorResponse(error);

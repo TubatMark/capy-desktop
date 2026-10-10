@@ -159,6 +159,98 @@ it("edit_text_does_not_regenerate and CAS preserves saved history", async () => 
     saveThumbnail(foreign, saved.editRevision, f.deps),
   ).rejects.toThrow(/frame/);
 });
+it("historical landscape restore retains exact geometry, crop and PNG pixels after portrait", async () => {
+  const f = await fixture();
+  const edited = structuredClone(f.design);
+  edited.layers.find((l) => l.id === "source")!.crop = {
+    x: 0.1,
+    y: 0.1,
+    width: 0.8,
+    height: 0.8,
+  };
+  edited.layers.find((l) => l.id === "source")!.x += 12;
+  edited.layers.find((l) => l.kind === "text")!.x += 15;
+  const landscape = await saveThumbnail(edited, edited.editRevision, f.deps);
+  const { approveThumbnail } = await import("../server/thumbnail-studio");
+  const audit = await approveThumbnail(
+    landscape.id,
+    landscape.editRevision,
+    f.deps,
+  );
+  const portrait = await saveThumbnail(
+    { ...landscape, aspectPreset: "portrait" },
+    landscape.editRevision,
+    f.deps,
+  );
+  const historical = getThumbnail(landscape.id, landscape.editRevision, f.deps);
+  const restored = await saveThumbnail(
+    { ...historical, editRevision: portrait.editRevision },
+    portrait.editRevision,
+    f.deps,
+    { restoredFromRevision: historical.editRevision },
+  );
+  expect(restored.editRevision).toBe(portrait.editRevision + 1);
+  expect(restored.aspectPreset).toBe("landscape");
+  expect(restored.layers).toEqual(landscape.layers);
+  expect(getThumbnail(restored.id, undefined, f.deps).layers).toEqual(
+    landscape.layers,
+  );
+  const before = landscape.versions.filter((v) => v.format === "png").at(-1)!;
+  const after = restored.versions.filter((v) => v.format === "png").at(-1)!;
+  expect(await readFile(after.path)).toEqual(await readFile(before.path));
+  expect(restored.reviewState).toBe("pending");
+  expect(
+    getThumbnail(historical.id, historical.editRevision, f.deps).reviewState,
+  ).toBe("approved");
+  expect(
+    f.store.get(
+      "thumbnail-reviews",
+      `${historical.id}:${historical.editRevision}`,
+    )?.value,
+  ).toEqual(audit);
+  await expect(
+    saveThumbnail(restored, restored.editRevision, f.deps, {
+      restoredFromRevision: 999,
+    }),
+  ).rejects.toThrow(/revision not found/);
+  const overflow = structuredClone(restored);
+  overflow.layers.find((l) => l.id === "source")!.width = 5000;
+  await expect(
+    saveThumbnail(overflow, restored.editRevision, f.deps, {
+      restoredFromRevision: historical.editRevision,
+    }),
+  ).rejects.toThrow(/exceed canvas/);
+  f.store.put("thumbnail-history", `${restored.id}:999`, {
+    ...historical,
+    sourceIdentity: { ...historical.sourceIdentity, renderChecksum: "foreign" },
+  });
+  await expect(
+    saveThumbnail(restored, restored.editRevision, f.deps, {
+      restoredFromRevision: 999,
+    }),
+  ).rejects.toThrow(/source identity does not match/);
+  const square = await saveThumbnail(
+    {
+      ...historical,
+      editRevision: restored.editRevision,
+      aspectPreset: "square",
+    },
+    restored.editRevision,
+    f.deps,
+    { restoredFromRevision: historical.editRevision },
+  );
+  const expectedSquare = await exportThumbnail(
+    historical.id,
+    historical.editRevision,
+    { aspect: "square", format: "png", text: true },
+    f.deps,
+  );
+  expect(
+    await readFile(
+      square.versions.filter((v) => v.format === "png").at(-1)!.path,
+    ),
+  ).toEqual(await readFile(expectedSquare.path));
+});
 it("download_outputs_are_real_and_correct", async () => {
   const f = await fixture();
   for (const aspect of ["landscape", "portrait", "square"] as const)

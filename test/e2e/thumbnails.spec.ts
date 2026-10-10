@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { ThumbnailStudioDocument } from "../../lib/thumbnails";
 const root = process.env.CAPY_STUDIO_TEST_ROOT!;
 test.beforeAll(() => {
   execFileSync(
@@ -129,4 +130,139 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
     fullPage: true,
   });
   expect(errors).toEqual([]);
+});
+
+test("frame discovery preserves unsaved headline and crop", async ({
+  page,
+}) => {
+  await page.goto("/thumbnails/browser-editorial");
+  const headline = page.getByLabel("Headline", { exact: true });
+  await expect(headline).toHaveValue("REAL SOURCE");
+  await headline.fill("UNSAVED FRAME DRAFT");
+  await page.getByLabel("Crop x", { exact: true }).fill("0.1");
+  await page.getByLabel("Crop width", { exact: true }).fill("0.8");
+  await page
+    .getByRole("button", { name: "Suggest frames", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Frames ready");
+  await expect(headline).toHaveValue("UNSAVED FRAME DRAFT");
+  await expect(page.getByLabel("Crop x", { exact: true })).toHaveValue("0.1");
+  await expect(page.getByLabel("Crop width", { exact: true })).toHaveValue(
+    "0.8",
+  );
+  await expect(
+    page.getByRole("button", { name: "Save edits", exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel("Frame time (seconds)", { exact: true }).fill("1.23");
+  await page
+    .getByRole("button", { name: "Extract selected frame", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("Frames ready");
+  await expect(headline).toHaveValue("UNSAVED FRAME DRAFT");
+  await expect(page.getByLabel("Crop width", { exact: true })).toHaveValue(
+    "0.8",
+  );
+  await page.getByRole("button", { name: "Save edits", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await page.reload();
+  await expect(headline).toHaveValue("UNSAVED FRAME DRAFT");
+  await expect(page.getByLabel("Crop width", { exact: true })).toHaveValue(
+    "0.8",
+  );
+});
+
+test("busy restore is blocked and cross-aspect restoration saves exact historical pixels", async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.goto("/thumbnails/browser-minimal");
+  await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
+    "REAL SOURCE",
+  );
+  await page
+    .getByLabel("Headline", { exact: true })
+    .fill("HISTORICAL LANDSCAPE");
+  await page.getByLabel("Crop x", { exact: true }).fill("0.1");
+  await page.getByLabel("Crop width", { exact: true }).fill("0.8");
+  await page.getByRole("button", { name: "Save edits", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Saved locally");
+  const landscape: ThumbnailStudioDocument = (
+    await (await request.get("/api/thumbnails/browser-minimal")).json()
+  ).document;
+  const before = await (
+    await request.get(
+      `/api/thumbnails/browser-minimal/export?revision=${landscape.editRevision}&aspect=landscape&format=png&text=true`,
+    )
+  ).body();
+  await page
+    .getByRole("combobox", { name: "Aspect preset", exact: true })
+    .selectOption("portrait");
+  await expect(page.getByRole("status")).toContainText(
+    "Preset recomposed locally",
+  );
+
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  await page.route("**/api/thumbnails/browser-minimal", async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const response = await route.fetch();
+    entered();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page
+    .getByLabel("Headline", { exact: true })
+    .fill("PENDING PORTRAIT SAVE");
+  await page.getByRole("button", { name: "Save edits", exact: true }).click();
+  await pending;
+  const restore = page.getByRole("button", {
+    name: new RegExp(`Restore .* · v${landscape.editRevision}$`),
+  });
+  try {
+    await expect(restore).toBeDisabled();
+    await restore.evaluate((button: HTMLButtonElement) => button.click());
+    await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
+      "PENDING PORTRAIT SAVE",
+    );
+  } finally {
+    release();
+  }
+  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await page.unroute("**/api/thumbnails/browser-minimal");
+  await restore.click();
+  await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
+    "HISTORICAL LANDSCAPE",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Aspect preset", exact: true }),
+  ).toHaveValue("landscape");
+  await page.getByRole("button", { name: "Save edits", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await page.reload();
+  await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
+    "HISTORICAL LANDSCAPE",
+  );
+  await expect(page.getByLabel("Crop width", { exact: true })).toHaveValue(
+    "0.8",
+  );
+  const restored: ThumbnailStudioDocument = (
+    await (await request.get("/api/thumbnails/browser-minimal")).json()
+  ).document;
+  expect(restored.layers).toEqual(landscape.layers);
+  const after = await (
+    await request.get(
+      `/api/thumbnails/browser-minimal/export?revision=${restored.editRevision}&aspect=landscape&format=png&text=true`,
+    )
+  ).body();
+  expect(after.equals(before)).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("thumbnail-restored-landscape.png"),
+    fullPage: true,
+  });
 });
