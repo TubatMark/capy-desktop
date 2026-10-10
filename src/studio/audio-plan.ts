@@ -1,10 +1,26 @@
 import type {
   AssetRef,
+  ExactUs,
   DuckingSettings,
   ProjectDocument,
 } from "../../lib/studio/types";
-import { audioRole } from "../../lib/studio/audio";
+import { audioRole, sourcePhaseUs } from "../../lib/studio/audio";
+import {
+  addUs,
+  compareUs,
+  frameTimeUs,
+  integerUs,
+  minimumUs,
+  moduloUs,
+  numberUs,
+  subtractUs,
+} from "../../lib/studio/time";
 export interface AudioSegment {
+  /** Authoritative audio spans; derived frame/source numbers below may be fractional. */
+  timelineStartUs: ExactUs;
+  durationUs: ExactUs;
+  sourceStartUs: ExactUs;
+  sourceEndUs: ExactUs;
   startFrame: number;
   durationFrames: number;
   sourceInUs: number;
@@ -57,28 +73,32 @@ export function buildAudioPlan(
       !item.muted &&
       !track?.muted &&
       (!solo || !!item.solo || !!track?.solo);
-    const span = item.sourceOutUs! - item.sourceInUs!;
+    const span = integerUs(item.sourceOutUs! - item.sourceInUs!);
+    const total = frameTimeUs(item.durationFrames, doc),
+      start = frameTimeUs(item.startFrame, doc);
     const segments: AudioSegment[] = [];
-    let elapsed = 0,
-      offset = item.loopOffsetUs ?? 0;
-    while (elapsed < item.durationFrames) {
-      const available = Math.max(
-        1,
-        Math.round(((span - offset) * fps) / 1000000),
-      );
-      const count = Math.min(item.durationFrames - elapsed, available);
-      const sourceInUs = item.sourceInUs! + offset;
+    let elapsed = integerUs(0),
+      offset = sourcePhaseUs(item);
+    if (item.loop) offset = moduloUs(offset, span);
+    while (compareUs(elapsed, total) < 0) {
+      const available = subtractUs(span, offset);
+      if (compareUs(available, integerUs(0)) <= 0) break;
+      const count = minimumUs(subtractUs(total, elapsed), available);
+      const sourceStartUs = addUs(integerUs(item.sourceInUs!), offset);
+      const sourceEndUs = addUs(sourceStartUs, count),
+        timelineStartUs = addUs(start, elapsed);
       segments.push({
-        startFrame: item.startFrame + elapsed,
-        durationFrames: count,
-        sourceInUs,
-        sourceOutUs: Math.min(
-          item.sourceOutUs!,
-          sourceInUs + Math.round((count * 1000000) / fps),
-        ),
+        timelineStartUs,
+        durationUs: count,
+        sourceStartUs,
+        sourceEndUs,
+        startFrame: (numberUs(timelineStartUs) * fps) / 1000000,
+        durationFrames: (numberUs(count) * fps) / 1000000,
+        sourceInUs: numberUs(sourceStartUs),
+        sourceOutUs: numberUs(sourceEndUs),
       });
-      elapsed += count;
-      offset = 0;
+      elapsed = addUs(elapsed, count);
+      offset = integerUs(0);
       if (!item.loop) break;
     }
     const video = item.linkedVideoId
@@ -200,4 +220,19 @@ export function audioGainAtFrame(
     envelope *= reduction;
   }
   return Math.max(0, clip.gain * envelope * plan.masterGain);
+}
+
+/** Resolve the canonical source at an exact output audio time; absence represents silence. */
+export function audioSourceAtTime(
+  clip: AudioClipPlan,
+  time: ExactUs,
+): ExactUs | undefined {
+  const segment = clip.segments.find(
+    (segment) =>
+      compareUs(time, segment.timelineStartUs) >= 0 &&
+      compareUs(time, addUs(segment.timelineStartUs, segment.durationUs)) < 0,
+  );
+  return segment
+    ? addUs(segment.sourceStartUs, subtractUs(time, segment.timelineStartUs))
+    : undefined;
 }

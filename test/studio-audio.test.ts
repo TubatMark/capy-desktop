@@ -4,7 +4,11 @@ import {
   mapSources,
   validateProject,
 } from "../lib/studio/operations";
-import { buildAudioPlan, audioGainAtFrame } from "../src/studio/audio-plan";
+import {
+  buildAudioPlan,
+  audioGainAtFrame,
+  audioSourceAtTime,
+} from "../src/studio/audio-plan";
 import type { AssetRef, ProjectDocument } from "../lib/studio/types";
 const assets: AssetRef[] = [
   {
@@ -377,3 +381,143 @@ it("source crossfade envelopes and later split/reorder preserve usable transitio
     reordered.items.find((i) => i.id === "v")?.transitionOut,
   ).toBeUndefined();
 });
+
+it("shorten then split/trim uses one speed-1 source clock and restores exact inverses", async () => {
+  const { sourceTimeUs } = await import("../lib/studio/audio");
+  const base = fixture();
+  const sound = base.items.find((i) => i.id === "m")!;
+  sound.loop = false;
+  sound.durationFrames = 60;
+  delete sound.loopOffsetUs;
+  mapSources(base);
+  const shortened = applyEdit(base, {
+    type: "audio-duration",
+    itemId: "m",
+    durationFrames: 30,
+  });
+  const before = sourceTimeUs(
+    shortened.document.items.find((i) => i.id === "m")!,
+    15,
+    base,
+  );
+  expect(before).toBe(500000);
+  const split = applyEdit(shortened.document, {
+    type: "split",
+    itemId: "m",
+    frame: 15,
+    newId: "short-tail",
+  });
+  expect(
+    sourceTimeUs(
+      split.document.items.find((i) => i.id === "short-tail")!,
+      15,
+      base,
+    ),
+  ).toBe(before);
+  expect(
+    split.document.items.find((i) => i.id === "short-tail")?.sourceInUs,
+  ).toBe(500000);
+  const trimmed = applyEdit(shortened.document, {
+    type: "trim",
+    itemId: "m",
+    inFrame: 15,
+    outFrame: 30,
+  });
+  expect(
+    sourceTimeUs(
+      trimmed.document.items.find((i) => i.id === "m")!,
+      0,
+      base,
+    ),
+  ).toBe(before);
+  expect(applyEdit(split.document, split.inverse).document).toEqual(
+    shortened.document,
+  );
+  expect(applyEdit(shortened.document, shortened.inverse).document).toEqual(
+    base,
+  );
+  const extended = applyEdit(shortened.document, {
+    type: "audio-duration",
+    itemId: "m",
+    durationFrames: 60,
+  });
+  expect(extended.document.items.find((i) => i.id === "m")?.sourceOutUs).toBe(
+    2000000,
+  );
+});
+it.each([
+  { numerator: 30, denominator: 1 },
+  { numerator: 30000, denominator: 1001 },
+])(
+  "sub-frame loop boundaries agree with audition through later iterations at $numerator/$denominator fps",
+  async (fps) => {
+    const { sourceTimeUs, sourceFrameTimeUs } =
+      await import("../lib/studio/audio");
+    const { frameTimeUs } = await import("../lib/studio/time");
+    const doc = fixture();
+    doc.fps = fps;
+    doc.items = doc.items.filter((i) => i.id === "m");
+    const item = doc.items[0]!;
+    item.sourceOutUs = 50000;
+    item.durationFrames = 300;
+    item.fadeInFrames = 0;
+    item.fadeOutFrames = 0;
+    mapSources(doc);
+    const smallAssets = [{ ...assets[1]!, durationUs: 50000 }];
+    const assertClock = (edited: ProjectDocument, id: string) => {
+      const sound = edited.items.find((i) => i.id === id)!;
+      const plan = buildAudioPlan(edited, smallAssets);
+      const clip = plan.clips.find((c) => c.itemId === id)!;
+      for (const offset of [0, 1, 2, 5, 37, 100, 200].filter(
+        (f) => f < sound.durationFrames,
+      )) {
+        const frame = sound.startFrame + offset;
+        const segment = clip.segments.find(
+          (s) =>
+            frame >= s.startFrame - 1e-9 &&
+            frame < s.startFrame + s.durationFrames - 1e-9,
+        )!;
+        const mapped =
+          segment.sourceInUs +
+          ((frame - segment.startFrame) * 1000000 * fps.denominator) /
+            fps.numerator;
+        expect(mapped).toBeCloseTo(sourceTimeUs(sound, frame, edited), 6);
+        expect(audioSourceAtTime(clip, frameTimeUs(frame, edited))).toEqual(
+          sourceFrameTimeUs(sound, frame, edited),
+        );
+      }
+    };
+    assertClock(doc, "m");
+    expect(
+      buildAudioPlan(doc, smallAssets).clips[0]?.segments[0]?.durationUs,
+    ).toEqual({ numerator: "50000", denominator: "1" });
+    expect(
+      buildAudioPlan(doc, smallAssets).clips[0]?.segments[0]?.durationFrames,
+    ).toBeCloseTo((50000 * fps.numerator) / (1000000 * fps.denominator), 12);
+    const trim = applyEdit(doc, {
+      type: "trim",
+      itemId: "m",
+      inFrame: 2,
+      outFrame: 280,
+    }).document;
+    assertClock(trim, "m");
+    expect(sourceTimeUs(trim.items[0]!, 0, trim)).toBeCloseTo(
+      ((2 * 1000000 * fps.denominator) / fps.numerator) % 50000,
+      9,
+    );
+    const split = applyEdit(trim, {
+      type: "split",
+      itemId: "m",
+      frame: 3,
+      newId: "fraction-tail",
+    }).document;
+    assertClock(split, "fraction-tail");
+    expect(
+      sourceTimeUs(
+        split.items.find((i) => i.id === "fraction-tail")!,
+        3,
+        split,
+      ),
+    ).toBeCloseTo(((5 * 1000000 * fps.denominator) / fps.numerator) % 50000, 9);
+  },
+);

@@ -26,6 +26,7 @@ import { CaptionsPanel } from "./captions-panel";
 import { LayersPanel } from "./layers-panel";
 import { AudioPreview } from "./audio-preview";
 import { LayerPreview } from "./layer-preview";
+import { visualTransform } from "@/lib/studio/visual";
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
 export function StudioEditor({ id }: { id: string }) {
   const router = useRouter();
@@ -604,13 +605,9 @@ export function StudioEditor({ id }: { id: string }) {
                   src={asset.mediaUrl}
                   alt={asset.name ?? "Preview"}
                   className="h-full w-full object-contain"
-                  style={
-                    active.transform
-                      ? {
-                          transform: `translate(${(active.transform.x / document.canvas.width) * 100}%, ${(active.transform.y / document.canvas.height) * 100}%) scale(${active.transform.scale}) rotate(${active.transform.rotation}deg)`,
-                        }
-                      : undefined
-                  }
+                  style={{
+                    transform: visualTransform(active, document.canvas),
+                  }}
                 />
               ) : (
                 <video
@@ -618,13 +615,9 @@ export function StudioEditor({ id }: { id: string }) {
                   ref={video}
                   src={asset.proxyUrl ?? asset.mediaUrl}
                   className="h-full w-full object-contain"
-                  style={
-                    active.transform
-                      ? {
-                          transform: `translate(${(active.transform.x / document.canvas.width) * 100}%, ${(active.transform.y / document.canvas.height) * 100}%) scale(${active.transform.scale}) rotate(${active.transform.rotation}deg)`,
-                        }
-                      : undefined
-                  }
+                  style={{
+                    transform: visualTransform(active, document.canvas),
+                  }}
                   muted
                   playsInline
                   onLoadedMetadata={() => {

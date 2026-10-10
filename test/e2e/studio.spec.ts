@@ -553,3 +553,76 @@ test("sound volume, caption move, overlay and every undo are visible and durable
   });
   expect(errors).toEqual([]);
 });
+
+test("incoming crossfade keeps its saved transform through the main-media handoff", async ({
+  page,
+  request,
+}) => {
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video", name: "crossfade-transform.mp4" },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () => {
+        const assets = await (await request.get("/api/studio/assets")).json();
+        return assets.find((a: { id: string }) => a.id === imported.id)?.status;
+      },
+      { timeout: 30000 },
+    )
+    .toBe("ready");
+  const doc = await (
+    await request.post("/api/studio/projects", {
+      data: {
+        name: "Crossfade transform regression",
+        sources: [
+          { assetId: imported.id, startUs: 0, endUs: 2000000 },
+          { assetId: imported.id, startUs: 2000000, endUs: 4000000 },
+        ],
+      },
+    })
+  ).json();
+  doc.items[1].transform = { x: 108, y: 0, scale: 0.5, rotation: 0 };
+  expect(
+    (
+      await request.put(`/api/studio/projects/${doc.id}`, {
+        data: { document: doc, expectedRevision: doc.revision },
+      })
+    ).status(),
+  ).toBe(200);
+  await page.goto(`/studio/${doc.id}`);
+  await expect(page.getByTestId("timeline-item")).toHaveCount(2);
+  await page
+    .getByLabel("Crossfade duration frames", { exact: true })
+    .fill("12");
+  await page
+    .getByRole("button", { name: "Apply crossfade", exact: true })
+    .click();
+  await page.getByLabel("Playhead frame", { exact: true }).fill("54");
+  const incoming = page
+    .getByLabel("Preview", { exact: true })
+    .locator("div.absolute.inset-0")
+    .first();
+  await expect
+    .poll(
+      () => incoming.evaluate((element) => getComputedStyle(element).transform),
+      { timeout: 1500 },
+    )
+    .not.toBe("none");
+  const overlapTransform = await incoming.evaluate(
+    (element) => getComputedStyle(element).transform,
+  );
+  expect(overlapTransform).toMatch(/^matrix\(0\.5, 0, 0, 0\.5, /);
+  await expect(incoming).toHaveCSS("opacity", "0.5");
+  await page.getByLabel("Playhead frame", { exact: true }).fill("60");
+  await expect
+    .poll(() =>
+      page
+        .getByLabel("Preview", { exact: true })
+        .locator("video")
+        .first()
+        .evaluate((element) => getComputedStyle(element).transform),
+    )
+    .toBe(overlapTransform);
+});

@@ -313,7 +313,8 @@ export async function saveProject(
       if (!asset) throw Error("Unknown asset");
       if (
         asset.durationUs !== undefined &&
-        i.sourceOutUs! > asset.durationUs + 1
+        Math.max(i.sourceOutUs!, i.sourceAvailableOutUs ?? 0) >
+          asset.durationUs + 1
       )
         throw Error("Item exceeds asset duration");
     }

@@ -1,9 +1,19 @@
 import type {
   AudioRole,
+  ExactUs,
   DuckingSettings,
   ProjectDocument,
   TimelineItem,
 } from "./types";
+import {
+  addUs,
+  frameTimeUs,
+  integerUs,
+  moduloUs,
+  numberUs,
+  subtractUs,
+  floorUs,
+} from "./time";
 export const DEFAULT_DUCKING: DuckingSettings = {
   enabled: true,
   reductionDb: 12,
@@ -33,20 +43,55 @@ export function audioRole(doc: ProjectDocument, item: TimelineItem): AudioRole {
         : "music")
   );
 }
+export function sourcePhaseUs(item: TimelineItem): ExactUs {
+  return addUs(
+    item.sourcePhaseUs ?? integerUs(0),
+    integerUs(item.loop ? (item.loopOffsetUs ?? 0) : 0),
+  );
+}
+export function sourceFrameTimeUs(
+  item: TimelineItem,
+  frame: number,
+  doc: Pick<ProjectDocument, "fps">,
+): ExactUs {
+  const elapsed = frameTimeUs(Math.max(0, frame - item.startFrame), doc);
+  const offset = addUs(sourcePhaseUs(item), elapsed);
+  return addUs(
+    integerUs(item.sourceInUs!),
+    item.loop
+      ? moduloUs(offset, integerUs(item.sourceOutUs! - item.sourceInUs!))
+      : offset,
+  );
+}
+/** Keep the exact phase; source bytes remain bounded by integer microsecond metadata. */
+export function advanceSourceStart(
+  item: TimelineItem,
+  frames: number,
+  doc: Pick<ProjectDocument, "fps">,
+) {
+  const position = sourceFrameTimeUs(item, item.startFrame + frames, doc);
+  if (item.loop) {
+    item.sourcePhaseUs = subtractUs(position, integerUs(item.sourceInUs!));
+    delete item.loopOffsetUs;
+  } else {
+    item.sourceInUs = floorUs(position);
+    item.sourcePhaseUs = subtractUs(position, integerUs(item.sourceInUs));
+  }
+}
 export function sourceTimeUs(
   item: TimelineItem,
   frame: number,
   doc: Pick<ProjectDocument, "fps">,
 ) {
+  if (Number.isSafeInteger(frame))
+    return numberUs(sourceFrameTimeUs(item, frame, doc));
   const elapsed =
-    ((frame - item.startFrame) * 1000000 * doc.fps.denominator) /
+    (Math.max(0, frame - item.startFrame) * 1000000 * doc.fps.denominator) /
     doc.fps.numerator;
-  const span = item.sourceOutUs! - item.sourceInUs!;
+  const offset = numberUs(sourcePhaseUs(item)) + elapsed;
   return (
     item.sourceInUs! +
-    (item.loop
-      ? (Math.max(0, elapsed) + (item.loopOffsetUs ?? 0)) % span
-      : Math.max(0, elapsed))
+    (item.loop ? offset % (item.sourceOutUs! - item.sourceInUs!) : offset)
   );
 }
 /** Peak absolute samples from decoded bytes, independent of viewport and timeline zoom. */

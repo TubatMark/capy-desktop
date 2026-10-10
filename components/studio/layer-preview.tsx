@@ -5,6 +5,7 @@ import type {
   ProjectDocument,
   TimelineItem,
 } from "@/lib/studio/types";
+import { visualTransform } from "@/lib/studio/visual";
 import { sourceTimeUs } from "@/lib/studio/audio";
 import { StudioCaptionOverlay } from "@/components/caption-overlay";
 function LayerMedia({
@@ -88,7 +89,13 @@ export function LayerPreview({
   return (
     <>
       {next && incoming?.status === "ready" && progress > 0 && (
-        <div className="absolute inset-0" style={{ opacity: progress }}>
+        <div
+          className="absolute inset-0"
+          style={{
+            opacity: progress,
+            transform: visualTransform(next, document.canvas),
+          }}
+        >
           <LayerMedia
             item={next}
             asset={incoming}
@@ -99,13 +106,7 @@ export function LayerPreview({
         </div>
       )}
       {layers.map((item) => {
-        const transform = item.transform ?? {
-            x: 0,
-            y: 0,
-            scale: 1,
-            rotation: 0,
-          },
-          asset = assets.find((a) => a.id === item.assetId);
+        const asset = assets.find((a) => a.id === item.assetId);
         return (
           <div
             data-testid="preview-layer"
@@ -113,7 +114,7 @@ export function LayerPreview({
             className="absolute inset-0 flex items-center justify-center"
             style={{
               opacity: item.opacity ?? 1,
-              transform: `translate(${(transform.x / document.canvas.width) * 100}%, ${(transform.y / document.canvas.height) * 100}%) scale(${transform.scale}) rotate(${transform.rotation}deg)`,
+              transform: visualTransform(item, document.canvas),
             }}
           >
             {item.text ? (

@@ -1,3 +1,4 @@
+import { sourceTimeUs } from "./audio";
 import type { CaptionCue, ProjectDocument, SourceWords } from "./types";
 
 /** Map each source occurrence independently; never key repeated footage by asset alone. */
@@ -18,25 +19,26 @@ export function mapCaptionCues(
       item.sourceInUs === undefined
     )
       continue;
+    const usedStart = sourceTimeUs(item, item.startFrame, doc);
+    const usedEnd = Math.min(
+      item.sourceOutUs!,
+      sourceTimeUs(item, item.startFrame + item.durationFrames, doc),
+    );
     const source = words.find((w) => w.assetId === item.assetId);
     for (const word of source?.words ?? []) {
-      if (word.endUs <= item.sourceInUs || word.startUs >= item.sourceOutUs!)
-        continue;
+      if (word.endUs <= usedStart || word.startUs >= usedEnd) continue;
       const id = `caption:${item.id}:${word.id}`;
       const previous = doc.captionCues.find((c) => c.id === id);
       const mappedStart =
         item.startFrame +
         Math.round(
-          ((Math.max(word.startUs, item.sourceInUs) - item.sourceInUs) * fps) /
-            1000000,
+          ((Math.max(word.startUs, usedStart) - usedStart) * fps) / 1000000,
         );
       const mappedEnd = Math.min(
         item.startFrame + item.durationFrames,
         item.startFrame +
           Math.round(
-            ((Math.min(word.endUs, item.sourceOutUs!) - item.sourceInUs) *
-              fps) /
-              1000000,
+            ((Math.min(word.endUs, usedEnd) - usedStart) * fps) / 1000000,
           ),
       );
       const startFrame = Math.max(

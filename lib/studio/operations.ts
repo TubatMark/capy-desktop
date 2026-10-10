@@ -1,5 +1,18 @@
 import type { CaptionCue, ProjectDocument, TimelineItem } from "./types";
-import type { AudioChanges } from "./audio";
+import {
+  advanceSourceStart,
+  sourceFrameTimeUs,
+  sourcePhaseUs,
+  type AudioChanges,
+} from "./audio";
+import {
+  ceilUs,
+  compareUs,
+  integerUs,
+  minimumUs,
+  numberUs,
+  validExactUs,
+} from "./time";
 import { copyCaptionEdits, mapCaptionCues } from "./caption-map";
 export type EditOperation =
   | { type: "split"; itemId: string; frame: number; newId: string }
@@ -349,27 +362,26 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         next.items.some((i) => i.id === op.newId)
       )
         throw Error("Split must be inside item");
-      const source =
-        item!.sourceInUs === undefined || item!.loop
-          ? undefined
-          : item!.sourceInUs +
-            Math.round(
-              ((item!.sourceOutUs! - item!.sourceInUs) * op.frame) /
-                item!.durationFrames,
-            );
       const right = {
         ...structuredClone(item!),
         id: op.newId,
         startFrame: item!.startFrame + op.frame,
         durationFrames: item!.durationFrames - op.frame,
-        sourceInUs: item!.loop ? item!.sourceInUs : source,
-        loopOffsetUs: item!.loop
-          ? ((item!.loopOffsetUs ?? 0) + frameUs(op.frame, next)) %
-            (item!.sourceOutUs! - item!.sourceInUs!)
-          : undefined,
       };
+      if (item!.assetId) {
+        const available = item!.sourceAvailableOutUs ?? item!.sourceOutUs!;
+        const boundary = minimumUs(
+          sourceFrameTimeUs(item!, item!.startFrame + op.frame, next),
+          integerUs(item!.sourceOutUs!),
+        );
+        advanceSourceStart(right, op.frame, next);
+        if (!item!.loop) {
+          item!.sourceOutUs = ceilUs(boundary);
+          item!.sourceAvailableOutUs = available;
+          right.sourceAvailableOutUs = available;
+        }
+      }
       item!.durationFrames = op.frame;
-      if (source !== undefined) item!.sourceOutUs = source;
       delete item!.transitionOut;
       copyCaptionEdits(next, item!.id, right.id);
       if (item!.detachedAudioId) {
@@ -397,15 +409,17 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         op.outFrame > item!.durationFrames
       )
         throw Error("Trim outside source span");
-      const from = item!.sourceInUs;
-      const span = from === undefined ? 0 : item!.sourceOutUs! - from;
-      const old = item!.durationFrames;
-      if (from !== undefined && item!.loop) {
-        item!.loopOffsetUs =
-          ((item!.loopOffsetUs ?? 0) + frameUs(op.inFrame, next)) % span;
-      } else if (from !== undefined) {
-        item!.sourceInUs = from + Math.round((span * op.inFrame) / old);
-        item!.sourceOutUs = from + Math.round((span * op.outFrame) / old);
+      if (item!.assetId) {
+        const available = item!.sourceAvailableOutUs ?? item!.sourceOutUs!;
+        const boundary = minimumUs(
+          sourceFrameTimeUs(item!, item!.startFrame + op.outFrame, next),
+          integerUs(item!.sourceOutUs!),
+        );
+        advanceSourceStart(item!, op.inFrame, next);
+        if (!item!.loop) {
+          item!.sourceOutUs = ceilUs(boundary);
+          item!.sourceAvailableOutUs = available;
+        }
       }
       item!.durationFrames = op.outFrame - op.inFrame;
       break;
@@ -491,9 +505,16 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
     case "add-asset":
       next.items.push(structuredClone(op.item));
       break;
-    case "audio":
+    case "audio": {
+      const previousPhase = sourcePhaseUs(item!);
+      const wasLoop = item!.loop;
       Object.assign(item!, op.changes);
       if (op.changes.loop === false && item!.sourceInUs !== undefined) {
+        if (wasLoop) {
+          item!.sourcePhaseUs = previousPhase;
+          delete item!.loopOffsetUs;
+          advanceSourceStart(item!, 0, next);
+        }
         item!.durationFrames = Math.min(
           item!.durationFrames,
           Math.max(
@@ -515,11 +536,15 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
         );
       }
       break;
+    }
     case "audio-duration": {
+      const available = item!.sourceAvailableOutUs ?? item!.sourceOutUs!;
       const sourceFrames = Math.max(
         1,
         Math.round(
-          ((item!.sourceOutUs! - item!.sourceInUs!) * next.fps.numerator) /
+          ((available -
+            numberUs(sourceFrameTimeUs(item!, item!.startFrame, next))) *
+            next.fps.numerator) /
             (1000000 * next.fps.denominator),
         ),
       );
@@ -531,6 +556,19 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       )
         throw Error("Enable looping to extend an imported sound");
       item!.durationFrames = op.durationFrames;
+      if (!item!.loop) {
+        item!.sourceAvailableOutUs = available;
+        item!.sourceOutUs = ceilUs(
+          minimumUs(
+            sourceFrameTimeUs(
+              item!,
+              item!.startFrame + op.durationFrames,
+              next,
+            ),
+            integerUs(available),
+          ),
+        );
+      }
       item!.fadeInFrames = Math.min(
         item!.fadeInFrames ?? 0,
         item!.durationFrames,
@@ -672,6 +710,8 @@ export function applyEdit(doc: ProjectDocument, op: EditOperation): EditResult {
       durationFrames: video.durationFrames,
       sourceInUs: video.sourceInUs,
       sourceOutUs: video.sourceOutUs,
+      sourcePhaseUs: video.sourcePhaseUs,
+      sourceAvailableOutUs: video.sourceAvailableOutUs,
     });
   }
   if (["trim", "split"].includes(op.type))

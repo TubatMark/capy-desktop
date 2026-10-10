@@ -22,6 +22,11 @@ export interface AssetRef {
   workId?: string;
   request?: { jobId: string; videoId: string; startUs: number; endUs: number };
 }
+/** JSON-safe exact microseconds; numerator and denominator are decimal BigInt strings. */
+export interface ExactUs {
+  numerator: string;
+  denominator: string;
+}
 export type AudioRole = "dialogue" | "music" | "sfx" | "voiceover";
 export interface DuckingSettings {
   enabled: boolean;
@@ -78,6 +83,10 @@ export interface TimelineItem {
   solo?: boolean;
   loop?: boolean;
   loopOffsetUs?: number;
+  /** Exact sub-microsecond start, or loop phase, added to sourceInUs. */
+  sourcePhaseUs?: ExactUs;
+  /** Source extent retained when a non-loop duration is shortened. */
+  sourceAvailableOutUs?: number;
   ducking?: DuckingSettings;
   detachedAudioId?: string;
   linkedVideoId?: string;
