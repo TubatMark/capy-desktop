@@ -381,6 +381,21 @@ test("B1 rich30 closure: two crossfades, captions/text and measured 12dB canonic
   expect(toneAmplitude(audio, 10.05, 0.1, 1000)).toBeGreaterThan(0.025);
   expect(toneAmplitude(audio, 9.9, 0.05, 1000)).toBeLessThan(0.003);
   expect(toneAmplitude(audio, 15.05, 0.05, 1000)).toBeLessThan(0.003);
+  // Independent linear-gain expectation, measured in 50 ms / 11-cycle windows.
+  // An abrupt duck or release would miss these intermediate amplitudes.
+  const target = 10 ** (-12 / 20);
+  const ramps = [
+    { start: 9.9, expected: 1 - (1 - target) * 0.25 },
+    { start: 9.95, expected: 1 - (1 - target) * 0.75 },
+    { start: 15, expected: target + (1 - target) / 12 },
+    { start: 15.125, expected: target + (1 - target) * 0.5 },
+    { start: 15.25, expected: target + ((1 - target) * 11) / 12 },
+  ].map((point) => ({
+    ...point,
+    actual: toneAmplitude(audio, point.start, 0.05, 220) / before,
+  }));
+  for (const point of ramps)
+    expect(Math.abs(point.actual - point.expected)).toBeLessThan(0.05);
   for (const [frame, visible] of [
     [299, false],
     [300, true],
@@ -406,7 +421,15 @@ test("B1 rich30 closure: two crossfades, captions/text and measured 12dB canonic
   const crossfade = await rgb(out.path, 315);
   expect(crossfade[0]).toBeGreaterThan(5);
   expect(crossfade[1]).toBeGreaterThan(5);
-  const evidence = { artifact: out, duckDb, before, during, after, crossfade };
+  const evidence = {
+    artifact: out,
+    duckDb,
+    before,
+    during,
+    after,
+    crossfade,
+    ramps,
+  };
   await writeFile(
     path.join(dir, "rich-evidence.json"),
     JSON.stringify(evidence, null, 2),
@@ -665,4 +688,159 @@ test("mixed-rate fractional trims preserve source clock instead of shifting to t
     onset += 0.001;
   expect(Math.abs(onset - (1 / 24 - 0.001))).toBeLessThan(0.005);
   expect(Math.abs(onset - 1 / 30)).toBeLessThan(1 / 30);
+}, 30000);
+
+test("anamorphic contain and cover preserve display aspect before fit, including 90 degree rotation", async () => {
+  const source = path.join(dir, "anamorphic.mp4"),
+    rotated = path.join(dir, "anamorphic-rotated.mp4");
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=red:s=160x90:r=30:d=1,drawbox=x=0:y=0:w=20:h=ih:color=blue:t=fill,drawbox=x=140:y=0:w=20:h=ih:color=green:t=fill,setsar=2/1",
+    "-c:v",
+    "libx264",
+    "-crf",
+    "0",
+    "-y",
+    source,
+  ]);
+  await run("ffmpeg", [
+    "-v",
+    "error",
+    "-display_rotation",
+    "90",
+    "-i",
+    source,
+    "-c",
+    "copy",
+    "-y",
+    rotated,
+  ]);
+  for (const [file, rotation] of [
+    [source, 0],
+    [rotated, 90],
+  ] as const) {
+    const streams = JSON.parse(
+      (
+        await run("ffprobe", [
+          "-v",
+          "error",
+          "-show_streams",
+          "-of",
+          "json",
+          file,
+        ])
+      ).stdout,
+    ).streams;
+    expect(streams[0]).toMatchObject({
+      width: 160,
+      height: 90,
+      sample_aspect_ratio: "2:1",
+      display_aspect_ratio: "32:9",
+    });
+    if (rotation)
+      expect(
+        streams[0].side_data_list.find((s: any) => s.rotation !== undefined)
+          .rotation,
+      ).toBe(rotation);
+    for (const fit of ["contain", "cover"] as const) {
+      const a = {
+        ...asset,
+        location: file,
+        checksum: createHash("sha256")
+          .update(await readFile(file))
+          .digest("hex"),
+        durationUs: 1e6,
+      };
+      const d: ProjectDocument = {
+        ...doc,
+        captionCues: [],
+        items: [
+          { ...doc.items[0]!, durationFrames: 30, sourceOutUs: 1e6, fit },
+        ],
+        sourceMappings: [
+          { itemId: "v1", assetId: "a", sourceInUs: 0, sourceOutUs: 1e6 },
+        ],
+      };
+      const plan = await compileNormalizedProject(d, [a]);
+      expect(plan.inputGeometry.a).toEqual({
+        width: 160,
+        height: 90,
+        sampleAspectRatio: "2:1",
+        rotation,
+      });
+      const out = await renderNormalizedProject(
+        plan,
+        new AbortController().signal,
+        path.join(dir, `sar-${rotation}-${fit}`),
+      );
+      expect(out.normalizationPolicy).toContain(
+        "display-aspect-preserving-square-pixel-resample-before-crop-fit",
+      );
+      const raw = path.join(dir, `sar-${rotation}-${fit}.rgb`);
+      await run("ffmpeg", [
+        "-v",
+        "error",
+        "-i",
+        out.path,
+        "-frames:v",
+        "1",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "-y",
+        raw,
+      ]);
+      const bytes = await readFile(raw),
+        pixel = (x: number, y: number) => [
+          ...bytes.subarray((y * 160 + x) * 3, (y * 160 + x) * 3 + 3),
+        ];
+      const red = (x: number, y: number) => {
+        const c = pixel(x, y);
+        expect(c[0]).toBeGreaterThan(200);
+        expect(c[1]).toBeLessThan(30);
+        expect(c[2]).toBeLessThan(30);
+      };
+      const black = (x: number, y: number) =>
+        expect(Math.max(...pixel(x, y))).toBeLessThan(10);
+      red(80, 45);
+      if (fit === "contain") {
+        // DAR 32:9 fits as 160x45; after rotation DAR 9:32 fits as ~25x90.
+        if (!rotation) {
+          black(80, 10);
+          black(80, 80);
+          red(80, 30);
+          red(80, 60);
+        } else {
+          black(60, 45);
+          black(100, 45);
+          red(74, 45);
+          red(86, 45);
+        }
+      } else {
+        // Fill crops the outer colored bands; all four edge midpoints remain red.
+        red(4, 45);
+        red(155, 45);
+        red(80, 4);
+        red(80, 85);
+      }
+      const outputStream = JSON.parse(
+        (
+          await run("ffprobe", [
+            "-v",
+            "error",
+            "-show_streams",
+            "-of",
+            "json",
+            out.path,
+          ])
+        ).stdout,
+      ).streams[0];
+      expect(outputStream.sample_aspect_ratio).toBe("1:1");
+    }
+  }
 }, 30000);

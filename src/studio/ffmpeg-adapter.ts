@@ -15,8 +15,8 @@ import { buildAudioPlan, audioGainAtFrame, type AudioPlan } from "./audio-plan";
 import { run, withCancel, throwIfCancelled } from "../exec";
 
 export const NORMALIZATION_POLICY =
-  "sdr-cfr-v1: display-rotation; requested-source-clock-nearest-presentation; square-pixel; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
-export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-2";
+  "sdr-cfr-v2: display-rotation; requested-source-clock-nearest-presentation; display-aspect-preserving-square-pixel-resample-before-crop-fit; untagged-SDR-assumed-bt601; output-bt709; HDR-rejected; stereo-48000";
+export const NORMALIZED_RENDERER_VERSION = "ffmpeg-studio-3";
 export const DEFAULT_EXPORT_PRESET: ExportPreset = {
   aspect: "portrait",
   fps: 30,
@@ -48,6 +48,15 @@ export interface NormalizedPlan {
   font: string;
   fonts: Record<string, string>;
   inputMatrices: Record<string, string>;
+  inputGeometry: Record<
+    string,
+    {
+      width?: number;
+      height?: number;
+      sampleAspectRatio: string;
+      rotation: number;
+    }
+  >;
 }
 async function hash(file: string) {
   const digest = createHash("sha256");
@@ -80,6 +89,8 @@ export async function probeMedia(file: string) {
       duration?: string;
       nb_read_frames?: string;
       avg_frame_rate?: string;
+      sample_aspect_ratio?: string;
+      side_data_list?: { rotation?: number }[];
     }[];
     format: { duration?: string };
   };
@@ -96,6 +107,7 @@ export async function compileNormalizedProject(
   if (!doc.items.length) throw Error("Add media before exporting");
   const assets: AssetRef[] = [];
   const inputMatrices: Record<string, string> = {};
+  const inputGeometry: NormalizedPlan["inputGeometry"] = {};
   for (const id of new Set(
     doc.items.flatMap((i) => (i.assetId ? [i.assetId] : [])),
   )) {
@@ -120,6 +132,15 @@ export async function compileNormalizedProject(
     )
       throw Error("Unsupported wide-gamut media; import an SDR BT.709 copy");
     inputMatrices[a.id] = video?.color_space === "bt709" ? "bt709" : "bt601";
+    if (video)
+      inputGeometry[a.id] = {
+        width: video.width,
+        height: video.height,
+        sampleAspectRatio: video.sample_aspect_ratio ?? "unspecified",
+        rotation:
+          video.side_data_list?.find((s) => s.rotation !== undefined)
+            ?.rotation ?? 0,
+      };
     a.streams = probe.streams
       .filter((s) => s.codec_type === "video" || s.codec_type === "audio")
       .map((s) => ({
@@ -197,6 +218,7 @@ export async function compileNormalizedProject(
     font,
     fonts,
     inputMatrices,
+    inputGeometry,
   };
   return {
     ...plan,
@@ -405,6 +427,10 @@ export async function renderNormalizedProject(
           `tpad=stop_mode=clone:stop_duration=${duration}`,
           `trim=duration=${duration}`,
           "setpts=PTS-STARTPTS",
+          // ffmpeg autorotation has already transposed pixels and inverted SAR.
+          // Expand the appropriate axis before dropping SAR, then crop/fit in
+          // square-pixel display coordinates. Even rounding is at most one pixel.
+          "scale=w='ceil(iw*max(sar,1)/2)*2':h='ceil(ih/min(sar,1)/2)*2'",
           "setsar=1",
         );
         if (item.crop) {
