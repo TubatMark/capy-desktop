@@ -222,3 +222,190 @@ test("crash draft recovery, revision history, and saving a conflicting copy", as
       .document.name,
   ).toBe("Other saved edit");
 });
+
+test("paused trim, undo and move seek the edited source mapping", async ({
+  page,
+  request,
+}) => {
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video", name: "preview-regression.mp4" },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () => {
+        const assets = await (await request.get("/api/studio/assets")).json();
+        return assets.find((a: { id: string }) => a.id === imported.id)?.status;
+      },
+      { timeout: 30000 },
+    )
+    .toBe("ready");
+  const document = await (
+    await request.post("/api/studio/projects", {
+      data: {
+        name: "Playback regression",
+        sources: [{ assetId: imported.id }, { assetId: imported.id }],
+      },
+    })
+  ).json();
+  await page.goto(`/studio/${document.id}`);
+  await expect(page.getByTestId("timeline-item")).toHaveCount(2);
+  const media = page.locator("video");
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).readyState))
+    .toBeGreaterThan(0);
+  await page.getByLabel("Trim in frames", { exact: true }).fill("30");
+  await page.getByLabel("Trim out frames", { exact: true }).fill("300");
+  await page.getByRole("button", { name: "Apply trim", exact: true }).click();
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).currentTime))
+    .toBeCloseTo(1, 1);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).currentTime))
+    .toBeCloseTo(0, 1);
+  await page.getByLabel("Playhead frame", { exact: true }).fill("60");
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).currentTime))
+    .toBeCloseTo(2, 1);
+  await page.getByLabel("Clip start frame", { exact: true }).fill("30");
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).currentTime))
+    .toBeCloseTo(1, 1);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect
+    .poll(() => media.evaluate((v) => (v as HTMLVideoElement).currentTime))
+    .toBeCloseTo(2, 1);
+});
+
+test("merged playback continues through a full source EOF", async ({
+  page,
+  request,
+}) => {
+  const imported = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video", name: "EOF-a.mp4" },
+    })
+  ).json();
+  const second = await (
+    await request.post("/api/studio/assets", {
+      data: { path: source, kind: "video", name: "EOF-b.mp4" },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () => {
+        const assets = await (await request.get("/api/studio/assets")).json();
+        return [imported.id, second.id].every(
+          (id) =>
+            assets.find(
+              (asset: { id: string; status: string }) => asset.id === id,
+            )?.status === "ready",
+        );
+      },
+      { timeout: 30000 },
+    )
+    .toBe(true);
+  const document = await (
+    await request.post("/api/studio/projects", {
+      data: {
+        name: "EOF playback",
+        sources: [{ assetId: imported.id }, { assetId: second.id }],
+      },
+    })
+  ).json();
+  await page.goto(`/studio/${document.id}`);
+  await expect(page.getByTestId("timeline-item")).toHaveCount(2);
+  await expect
+    .poll(() =>
+      page
+        .locator("video")
+        .evaluate((video) => (video as HTMLVideoElement).readyState),
+    )
+    .toBeGreaterThan(0);
+  // Play from the last half-second of source one through its natural EOF into source two.
+  await page.getByLabel("Playhead frame", { exact: true }).fill("285");
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect
+    .poll(async () =>
+      Number(
+        await page.getByLabel("Playhead frame", { exact: true }).inputValue(),
+      ),
+    )
+    .toBeGreaterThan(310);
+  await expect(
+    page.getByRole("button", { name: "Pause", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+});
+
+test("two editors preserve conflicting recovery when the other window finishes saving", async ({
+  page,
+  context,
+  request,
+}) => {
+  const document = await (
+    await request.post("/api/studio/projects", {
+      data: { name: "Window baseline" },
+    })
+  ).json();
+  await page.goto(`/studio/${document.id}`);
+  const other = await context.newPage();
+  await other.goto(`/studio/${document.id}`);
+  await expect(other.getByLabel("Project name", { exact: true })).toHaveValue(
+    "Window baseline",
+  );
+  // Hold only B's successful response after the real server has committed it, so A's draft is newer.
+  let deliver!: () => void;
+  let committed!: () => void;
+  const held = new Promise<void>((resolve) => (deliver = resolve));
+  const serverCommitted = new Promise<void>((resolve) => (committed = resolve));
+  await other.route(`**/api/studio/projects/${document.id}`, async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const response = await route.fetch();
+    committed();
+    await held;
+    await route.fulfill({ response });
+  });
+  await other
+    .getByLabel("Project name", { exact: true })
+    .fill("Window B saved");
+  await serverCommitted;
+  await page
+    .getByLabel("Project name", { exact: true })
+    .fill("Window A conflicting recovery");
+  deliver();
+  await expect(other.getByTestId("save-status")).toContainText("Saved");
+  await expect(page.getByTestId("save-status")).toContainText("Save conflict");
+  const drafts = await page.evaluate(
+    (id) =>
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith(`capy.studio.draft.${id}.`))
+        .map((key) => JSON.parse(localStorage.getItem(key)!)),
+    document.id,
+  );
+  expect(
+    drafts.some((draft) => draft.name === "Window A conflicting recovery"),
+  ).toBe(true);
+  await page.close({ runBeforeUnload: false });
+  const reopened = await context.newPage();
+  await reopened.goto(`/studio/${document.id}`);
+  await reopened.getByText(/Recoverable edits from other windows/).click();
+  await reopened
+    .getByRole("button", {
+      name: "Recover Window A conflicting recovery",
+      exact: true,
+    })
+    .click();
+  await expect(
+    reopened.getByLabel("Project name", { exact: true }),
+  ).toHaveValue("Window A conflicting recovery");
+  await expect(reopened.getByTestId("save-status")).toContainText(
+    "Save conflict",
+  );
+  expect(
+    (await (await request.get(`/api/studio/projects/${document.id}`)).json())
+      .document.name,
+  ).toBe("Window B saved");
+});

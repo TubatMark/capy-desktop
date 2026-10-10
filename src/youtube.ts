@@ -149,7 +149,7 @@ export async function fetchSection(
     "-S",
     `res:${maxRes},fps`,
     "--download-sections",
-    `*${start.toFixed(2)}-${end.toFixed(2)}`,
+    `*${start.toFixed(6)}-${end.toFixed(6)}`,
     "--force-keyframes-at-cuts",
     "--downloader-args",
     `ffmpeg_o:${intermediate}`,

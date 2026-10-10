@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/hooks/use-job";
 import { applyEdit, type EditOperation } from "@/lib/studio/operations";
 import type { AssetRef, ProjectDocument } from "@/lib/studio/types";
+import { DraftJournal, type RecoveryDraft } from "@/lib/studio/recovery";
 import { AssetBin } from "./asset-bin";
 import { Timeline } from "./timeline";
 import { History } from "./history";
@@ -37,6 +38,10 @@ export function StudioEditor({ id }: { id: string }) {
   const savedGeneration = useRef(0);
   const saving = useRef(false);
   const conflict = useRef(false);
+  const editorId = useRef(crypto.randomUUID());
+  const journal = useRef<DraftJournal | undefined>(undefined);
+  const serverRevision = useRef(0);
+  const [recoveryDrafts, setRecoveryDrafts] = useState<RecoveryDraft[]>([]);
   const undoStack = useRef<EditOperation[]>([]);
   const redoStack = useRef<EditOperation[]>([]);
   const video = useRef<HTMLVideoElement>(null);
@@ -56,6 +61,15 @@ export function StudioEditor({ id }: { id: string }) {
         history: ProjectDocument[];
       };
       let doc = result.document;
+      let recoveredKey: string | undefined;
+      serverRevision.current = result.document.revision;
+      if (!journal.current || journal.current.projectId !== id)
+        journal.current = new DraftJournal(
+          localStorage,
+          sessionStorage,
+          id,
+          editorId.current,
+        );
       conflict.current = false;
       setError("");
       setSaveState("saved");
@@ -63,11 +77,13 @@ export function StudioEditor({ id }: { id: string }) {
       savedGeneration.current = 0;
       if (recover) {
         try {
-          const raw = localStorage.getItem(`capy.studio.draft.${id}`);
-          if (raw) {
-            const draft = JSON.parse(raw) as ProjectDocument;
+          const recovery = journal.current.recover();
+          if (recovery) {
+            const draft = recovery.document;
             if (draft.id === id) {
               applyEdit(draft, { type: "restore", document: draft });
+              recoveredKey = recovery.key;
+              journal.current.adopt(recovery);
               doc = draft;
               generation.current = 1;
               setVersion((v) => v + 1);
@@ -86,6 +102,9 @@ export function StudioEditor({ id }: { id: string }) {
           );
         }
       }
+      setRecoveryDrafts(
+        journal.current.list().filter((draft) => draft.key !== recoveredKey),
+      );
       latest.current = doc;
       setDocument(doc);
       setHistory(result.history);
@@ -109,7 +128,7 @@ export function StudioEditor({ id }: { id: string }) {
       setVersion((v) => v + 1);
       setSaveState(conflict.current ? "conflict" : "unsaved");
       try {
-        localStorage.setItem(`capy.studio.draft.${id}`, JSON.stringify(doc));
+        journal.current?.write(doc);
       } catch {
         setError(
           "Browser recovery storage is full; keep this window open until saved.",
@@ -118,6 +137,29 @@ export function StudioEditor({ id }: { id: string }) {
     },
     [id],
   );
+  function recoverDraft(draft: RecoveryDraft) {
+    try {
+      journal.current?.adopt(draft);
+      latest.current = draft.document;
+      setDocument(draft.document);
+      generation.current++;
+      conflict.current = draft.document.revision !== serverRevision.current;
+      setSaveState(conflict.current ? "conflict" : "unsaved");
+      setError(
+        conflict.current
+          ? "Recovered edits use an older revision. Save a copy or reload the newer project."
+          : "",
+      );
+      setSelected(draft.document.items[0]?.id);
+      setVersion((version) => version + 1);
+      setRecoveryDrafts(
+        journal.current?.list().filter((other) => other.key !== draft.key) ??
+          [],
+      );
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    }
+  }
   const edit = useCallback(
     (op: EditOperation) => {
       if (!latest.current) return;
@@ -183,15 +225,17 @@ export function StudioEditor({ id }: { id: string }) {
         revision: result.revision,
         updatedAt: result.updatedAt,
       };
+      serverRevision.current = result.revision;
       latest.current = next;
       setDocument(next);
       setHistory((h) => [result, ...h]);
       if (generation.current === sentGeneration) {
         setSaveState("saved");
-        localStorage.removeItem(`capy.studio.draft.${id}`);
+        journal.current?.saved(pending);
+        setRecoveryDrafts(journal.current?.list() ?? []);
       } else {
         setSaveState("unsaved");
-        localStorage.setItem(`capy.studio.draft.${id}`, JSON.stringify(next));
+        journal.current?.write(next);
         setVersion((v) => v + 1);
       }
     } catch (e) {
@@ -240,7 +284,16 @@ export function StudioEditor({ id }: { id: string }) {
     if (Math.abs(video.current.currentTime - desired) > 0.075)
       video.current.currentTime = desired;
     if (playing) void video.current.play().catch(() => setPlaying(false));
-  }, [active?.id, asset?.proxyUrl, asset?.mediaUrl, frame, fps, playing]);
+  }, [
+    active?.id,
+    active?.sourceInUs,
+    active?.startFrame,
+    asset?.proxyUrl,
+    asset?.mediaUrl,
+    frame,
+    fps,
+    playing,
+  ]);
   const split = useCallback(() => {
     const doc = latest.current;
     const current = doc?.items.find((i) => i.id === selected);
@@ -449,6 +502,25 @@ export function StudioEditor({ id }: { id: string }) {
           </Button>
         </div>
       </header>
+      {!!recoveryDrafts.length && (
+        <details className="rounded-lg border bg-card p-3">
+          <summary className="cursor-pointer text-sm">
+            Recoverable edits from other windows · {recoveryDrafts.length}
+          </summary>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {recoveryDrafts.map((draft) => (
+              <Button
+                key={draft.key}
+                variant="outline"
+                size="sm"
+                onClick={() => recoverDraft(draft)}
+              >
+                Recover {draft.document.name ?? "Untitled project"}
+              </Button>
+            ))}
+          </div>
+        </details>
+      )}
       {error && (
         <div
           role="alert"
@@ -461,7 +533,7 @@ export function StudioEditor({ id }: { id: string }) {
               size="sm"
               className="mt-2"
               onClick={() => {
-                localStorage.removeItem(`capy.studio.draft.${id}`);
+                journal.current?.discard();
                 void load(false);
               }}
             >
@@ -530,7 +602,16 @@ export function StudioEditor({ id }: { id: string }) {
                         active.startFrame + active.durationFrames,
                       ),
                     );
-                    setPlaying(false);
+                    const end = active.startFrame + active.durationFrames;
+                    const nextItem = document.items.find(
+                      (item) =>
+                        item.trackId === "video" && item.startFrame === end,
+                    );
+                    const nextAsset = assets.find(
+                      (asset) => asset.id === nextItem?.assetId,
+                    );
+                    if (!nextItem || nextAsset?.status !== "ready")
+                      setPlaying(false);
                   }}
                 />
               )
