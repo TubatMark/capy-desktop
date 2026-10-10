@@ -1,6 +1,6 @@
 # Roadmap execution decisions
 
-These decisions resolve planning ambiguities during autonomous implementation. Evidence is separate in [the execution audit](2026-10-10-roadmap-execution.md). This record is in progress.
+These decisions resolve planning ambiguities during autonomous implementation. Evidence is separate in [the execution audit](2026-10-10-roadmap-execution.md). The decisions below include the final integration and validation corrections.
 
 1. **Use an isolated worktree without another confirmation.** This follows the request for autonomous execution and preserves the original checkout. A wrong workspace choice would require moving the commits.
 
@@ -55,3 +55,5 @@ The metrics decision follows the current [YouTube developer policies](https://de
 25. **Overlap broad review preparation with final task fixes.** The same reviewer must inspect the final fix delta and completed task reviews before its verdict. This follows the requested parallel execution without waiving gates. The cost is possible stale-snapshot review rework.
 
 26. **Include automatically invoked SEO scoring in the final fixes.** Broad review found the rendering pipeline calls the old research/ranking path automatically, correcting decision 23's assumption that it was only explicit research. Use raw provider results and separate local editorial heuristics; prevent unapproved API-derived rankings from guiding automatic rewrites. The cost is reduced SEO convenience and changed metadata suggestions. No live access or general permission-management platform is authorized by this correction.
+
+27. **Keep the branch, package and running-soak evidence locally.** The user requested autonomous work without questions and did not authorize merging or pushing. The worktree also contains tracked reports and live evidence. The cost is local storage and a later integration/cleanup step; no original work is removed.
