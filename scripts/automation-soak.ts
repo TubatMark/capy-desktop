@@ -34,6 +34,7 @@ interface ChildResult {
   deliveryId?: string;
   packageHash: string;
   staleWritesRejected: number;
+  authRetries: number;
   generation: number;
 }
 export interface SoakReport {
@@ -64,6 +65,7 @@ export interface SoakReport {
   faults: Record<string, number>;
   killedChildren: number;
   staleWritesRejected: number;
+  authRetries: number;
   duplicateRemoteAcceptances: number;
   duplicateLocalClaims: number;
   lostArtifacts: number;
@@ -392,6 +394,7 @@ export async function runSoak(options: SoakOptions): Promise<SoakReport> {
         faults: {},
         killedChildren: 0,
         staleWritesRejected: 0,
+        authRetries: 0,
         duplicateRemoteAcceptances: 0,
         duplicateLocalClaims: 0,
         lostArtifacts: 0,
@@ -543,6 +546,7 @@ export async function runSoak(options: SoakOptions): Promise<SoakReport> {
       child = undefined;
       if (result) {
         report!.staleWritesRejected += result.staleWritesRejected;
+        report!.authRetries += result.authRetries;
         report!.outcomes[slot] = result;
       }
       return result;

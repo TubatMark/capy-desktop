@@ -41,6 +41,7 @@ it("real process kill/takeover and fault ledger preserve artifacts and unique cl
     expect(report.invariantFailures).toEqual([]);
     expect(report.killedChildren).toBeGreaterThan(0);
     expect(report.staleWritesRejected).toBeGreaterThan(0);
+    expect(report.authRetries).toBe(1);
     expect(report.duplicateRemoteAcceptances).toBe(0);
     expect(report.lostArtifacts).toBe(0);
     expect(report.duplicateLocalClaims).toBe(0);
@@ -78,6 +79,7 @@ it("real process kill/takeover and fault ledger preserve artifacts and unique cl
     });
     expect(resumed.releaseGate72h).toBe(false);
     expect(resumed.sessions).toBe(2);
+    expect(resumed.authRetries).toBe(1);
     expect(resumed.activeRuns).toHaveLength(2);
     expect(resumed.downtimeSeconds).toBeGreaterThan(86400);
     expect(resumed.duplicateRemoteAcceptances).toBe(0);

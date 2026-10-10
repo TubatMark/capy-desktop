@@ -72,7 +72,7 @@ globalThis.fetch = async () => {
 };
 const { publicationFixture } = await import("../publication-fixtures");
 const { decide } = await import("../../server/publication-policy");
-const { queue, upsertForRender } = await import("../../server/queue");
+const { queue, upsertForRender, retry } = await import("../../server/queue");
 const { runtimeStore } = await import("../../server/db/runtime");
 const { WorkQueue } = await import("../../server/worker/leases");
 const { withWork } = await import("../../server/worker/context");
@@ -82,6 +82,7 @@ const {
   createDelivery,
   deliveryForPackage,
   readDelivery,
+  updateDelivery,
   saveDeliveryHandles,
   readDeliveryHandles,
 } = await import("../../server/delivery-store");
@@ -158,6 +159,7 @@ let hb: ReturnType<typeof setInterval> | undefined = setInterval(() => {
   } catch {}
 }, 200);
 let staleWritesRejected = 0;
+let authRetries = 0;
 const fetcher: typeof fetch = async (input, init) => {
   const url = new URL(String(input));
   assert(
@@ -217,6 +219,52 @@ try {
         assert.equal(readDelivery(d.id)!.checkpoint, d.checkpoint);
         readDeliveryHandles(readDelivery(d.id)!); // Re-read durable evidence, never erase it.
       }
+      // The fault is an auth pause, not automatic publication authorization.
+      // Model the explicit fixture user retry through the production queue action.
+      const beforeRecovery = deliveryForPackage(
+        entry.publishPackage!.packageHash,
+      );
+      if (
+        operation === "recover" &&
+        slot === "auth" &&
+        beforeRecovery?.phase === "destination-pinned"
+      ) {
+        assert.equal(beforeRecovery.state, "needs-action");
+        assert.equal(beforeRecovery.retryClass, "auth");
+        const current = queue().list()[0]!;
+        assert.equal(current.status, "needs_action");
+        assert.equal(current.authBlocked, true);
+        const handles = readDeliveryHandles(beforeRecovery);
+        assert(
+          !handles.session &&
+            !handles.videoId &&
+            !handles.container &&
+            !handles.publishId &&
+            !handles.deliveryPhase,
+          "Cannot retry an attempted remote mutation",
+        );
+        runtimeStore().transaction(() => {
+          updateDelivery(beforeRecovery.id, (d) => ({
+            ...d,
+            state: "queued",
+            nextTryAt: Date.now(),
+            reason: undefined,
+            retryClass: undefined,
+          }));
+          queue().mutate((all) => retry(all, entry.key, new Date()));
+          const retried = queue().list()[0]!;
+          assert.equal(retried.status, "scheduled");
+          assert.equal(
+            retried.publishPackage!.packageHash,
+            entry.publishPackage!.packageHash,
+          );
+          assert.equal(
+            deliveryForPackage(retried.publishPackage!.packageHash)!.id,
+            beforeRecovery.id,
+          );
+        });
+        authRetries++;
+      }
       const deps = {
         fetch: fetcher,
         token: async () => {
@@ -269,6 +317,7 @@ try {
     deliveryId: d?.id,
     packageHash: entry.publishPackage!.packageHash,
     staleWritesRejected,
+    authRetries,
     generation: lease.generation,
   });
 } finally {
