@@ -1,0 +1,41 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { PublishPackageSchema, evaluatePublication, type PublishPackage, type PublishPackageInput, type PublicationContext } from "../lib/publication";
+import type { QueueEntry, Platform } from "../lib/types";
+import { loadAccounts } from "./accounts";
+export { evaluatePublication } from "../lib/publication";
+export const PUBLICATION_POLICY_VERSION = "publication-v1";
+/** Stable manifest encoding ignores object key order; array order remains meaningful. */
+export function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.entries(value).filter(([,v])=>v!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+export const hashManifest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
+export function hashFile(file?: string): string | undefined { try { return file ? createHash("sha256").update(readFileSync(file)).digest("hex") : undefined; } catch { return undefined; } }
+export const packageDigest = (input: Partial<PublishPackageInput>) => { const {id: _id,...manifest}=input; return hashManifest(manifest); };
+export function buildPublishPackage(input: PublishPackageInput): PublishPackage {
+  const snapshot = structuredClone(input);
+  return PublishPackageSchema.parse({ ...snapshot, packageHash: packageDigest(snapshot) });
+}
+export function connectedAccountId(platform: Platform): string | undefined {
+  const a = loadAccounts()[platform];
+  if (!a.tokens?.accessToken || a.needsReconnect) return undefined;
+  return (platform === "instagram" ? a.igUserId : a.account?.id) || undefined;
+}
+export const mediaOptions = (e: QueueEntry) => hashManifest({fp:e.fp,thumbAt:e.thumbAt,madeForKids:e.madeForKids});
+export function publicationContext(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)): PublicationContext {
+  const pkg = e.publishPackage;
+  const { packageHash: _hash, ...snapshot } = pkg ?? {};
+  return {artifactHash:hashFile(files?.file),textHash:hashManifest(e.text),thumbnailHash:hashFile(files?.thumbFile),thumbnailRevision:files?.thumbFile ? hashFile(files.thumbFile) : undefined,mediaOptionsHash:mediaOptions(e),connectedAccountId:accountId,platform:e.platform,review:e.aiReview,reviewHash:hashManifest(e.aiReview),packageReviewHash:hashManifest(pkg?.review),policyVersion:PUBLICATION_POLICY_VERSION,approval:e.publicationDecision,packageHash:packageDigest(snapshot)};
+}
+export function eligibility(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)) { return evaluatePublication(e.publishPackage, publicationContext(e,files,accountId)); }
+/** A fresh explicit human decision can adopt legacy media only after resolving and hashing it. */
+export function decide(e: QueueEntry, override: boolean, now: Date): QueueEntry {
+  const checksum = hashFile(e.publicationFiles?.file);
+  const accountId = connectedAccountId(e.platform);
+  if (!checksum || !accountId || (e.publicationFiles?.thumbFile && !hashFile(e.publicationFiles.thumbFile))) return e;
+  const thumbnailHash = hashFile(e.publicationFiles?.thumbFile);
+  const pkg = buildPublishPackage({id:`${e.key}:${now.getTime()}`,artifact:{id:e.key,checksum},text:e.text,textHash:hashManifest(e.text),thumbnail:thumbnailHash ? {revision:thumbnailHash,checksum:thumbnailHash} : undefined,platform:e.platform,accountId,review:e.aiReview,policyVersion:PUBLICATION_POLICY_VERSION,mediaOptionsHash:mediaOptions(e)});
+  return {...e,publishPackage:pkg,publicationDecision:{kind:override ? "human_override" : "human",packageHash:pkg.packageHash,at:now.getTime()}};
+}

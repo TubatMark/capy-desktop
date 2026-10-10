@@ -1,3 +1,4 @@
+import { publicationFixture } from "./publication-fixtures";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ import { loadAccounts, resetAccountsCache } from "../server/accounts";
 import { finishConnect, pendingConnect, startConnect } from "../server/connect";
 import { resetSettingsCache } from "../server/settings";
 
+let fixture: {file:string};
 let root: string;
 let n = 0;
 beforeAll(() => (root = mkdtempSync(path.join(tmpdir(), "capy-routes-"))));
@@ -23,11 +25,12 @@ beforeEach(() => {
   resetQueueCache();
   resetAccountsCache();
   resetSettingsCache();
+  fixture=publicationFixture();
 });
 
 const req = (url: string, method = "GET", body?: unknown) => new Request(`http://x${url}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { "content-type": "application/json" } });
 const params = <T>(p: T) => ({ params: Promise.resolve(p) });
-const seed = () => queue().mutate((e) => upsertForRender(e, { jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c", publish: { ytTitle: "t", description: "d", hashtags: [] } }, ["youtube", "tiktok"], new Date()));
+const seed = () => queue().mutate((e) => upsertForRender(e, { publicationFiles:fixture, jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c", publish: { ytTitle: "t", description: "d", hashtags: [] } }, ["youtube", "tiktok"], new Date()));
 
 describe("queue routes", () => {
   it("lists an empty queue", async () => {
@@ -59,6 +62,7 @@ describe("queue routes", () => {
 
 describe("account routes", () => {
   it("saves app credentials, redacts the secret, and keeps it when the redacted value comes back", async () => {
+    saveAccount("youtube",{tokens:null,account:null});
     await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "cid", clientSecret: "secret9876" }), params({ platform: "youtube" }));
     await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "cid", clientSecret: "••••9876" }), params({ platform: "youtube" }));
     expect(loadAccounts().youtube.clientSecret).toBe("secret9876");
@@ -111,20 +115,31 @@ describe("choosing the Instagram account", () => {
   it("puts posts that waited for the choice back on the schedule", async () => {
     saveAccount("instagram", { clientId: "a", clientSecret: "b", tokens: { accessToken: "T", expiresAt: Date.now() + 86_400_000 * 30 }, choices: [{ id: "1", name: "one" }, { id: "2", name: "two" }] });
     queue().mutate((e) =>
-      upsertForRender(e, { jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c" }, ["instagram"], new Date()).map((x) => ({ ...x, status: "needs_action" as const, authBlocked: true, slotAt: Date.now() + 3600_000 })),
+      upsertForRender(e, { publicationFiles:fixture, jobId: "J", n: 1, start: 0, end: 30, clipTitle: "c" }, ["instagram"], new Date()).map((x) => ({ ...x, status: "needs_action" as const, authBlocked: true, slotAt: Date.now() + 3600_000 })),
     );
     const r = await putAccount(req("/api/accounts/instagram", "PUT", { igUserId: "2" }), params({ platform: "instagram" }));
     expect(r.status).toBe(200);
-    expect(queue().list()[0]).toMatchObject({ status: "scheduled", authBlocked: false });
+    expect(queue().list()[0]).toMatchObject({ status: "review", authBlocked: true });
   });
 });
 
 describe("approving a clip the AI reviewer blocked", () => {
   it("needs force", async () => {
-    queue().mutate((e) => upsertForRender(e, { jobId: "B", n: 1, start: 0, end: 30, clipTitle: "c", aiReview: { verdict: "block", summary: "policy", issues: [], at: 1 } }, ["youtube"], new Date()));
+    queue().mutate((e) => upsertForRender(e, { publicationFiles:fixture, jobId: "B", n: 1, start: 0, end: 30, clipTitle: "c", aiReview: { verdict: "block", summary: "policy", issues: [], at: 1 } }, ["youtube"], new Date()));
     const r = await approveRoute(req("/api/queue/approve", "POST", { jobId: "B" }));
     expect(r.status).toBe(409);
     expect((await r.json()).blocked).toBe(true);
     expect((await approveRoute(req("/api/queue/approve", "POST", { jobId: "B", force: true }))).status).toBe(200);
+  });
+});
+
+describe("central gate route coverage",()=>{
+  it("blocked_review_cannot_schedule_via_any_route",async()=>{
+    seed();queue().mutate(all=>all.map(e=>({...e,aiReview:{verdict:"block",summary:"blocked",issues:[],at:1}})));
+    const key="J:1:youtube";
+    expect((await approveRoute(req("/api/queue/approve","POST",{jobId:"J"}))).status).toBe(409);
+    for(const action of ["post-now","retry"]) expect((await entryAction(req("/api/queue/action","POST"),params({key,action}))).status).toBe(409);
+    expect((await patchEntry(req("/api/queue/item","PATCH",{slotAt:Date.now()+10000}),params({key}))).status).toBe(409);
+    expect(queue().list().every(e=>e.status==="review")).toBe(true);
   });
 });

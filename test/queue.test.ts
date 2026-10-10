@@ -1,3 +1,5 @@
+import { publicationFixture } from "./publication-fixtures";
+import { decide } from "../server/publication-policy";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,10 +7,15 @@ import path from "node:path";
 import { approve, markResult, queue, reconcileMissed, reconnected, recoverInterrupted, reject, resetQueueCache, summary, taken, upsertForRender, type ClipInfo } from "../server/queue";
 import type { QueueEntry } from "../lib/types";
 
+let fixture: {file:string};
+const fixtureRoot=mkdtempSync(path.join(tmpdir(),"capy-queue-policy-"));
+beforeEach(()=> {process.env.CAPY_DATA_DIR=fixtureRoot; fixture=publicationFixture();});
+afterAll(()=>rmSync(fixtureRoot,{recursive:true,force:true}));
 const now = new Date("2026-09-23T10:00:00Z"); // Wed 6:00 ET
 const tz = "America/New_York";
 const H = 3_600_000;
 const clip = (n: number, extra: Partial<ClipInfo> = {}): ClipInfo => ({
+  publicationFiles:fixture,
   jobId: "J",
   n,
   clipTitle: `Clip ${n}`,
@@ -31,13 +38,13 @@ describe("upsertForRender", () => {
     expect(byKey(e, "J:1:youtube").text.title).toBe("T1 #shorts");
     expect(byKey(e, "J:1:instagram").text.caption!.startsWith("Hook 1")).toBe(true);
   });
-  it("re-render keeps scheduled slots, and leaves posted/posting/rejected alone", () => {
+  it("re-render invalidates scheduled decisions, and leaves posted/posting/rejected alone", () => {
     let e = upsertForRender([], clip(1), [...all], now);
     e = e.map((x) =>
       x.platform === "youtube" ? { ...x, status: "scheduled" as const, slotAt: 123 } : x.platform === "instagram" ? { ...x, status: "posted" as const, videoUrl: "old" } : { ...x, status: "rejected" as const, videoUrl: "old" },
     );
     e = upsertForRender(e, clip(1, { videoUrl: "/api/media/1.mp4?v=2" }), [...all], now);
-    expect(byKey(e, "J:1:youtube")).toMatchObject({ status: "scheduled", slotAt: 123, videoUrl: "/api/media/1.mp4?v=2" });
+    expect(byKey(e, "J:1:youtube")).toMatchObject({ status: "review", slotAt: undefined, videoUrl: "/api/media/1.mp4?v=2" });
     expect(byKey(e, "J:1:instagram")).toMatchObject({ status: "posted", videoUrl: "old" });
     expect(byKey(e, "J:1:tiktok")).toMatchObject({ status: "rejected", videoUrl: "old" });
   });
@@ -81,7 +88,7 @@ describe("approve / reject", () => {
 });
 
 describe("missed and interrupted", () => {
-  const sched = (slotAt: number): QueueEntry[] => upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...x, status: "scheduled" as const, slotAt }));
+  const sched = (slotAt: number): QueueEntry[] => upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...decide(x,false,now), status: "scheduled" as const, slotAt }));
   it("under 2h late stays due; over 2h moves to a new slot with a note", () => {
     const due = reconcileMissed(sched(now.getTime() - 2 * H + 60_000), tz, now);
     expect(due[0]!.slotAt).toBe(now.getTime() - 2 * H + 60_000);
@@ -97,7 +104,7 @@ describe("missed and interrupted", () => {
 });
 
 describe("markResult", () => {
-  const base = (): QueueEntry[] => upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...x, status: "posting" as const, slotAt: now.getTime() }));
+  const base = (): QueueEntry[] => upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...decide(x,false,now), status: "posting" as const, slotAt: now.getTime() }));
   it("backs off 2, 10, 30 minutes, then fails for good", () => {
     let e = base();
     const err = { error: { message: "503", retryable: true, auth: false } };
@@ -169,10 +176,10 @@ describe("clip identity (a re-cut clip at the same number)", () => {
     expect(e.find((x) => x.status === "posted")!.result!.id).toBe("v1");
     expect(e.find((x) => x.key === "J:1:youtube")!.status).toBe("review");
   });
-  it("re-rendering the same cut after a 'file missing' puts it back on the schedule", () => {
+  it("re-rendering the same cut after a missing file requires a new decision", () => {
     let e: QueueEntry[] = upsertForRender([], clip(1), ["youtube"], now).map((x) => ({ ...x, status: "needs_action" as const, slotAt: 123, error: "Clip file missing, re-render it" }));
     e = upsertForRender(e, clip(1), ["youtube"], now);
-    expect(e[0]).toMatchObject({ status: "scheduled", slotAt: 123, error: undefined });
+    expect(e[0]).toMatchObject({ status: "review", slotAt: undefined });
   });
 });
 

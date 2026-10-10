@@ -1,3 +1,5 @@
+import { publicationFixture } from "./publication-fixtures";
+import { decide } from "../server/publication-policy";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +10,7 @@ import { AuthError } from "../server/accounts";
 import { PlatformError, type PostOutcome } from "../server/platforms/types";
 import type { Platform, QueueEntry } from "../lib/types";
 
+let fixture: {file:string};
 let root: string;
 let n = 0;
 beforeAll(() => (root = mkdtempSync(path.join(tmpdir(), "capy-poster-"))));
@@ -15,13 +18,14 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 beforeEach(() => {
   process.env.CAPY_DATA_DIR = path.join(root, String(++n));
   resetQueueCache();
+  fixture=publicationFixture();
 });
 
 const now = new Date("2026-09-23T20:00:00Z");
 function seed(entries: { n: number; platform: Platform; slotAt: number; status?: QueueEntry["status"] }[]) {
   queue().mutate(() =>
     entries.flatMap((s) =>
-      upsertForRender([], { jobId: "J", n: s.n, start: 0, end: 30, clipTitle: `c${s.n}`, videoUrl: "/v.mp4" }, [s.platform], now).map((e) => ({ ...e, status: s.status ?? ("scheduled" as const), slotAt: s.slotAt })),
+      upsertForRender([], { publicationFiles:fixture, jobId: "J", n: s.n, start: 0, end: 30, clipTitle: `c${s.n}`, videoUrl: "/v.mp4" }, [s.platform], now).map((e) => ({ ...decide(e,false,now), status: s.status ?? ("scheduled" as const), slotAt: s.slotAt })),
     ),
   );
 }
@@ -35,7 +39,7 @@ function deps(over: Partial<PosterDeps> = {}): PosterDeps & { posted: string[] }
       return { kind: "posted", id: "x", url: "u" } as PostOutcome;
     },
     token: async () => "T",
-    fileFor: async () => ({ file: "/tmp/clip.mp4" }),
+    fileFor: async () => ({ file: fixture.file }),
     lock: () => "held",
     paused: () => false,
     audienceTz: () => "America/New_York",
@@ -173,5 +177,23 @@ describe("tick", () => {
     await tick(mine);
     expect(mine.posted).toEqual(["J:1:youtube"]);
     expect(get("J:1:youtube").history.map((h) => h.msg)).toContain("Interrupted, retrying");
+  });
+});
+
+describe("last upload gate",()=>{
+  it("changed bytes are refused immediately before upload",async()=>{
+    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);
+    const d=deps({token:async()=>{const {writeFileSync}=await import("node:fs");writeFileSync(fixture.file,"changed after scheduling");return "T";}});
+    await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").status).toBe("needs_action");
+    expect(get("J:1:youtube").error).toContain("Media changed");
+  });
+  it("changed destination while refreshing token is refused",async()=>{
+    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);
+    const d=deps({token:async()=>{const {saveAccount}=await import("../server/accounts");saveAccount("youtube",{account:{id:"different",name:"Different"}});return "T";}});
+    await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").error).toContain("Destination account changed");
+  });
+  it("legacy scheduled entry without package is never uploaded",async()=>{
+    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);queue().mutate(all=>all.map(e=>({...e,publishPackage:undefined,publicationDecision:undefined})));
+    const d=deps();await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").error).toContain("Missing publication revision");
   });
 });

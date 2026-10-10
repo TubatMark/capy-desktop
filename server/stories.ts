@@ -524,6 +524,7 @@ export class StoryManager {
       upsertForRender(
         e,
         {
+          publicationFiles: {file:st.video!.file,thumbFile:existsSync(st.video!.file.replace(/\.mp4$/, ".jpg")) ? st.video!.file.replace(/\.mp4$/, ".jpg") : undefined},
           jobId: `story-${st.id}`,
           n: 1,
           start: 0,

@@ -1,3 +1,4 @@
+import type { PublishPackage, PublicationDecision } from "./publication";
 import type { Look } from "./look";
 /** Shared between server and browser. No node imports here. */
 
@@ -20,6 +21,10 @@ export interface PostText {
 
 /** One clip going to one platform (server/queue.ts owns these). */
 export interface QueueEntry {
+  publishPackage?: PublishPackage;
+  publicationDecision?: PublicationDecision;
+  /** Server-resolved media locations; never derive content identity from URLs. */
+  publicationFiles?: { file: string; thumbFile?: string };
   /** `${jobId}:${n}:${platform}` */
   key: string;
   jobId: string;

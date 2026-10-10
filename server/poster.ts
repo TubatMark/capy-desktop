@@ -1,3 +1,4 @@
+import { eligibility } from "./publication-policy";
 import { existsSync } from "node:fs";
 import { audienceTz as tzOf } from "../lib/post-time";
 import type { ClipState, JobState, Platform, QueueEntry } from "../lib/types";
@@ -41,6 +42,8 @@ declare global {
 const state = () => (globalThis.__capyPoster ??= { busy: new Set<Platform>() });
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export const resolvePublicationFiles = async (e: QueueEntry): Promise<ClipFile> => e.publicationFiles && existsSync(e.publicationFiles.file) ? e.publicationFiles : defaultDeps().fileFor(e);
 
 function defaultDeps(): PosterDeps {
   return {
@@ -100,6 +103,11 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
     const picked = new Set<Platform>();
     for (const e of out.filter((x) => isDue(x, now.getTime())).sort((a, b) => (a.nextTryAt ?? a.slotAt ?? 0) - (b.nextTryAt ?? b.slotAt ?? 0))) {
       if (busy.has(e.platform) || picked.has(e.platform)) continue;
+      const allowed = eligibility(e);
+      if (!allowed.allowed) {
+        out = patch(out, e.key, x => note({...x,status:"review",slotAt:undefined,nextTryAt:undefined,error:allowed.reasons.join("; ")},allowed.reasons.join("; "),now));
+        continue;
+      }
       picked.add(e.platform);
       due.push(e);
     }
@@ -123,6 +131,11 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
         let r: Parameters<typeof markResult>[2];
         try {
           const token = await d.token(e.platform);
+          // Re-read durable state after token refresh, then hash actual upload bytes immediately before upload.
+          const current = queue().list().find(x => x.key === e.key);
+          if (!current || current.status !== "posting") return;
+          const result = eligibility(current, f);
+          if (!result.allowed) return void stop(result.reasons.join("; "));
           r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text, resume: e.progress, madeForKids: e.madeForKids }, token, checkpoint) };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -163,6 +176,7 @@ export function onRendered(job: JobState, c: ClipState, toMediaUrl: (abs: string
     upsertForRender(
       e,
       {
+        publicationFiles: {file:c.render.file!,thumbFile:existsSync(c.render.file!.replace(/\.mp4$/, ".jpg")) ? c.render.file!.replace(/\.mp4$/, ".jpg") : undefined},
         jobId: job.id,
         n: c.n,
         start: c.start,

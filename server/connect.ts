@@ -87,5 +87,7 @@ async function complete(p: Platform, state: string, code: string, f: typeof fetc
     const keep = choices.find((c) => c.id === a.igUserId) ?? (choices.length === 1 ? choices[0] : undefined);
     saveAccount(p, { tokens, choices, igUserId: keep?.id ?? null, account: keep ?? { id: "", name: "Pick an account" }, needsReconnect: null });
   }
+  // Central eligibility compares the newly connected stable ID against each pinned package.
+  // A different account must never revive the old account's approvals.
   queue().mutate((e) => reconnected(e, p, audienceTz(effective().postingAudience), new Date()));
 }

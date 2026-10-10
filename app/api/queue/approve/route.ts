@@ -1,3 +1,5 @@
+import { resolvePublicationFiles } from "@/server/poster";
+import { decide, eligibility, hashManifest } from "@/server/publication-policy";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { audienceTz } from "@/lib/post-time";
@@ -27,9 +29,21 @@ export async function POST(req: Request) {
   if (!force && waiting.some((e) => e.aiReview?.verdict === "block")) {
     return NextResponse.json({ error: "The AI reviewer blocked a clip here. Confirm to post it anyway.", blocked: true }, { status: 409 });
   }
+  const candidates = waiting.filter(e => !platforms || platforms.includes(e.platform));
+  const prepared = await Promise.all(candidates.map(async e => {
+    const files = await resolvePublicationFiles(e);
+    return decide({...e,publicationFiles:typeof files === "object" ? files : undefined}, !!force, new Date());
+  }));
+  if (candidates.some(original => {
+    const current = queue().list().find(e => e.key === original.key);
+    return !current || hashManifest(current) !== hashManifest(original);
+  })) return NextResponse.json({error:"Queue changed during review; retry approval"}, {status:409});
+  const denied = prepared.flatMap(e => eligibility(e).reasons);
+  if (denied.length) return NextResponse.json({error:denied.join("; "), reasons:denied}, {status:409});
   let scheduled: QueueEntry[] = [];
   queue().mutate((e) => {
-    const r = approve(e, jobId, n, { platforms: platforms as QueueEntry["platform"][] | undefined, audienceTz: audienceTz(effective().postingAudience), now: new Date() });
+    const ready = e.map(x=>prepared.find(p=>p.key===x.key) ?? x);
+    const r = approve(ready, jobId, n, { override: !!force, platforms: platforms as QueueEntry["platform"][] | undefined, audienceTz: audienceTz(effective().postingAudience), now: new Date() });
     scheduled = r.scheduled;
     return r.entries;
   });

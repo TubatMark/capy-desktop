@@ -1,3 +1,4 @@
+import { eligibility } from "@/server/publication-policy";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { audienceTz } from "@/lib/post-time";
@@ -19,6 +20,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ key: string }
   const e = queue().list().find((x) => x.key === key);
   if (!e) return NextResponse.json({ error: "Not in the queue" }, { status: 404 });
   if (e.status === "posting" || e.status === "posted") return NextResponse.json({ error: "Already posted or posting" }, { status: 409 });
+  if (parsed.data.slotAt) {
+    const candidate = parsed.data.text ? {...e,text:{...e.text,...parsed.data.text}} : e;
+    const result = eligibility(candidate);
+    if (!result.allowed) return NextResponse.json({error:result.reasons.join("; "), reasons:result.reasons},{status:409});
+  }
   const now = new Date();
   const out = queue().mutate((all) => {
     let next = all;

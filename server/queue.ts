@@ -1,3 +1,4 @@
+import { decide, eligibility } from "./publication-policy";
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { allocateSlot, fmtIn } from "../lib/post-time";
@@ -13,6 +14,7 @@ import { dataDir } from "./settings";
  */
 
 export interface ClipInfo {
+  publicationFiles?: { file: string; thumbFile?: string };
   jobId: string;
   n: number;
   start: number;
@@ -57,7 +59,7 @@ export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: P
   const fp = c.fp ?? fingerprint(c.start, c.end);
   const fresh = (key: string, p: Platform): QueueEntry =>
     note({ key, jobId: c.jobId, n: c.n, platform: p, fp, status: "review", ...media, text: postTextFor(p, publish, c.hook), attempts: 0, history: [], createdAt: now.getTime(), updatedAt: now.getTime() }, "Rendered, waiting for your OK", now);
-  const media = { videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}), ...(c.link ? { link: c.link } : {}), ...(c.seo ? { seo: c.seo } : {}) };
+  const media = { publicationFiles: c.publicationFiles, videoUrl: c.videoUrl, thumbUrl: c.thumbUrl, thumbAt: c.thumbAt, clipTitle: c.clipTitle, videoTitle: c.videoTitle, aiReview: c.aiReview, ...(c.madeForKids ? { madeForKids: true } : {}), ...(c.link ? { link: c.link } : {}), ...(c.seo ? { seo: c.seo } : {}) };
   for (const p of platforms) {
     const key = keyOf(c.jobId, c.n, p);
     const i = out.findIndex((e) => e.key === key);
@@ -75,9 +77,8 @@ export function upsertForRender(entries: QueueEntry[], c: ClipInfo, platforms: P
       continue;
     }
     if (e.status === "posted" || e.status === "rejected") continue;
-    // same cut re-rendered: post the new file; a post that failed for want of a file goes back on the schedule
-    const back = e.status === "needs_action" && !e.result?.id && !e.authBlocked;
-    out[i] = note({ ...e, ...media, fp, ...(back ? { status: "scheduled" as const, error: undefined } : {}) }, back ? "Re-rendered, back on the schedule" : "Re-rendered, will post the new version", now);
+    // Every completed re-render needs a new decision, including captions/audio-only changes.
+    out[i] = note({ ...e, ...media, fp, status: "review", error: undefined, slotAt: undefined, nextTryAt: undefined, publicationDecision: undefined, publishPackage: undefined, progress: undefined }, "Re-rendered, waiting for a new decision", now);
   }
   return out;
 }
@@ -95,19 +96,20 @@ export function taken(entries: QueueEntry[], now: Date, except?: (e: QueueEntry)
 }
 
 /** Approve one clip (n) or every clip of a video waiting for review; each clip gets one shared slot. */
-export function approve(entries: QueueEntry[], jobId: string, n: number | undefined, o: { platforms?: Platform[]; audienceTz: string; now: Date }): { entries: QueueEntry[]; scheduled: QueueEntry[] } {
+export function approve(entries: QueueEntry[], jobId: string, n: number | undefined, o: { platforms?: Platform[]; audienceTz: string; now: Date; override?: boolean }): { entries: QueueEntry[]; scheduled: QueueEntry[] } {
   let out = [...entries];
   const ns = [...new Set(out.filter((e) => e.jobId === jobId && e.status === "review" && (n === undefined || e.n === n)).map((e) => e.n))].sort((a, b) => a - b);
   const scheduled: QueueEntry[] = [];
   for (const cn of ns) {
     const mine = out.filter((e) => e.jobId === jobId && e.n === cn && e.status === "review");
-    const chosen = mine.filter((e) => !o.platforms || o.platforms.includes(e.platform));
-    for (const e of mine) if (!chosen.includes(e)) out = patch(out, e.key, (x) => note({ ...x, status: "rejected" }, "Not chosen at approval", o.now));
+    const selected = mine.filter((e) => !o.platforms || o.platforms.includes(e.platform));
+    const chosen = selected.map((e) => decide(e, !!o.override, o.now)).filter((e) => eligibility(e).allowed);
+    for (const e of mine) if (!selected.includes(e)) out = patch(out, e.key, (x) => note({ ...x, status: "rejected" }, "Not chosen at approval", o.now));
     if (!chosen.length) continue;
     const slot = allocateSlot(taken(out, o.now), chosen.map((e) => e.platform), o.audienceTz, o.now);
     for (const e of chosen) {
       out = patch(out, e.key, (x) =>
-        slot ? note({ ...x, status: "scheduled", slotAt: slot.getTime(), attempts: 0, error: undefined }, `Approved for ${fmtIn(slot, o.audienceTz)}`, o.now) : note(x, "No free slot in the next 14 days", o.now),
+        slot ? note({ ...x, publishPackage: e.publishPackage, publicationDecision: e.publicationDecision, status: "scheduled", slotAt: slot.getTime(), attempts: 0, error: undefined }, `${o.override ? "Explicit human override approved" : "Approved"} for ${fmtIn(slot, o.audienceTz)}`, o.now) : note(x, "No free slot in the next 14 days", o.now),
       );
       if (slot) scheduled.push(out.find((x) => x.key === e.key)!);
     }
@@ -119,15 +121,17 @@ export const reject = (entries: QueueEntry[], key: string, now: Date) => patch(e
 
 export const remove = (entries: QueueEntry[], key: string) => entries.filter((e) => e.key !== key);
 
-export const editText = (entries: QueueEntry[], key: string, text: PostText, now: Date) => patch(entries, key, (e) => ({ ...e, text: { ...e.text, ...text }, updatedAt: now.getTime() }));
+export const editText = (entries: QueueEntry[], key: string, text: PostText, now: Date) => patch(entries, key, (e) => ({ ...e, text: { ...e.text, ...text }, status: "review", slotAt: undefined, nextTryAt: undefined, publicationDecision: undefined, progress: undefined, updatedAt: now.getTime() }));
+
+const gated = (e: QueueEntry, next: () => QueueEntry, now: Date) => { const result = eligibility(e); return result.allowed ? next() : note({...e,status:"review",slotAt:undefined,nextTryAt:undefined,error:result.reasons.join("; ")}, result.reasons.join("; "), now); };
 
 export const move = (entries: QueueEntry[], key: string, slotAt: number, now: Date, tz: string) =>
-  patch(entries, key, (e) => note({ ...e, status: "scheduled", slotAt, nextTryAt: undefined }, `Moved to ${fmtIn(new Date(slotAt), tz)}`, now));
+  patch(entries, key, (e) => gated(e, () => note({ ...e, status: "scheduled", slotAt, nextTryAt: undefined }, `Moved to ${fmtIn(new Date(slotAt), tz)}`, now), now));
 
-export const postNow = (entries: QueueEntry[], key: string, now: Date) => patch(entries, key, (e) => note({ ...e, status: "scheduled", slotAt: now.getTime(), nextTryAt: undefined }, "Post now", now));
+export const postNow = (entries: QueueEntry[], key: string, now: Date) => patch(entries, key, (e) => gated(e, () => note({ ...e, status: "scheduled", slotAt: now.getTime(), nextTryAt: undefined }, "Post now", now), now));
 
 export const retry = (entries: QueueEntry[], key: string, now: Date) =>
-  patch(entries, key, (e) => note({ ...e, status: "scheduled", slotAt: now.getTime(), attempts: 0, nextTryAt: undefined, error: undefined, authBlocked: false }, "Retry", now));
+  patch(entries, key, (e) => gated(e, () => note({ ...e, status: "scheduled", slotAt: now.getTime(), attempts: 0, nextTryAt: undefined, error: undefined, authBlocked: false }, "Retry", now), now));
 
 /** Slots that passed while capy wasn't running: under 2h late still post; later ones move to a new slot. */
 export function reconcileMissed(entries: QueueEntry[], audienceTz: string, now: Date): QueueEntry[] {
@@ -139,6 +143,7 @@ export function reconcileMissed(entries: QueueEntry[], audienceTz: string, now: 
     const keys = new Set(group.map((e) => e.key));
     const slot = allocateSlot(taken(out, now, (e) => keys.has(e.key)), group.map((e) => e.platform), audienceTz, now);
     for (const e of group) {
+      if (!eligibility(e).allowed) { out = patch(out,e.key,x=>gated(x,()=>x,now)); continue; }
       out = patch(out, e.key, (x) =>
         slot
           ? note({ ...x, slotAt: slot.getTime() }, `Missed ${fmtIn(new Date(x.slotAt!), audienceTz)} (the computer was asleep or capy was closed), moved to ${fmtIn(slot, audienceTz)}`, now)
@@ -151,7 +156,7 @@ export function reconcileMissed(entries: QueueEntry[], audienceTz: string, now: 
 
 /** On startup: anything that was mid-upload when capy stopped gets posted again. */
 export function recoverInterrupted(entries: QueueEntry[], now: Date): QueueEntry[] {
-  return entries.map((e) => (e.status === "posting" ? note({ ...e, status: "scheduled", slotAt: now.getTime() }, "Interrupted, retrying", now) : e));
+  return entries.map((e) => (e.status === "posting" ? gated(e, () => note({ ...e, status: "scheduled", slotAt: now.getTime() }, "Interrupted, retrying", now), now) : e));
 }
 
 export type PostResult = { outcome: PostOutcome } | { error: { message: string; retryable: boolean; auth: boolean } };
@@ -169,6 +174,7 @@ export function markResult(entries: QueueEntry[], key: string, r: PostResult, no
     if (auth) return note({ ...e, status: "needs_action", authBlocked: true, error: message, nextTryAt: undefined }, message, now);
     const attempts = e.attempts + 1;
     const wait = retryable ? BACKOFF_MIN[attempts - 1] : undefined;
+    if (wait !== undefined && !eligibility(e).allowed) return gated(e, () => e, now);
     return note(
       { ...e, status: "failed", attempts, error: message, nextTryAt: wait !== undefined ? now.getTime() + wait * MIN : undefined },
       wait !== undefined ? `${message} (retrying in ${wait} min)` : message,
@@ -181,6 +187,7 @@ export function markResult(entries: QueueEntry[], key: string, r: PostResult, no
 export function reconnected(entries: QueueEntry[], platform: Platform, audienceTz: string, now: Date): QueueEntry[] {
   let out = [...entries];
   for (const e of out.filter((x) => x.platform === platform && x.authBlocked)) {
+    if (!eligibility(e).allowed) { out = patch(out,e.key,x=>gated(x,()=>x,now)); continue; }
     const keep = e.slotAt !== undefined && e.slotAt > now.getTime();
     const slot = keep ? new Date(e.slotAt!) : allocateSlot(taken(out, now, (x) => x.key === e.key), [platform], audienceTz, now);
     out = patch(out, e.key, (x) => note({ ...x, status: "scheduled", authBlocked: false, error: undefined, slotAt: (slot ?? now).getTime() }, "Account reconnected", now));
