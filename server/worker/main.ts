@@ -5,6 +5,7 @@ import { runtimeStore } from "../db/runtime";
 import { OUTPUT_ROOT } from "../paths";
 import { tick } from "../poster";
 import { watcherTick } from "../watcher";
+import { registerThumbnailWorkers } from "../thumbnails";
 import { registerStudioWorkers } from "../studio/worker-adapters";
 import { enqueueWork, workQueue } from "./api";
 import { registerWork, stagesFor } from "./registry";
@@ -16,6 +17,7 @@ const recovered = new Set<string>();
 export function registerWorkers() {
   registerMediaWorkers();
   registerStudioWorkers();
+  registerThumbnailWorkers();
   registerWork("poster", () => [
     {
       name: "posting",

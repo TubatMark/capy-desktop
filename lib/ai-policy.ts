@@ -306,7 +306,8 @@ export interface AiRunRecord {
   runId: string;
   task: AiTaskId;
   inputVersion: string;
-  provider: AgentId;
+  /** Actual transport identity; image adapters are independent of text CLI agents. */
+  provider: AgentId | (string & {});
   model: string;
   actualModel?: string;
   routingReason: string;

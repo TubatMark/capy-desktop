@@ -175,5 +175,5 @@ export async function thumbnail(input: string, output: string, atSec: number, la
 
 /** Frame from a finished clip (hook still on screen) as a JPEG, for the YouTube thumbnail. */
 export async function clipThumbnail(renderedMp4: string, output: string, atSec = 1.4): Promise<void> {
-  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", atSec.toFixed(2), "-i", renderedMp4, "-frames:v", "1", "-q:v", "2", output]);
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", atSec.toFixed(6), "-i", renderedMp4, "-frames:v", "1", "-pix_fmt", "yuvj420p", "-q:v", "2", output]);
 }
