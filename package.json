@@ -8,20 +8,20 @@
     "capy": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node scripts/with-sqlite.mjs next dev",
+    "build": "node scripts/with-sqlite.mjs next build",
+    "start": "node scripts/with-sqlite.mjs next start",
     "clip": "tsx src/cli.ts",
     "check": "tsx src/cli.ts check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/with-sqlite.mjs vitest run",
     "desktop:bundle": "node scripts/desktop-bundle.mjs",
     "desktop:dev": "pnpm desktop:bundle && electron .",
-    "desktop:build": "node scripts/desktop-build.mjs",
-    "desktop:pack": "node scripts/desktop-build.mjs --dir"
+    "desktop:build": "node scripts/with-sqlite.mjs node scripts/desktop-build.mjs",
+    "desktop:pack": "node scripts/with-sqlite.mjs node scripts/desktop-build.mjs --dir"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.291",
@@ -46,7 +46,7 @@
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "electron": "^44.5.1",
+    "electron": "44.5.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.3",

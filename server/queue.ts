@@ -1,11 +1,9 @@
+import { legacyState, mutateLegacy } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { allocateSlot, fmtIn } from "../lib/post-time";
 import type { ContentReview, Platform, PostText, QueueEntry, QueueSummary, SeoReport } from "../lib/types";
 import { postTextFor, type Publish } from "./platforms/text";
 import type { PostOutcome } from "./platforms/types";
-import { dataDir } from "./settings";
 
 /**
  * The posting queue: one entry per clip × platform in <CAPY_DATA_DIR>/queue.json.
@@ -217,46 +215,16 @@ export function resetQueueCache() {
   globalThis.__capyQueue = null;
 }
 
-const queueFile = () => path.join(dataDir(), "queue.json");
-const mtimeOf = (f: string) => {
-  try {
-    return statSync(f).mtimeMs;
-  } catch {
-    return 0;
-  }
-};
-
-function load(): QueueEntry[] {
-  const file = queueFile();
-  const c = globalThis.__capyQueue;
-  if (c && c.file === file && c.mtime === mtimeOf(file)) return c.entries;
-  let entries: QueueEntry[] = [];
-  try {
-    entries = JSON.parse(readFileSync(file, "utf8")) as QueueEntry[];
-  } catch {
-    /* empty queue */
-  }
-  globalThis.__capyQueue = { file, mtime: mtimeOf(file), entries };
-  return entries;
-}
-
-function save(entries: QueueEntry[]) {
-  const file = queueFile();
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(entries, null, 2) + "\n");
-  renameSync(tmp, file);
-  globalThis.__capyQueue = { file, mtime: mtimeOf(file), entries };
-}
+const emptyQueue = (): QueueEntry[] => [];
+const validQueue = (value: unknown) => Array.isArray(value);
+function load(): QueueEntry[] { return legacyState('queue', emptyQueue, validQueue); }
 
 /** The queue store. `mutate` is synchronous, so two callers can never interleave a read-modify-write. */
 export function queue() {
   return {
     list: () => load(),
     mutate(fn: (e: QueueEntry[]) => QueueEntry[]): QueueEntry[] {
-      const next = fn(load());
-      save(next);
-      return next;
+      return mutateLegacy("queue", emptyQueue, validQueue, fn);
     },
   };
 }

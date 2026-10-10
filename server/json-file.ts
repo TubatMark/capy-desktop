@@ -25,7 +25,8 @@ export function saveJsonAtomic(file: string, data: unknown): Promise<void> {
 export async function readJsonFile<T>(file: string): Promise<T | null> {
   try {
     return JSON.parse(await readFile(file, "utf8")) as T;
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }

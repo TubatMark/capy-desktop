@@ -1,8 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { legacyState, mutateLegacy } from "./db/runtime";
 import type { WatchedChannel, WatchFile } from "../lib/types";
 import type { ChannelInfo, Upload } from "../src/youtube";
-import { dataDir } from "./settings";
 
 /**
  * Creators capy watches, in <CAPY_DATA_DIR>/watch.json. Every change is a pure function over the file
@@ -116,46 +114,15 @@ export function resetWatchCache() {
   globalThis.__capyWatch = null;
 }
 
-const watchFile = () => path.join(dataDir(), "watch.json");
-const mtimeOf = (f: string) => {
-  try {
-    return statSync(f).mtimeMs;
-  } catch {
-    return 0;
-  }
-};
-
-function load(): WatchFile {
-  const file = watchFile();
-  const c = globalThis.__capyWatch;
-  if (c && c.file === file && c.mtime === mtimeOf(file)) return c.data;
-  let data = emptyWatch();
-  try {
-    data = { ...emptyWatch(), ...(JSON.parse(readFileSync(file, "utf8")) as Partial<WatchFile>) };
-  } catch {
-    /* nothing watched yet */
-  }
-  globalThis.__capyWatch = { file, mtime: mtimeOf(file), data };
-  return data;
-}
-
-function save(data: WatchFile) {
-  const file = watchFile();
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
-  renameSync(tmp, file);
-  globalThis.__capyWatch = { file, mtime: mtimeOf(file), data };
-}
+const validWatch = (value: unknown) => !!value && Array.isArray((value as WatchFile).channels);
+function load(): WatchFile { return legacyState('watch', emptyWatch, validWatch); }
 
 /** The watch list. `mutate` is synchronous, so two callers can never interleave a read-modify-write. */
 export function watch() {
   return {
     get: () => load(),
     mutate(fn: (f: WatchFile) => WatchFile): WatchFile {
-      const next = fn(load());
-      save(next);
-      return next;
+      return mutateLegacy("watch", emptyWatch, validWatch, fn);
     },
   };
 }

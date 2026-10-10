@@ -1,3 +1,7 @@
+import { runtimeStore } from "./db/runtime";
+import { jobRepository } from "./repositories/jobs";
+import { importLegacy } from "./db/import-legacy";
+import { dataDir } from "./settings";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -85,9 +89,11 @@ class JobManager extends EventEmitter {
   private async load() {
     boot();
     await mkdir(OUTPUT_ROOT, { recursive: true });
-    for (const d of await readdir(OUTPUT_ROOT).catch(() => [] as string[])) {
+    await importLegacy({ store: runtimeStore(), dataDir: dataDir(), outputRoot: OUTPUT_ROOT });
+    const durableJobs = new Map(jobRepository(runtimeStore()).list().map(job => [job.dir, job]));
+    for (const d of new Set([...durableJobs.keys(), ...await readdir(OUTPUT_ROOT)])) {
       try {
-        const job: JobState = JSON.parse(await readFile(path.join(OUTPUT_ROOT, d, "job.json"), "utf8"));
+        const job: JobState = durableJobs.get(d) ?? JSON.parse(await readFile(path.join(OUTPUT_ROOT, d, "job.json"), "utf8"));
         // anything that was mid-flight when the server died is not running anymore
         if (job.status === "analyzing" || job.status === "preparing") {
           job.status = job.clips.length ? "ready" : "error";
@@ -102,7 +108,7 @@ class JobManager extends EventEmitter {
           if (c.render.status === "done" && c.render.file && !existsSync(c.render.file)) {
             const local = renderedFile(job, c);
             if (local) c.render.file = local;
-            else c.render = { status: "none" };
+            else { c.render = { ...c.render, error: "Media missing; relink the original file." }; }
             repaired = true;
           }
         }
@@ -233,7 +239,7 @@ class JobManager extends EventEmitter {
   private async save(job: JobState) {
     if (!job.title) return; // folder name isn't known until metadata arrives
     await mkdir(path.join(OUTPUT_ROOT, job.dir), { recursive: true });
-    await writeFile(path.join(OUTPUT_ROOT, job.dir, "job.json"), JSON.stringify(job, null, 2));
+    jobRepository(runtimeStore()).save(job);
   }
 
   /** The AI chosen in Settings (Claude by default) and the model to ask it for. */
