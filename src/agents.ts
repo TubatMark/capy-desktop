@@ -5,7 +5,7 @@ import {
 } from "../server/ai-router";
 import type { AiTaskContext, AiTaskId } from "../lib/ai-policy";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   access,
   constants,
@@ -392,19 +392,60 @@ function childPath(): string {
   return searchDirs().join(path.delimiter);
 }
 
+const binCache = new Map<string, { at: number; bin?: string }>();
+
+/** The CLI to run: with several copies installed (an old pnpm one ahead of a newer nvm one, say), the
+ *  newest by `--version`; a copy that won't report one ranks last. Cached for ten minutes. */
 async function findBin(names: string[]): Promise<string | undefined> {
+  const key = names.join("|");
+  const hit = binCache.get(key);
+  if (hit && Date.now() - hit.at < 600_000) return hit.bin;
+  let bin: string | undefined;
   for (const name of names) {
+    const found: string[] = [];
     for (const dir of searchDirs()) {
       const p = path.join(dir, name);
       try {
         await access(p, constants.X_OK);
-        return p;
+        found.push(p);
       } catch {
         /* not here */
       }
     }
+    if (found.length) {
+      bin = found.length === 1 ? found[0] : await newest(found);
+      break;
+    }
   }
-  return undefined;
+  binCache.set(key, { at: Date.now(), bin });
+  return bin;
+}
+
+async function newest(bins: string[]): Promise<string> {
+  const versions = await Promise.all(
+    bins.map(
+      (bin) =>
+        new Promise<number[]>((resolve) =>
+          execFile(
+            bin,
+            ["--version"],
+            { timeout: 5000, env: { ...process.env, PATH: childPath() } },
+            (_e, out, err) =>
+              resolve(
+                (/(\d+)\.(\d+)\.(\d+)/.exec(`${out}${err}`)?.slice(1) ?? []).map(Number),
+              ),
+          ),
+        ),
+    ),
+  );
+  const cmp = (a: number[], b: number[]) => {
+    for (let i = 0; i < 3; i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) - (b[i] ?? -1);
+    return 0;
+  };
+  // stable: on a tie the earlier folder wins
+  return bins.reduce((best, bin, i) =>
+    cmp(versions[i]!, versions[bins.indexOf(best)]!) > 0 ? bin : best,
+  );
 }
 
 interface SpawnResult {
