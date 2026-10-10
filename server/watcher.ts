@@ -6,6 +6,13 @@ import type { Upload } from "../src/youtube";
 import { takePosterLock } from "./poster-lock";
 import { dataDir, effective } from "./settings";
 import { readUploadDates } from "./subscriptions";
+import { loadAccounts } from "./accounts";
+import {
+  reconcileCreator,
+  dueReadinessChannels,
+  type DiscoveryResult,
+} from "./discovery/reconcile";
+import { abortable } from "./discovery/readiness";
 import {
   discoveryCutoff,
   applyCheck,
@@ -28,6 +35,12 @@ export interface WatcherDeps {
   lock(): "acquired" | "held" | "busy";
   list(channelUrl: string): Promise<Upload[]>;
   dateUploads?(accountId: string, uploads: Upload[]): Promise<Upload[]>;
+  reconcile?(
+    channelId: string,
+    signal: AbortSignal,
+    force: boolean,
+  ): Promise<DiscoveryResult>;
+  deadlineMs?: number;
   createJob(
     videoId: string,
     settings: Partial<JobSettings>,
@@ -57,8 +70,28 @@ function defaultDeps(): WatcherDeps {
   return {
     now: () => new Date(),
     lock: () => (currentWork() ? "held" : "busy"),
-    list: async (url) =>
-      (await import("../src/youtube")).listUploads(url, 12, yt()),
+    list: async () => {
+      throw Error("Worker discovery uses the complete uploads reconciler");
+    },
+    reconcile: (channelId, signal, force) =>
+      reconcileCreator(channelId, signal, {
+        force,
+        legacyList: async (channel, signal) => {
+          const { run, withCancel } = await import("../src/exec");
+          const { parseUploads } = await import("../src/youtube");
+          const options = yt();
+          const args = ["--no-warnings", "--flat-playlist", "-J"];
+          if (options.cookiesFromBrowser)
+            args.push("--cookies-from-browser", options.cookiesFromBrowser);
+          if (options.proxy) args.push("--proxy", options.proxy);
+          // No playlist-end: catch up the complete Videos tab, subject to explicit output/deadline limits.
+          args.push(`https://www.youtube.com/channel/${channel.id}/videos`);
+          const result = await withCancel(signal, () =>
+            run("yt-dlp", args, { timeoutMs: 30_000 }),
+          );
+          return parseUploads(JSON.parse(result.stdout));
+        },
+      }),
     createJob: async (videoId, settings, automation) => {
       const { jobs } = await import("./jobs");
       await jobs().create(
@@ -93,38 +126,62 @@ export async function watcherTick(
     o.force ||
     !file.lastCheckAt ||
     now.getTime() - file.lastCheckAt >= file.intervalMin * 60_000;
-  if (due && file.channels.some((c) => c.enabled)) {
+  const readinessDue = dueReadinessChannels(now.getTime());
+  if ((due || readinessDue.size > 0) && file.channels.some((c) => c.enabled)) {
     state().checking = true;
     try {
-      mutateWatch((f) => ({ ...f, lastCheckAt: now.getTime() }));
-      for (const ch of file.channels.filter((c) => c.enabled)) {
-        try {
-          let uploads = await deps.list(ch.url);
-          if (discoveryCutoff(ch) !== undefined) {
-            if (!ch.sourceAccountId)
-              throw new Error(
-                "Reconnect the creator's original YouTube reading account to resolve publication dates",
+      if (due) mutateWatch((f) => ({ ...f, lastCheckAt: now.getTime() }));
+      const channels = file.channels.filter(
+        (c) => c.enabled && (due || readinessDue.has(c.id)),
+      );
+      let position = 0;
+      const checkChannel = async () => {
+        while (position < channels.length) {
+          const ch = channels[position++]!;
+          const signal = AbortSignal.any([
+            currentWork()?.signal ?? new AbortController().signal,
+            AbortSignal.timeout(deps.deadlineMs ?? 30_000),
+          ]);
+          try {
+            if (deps.reconcile) {
+              await abortable(deps.reconcile(ch.id, signal, !!o.force), signal);
+              continue;
+            }
+            // Compatibility seam for bounded-feed callers; normal worker discovery uses the paginated reconciler.
+            let uploads = await abortable(deps.list(ch.url), signal);
+            if (discoveryCutoff(ch) !== undefined) {
+              if (!ch.sourceAccountId)
+                throw new Error(
+                  "Reconnect the creator's original YouTube reading account to resolve publication dates",
+                );
+              uploads = await abortable(
+                (deps.dateUploads ?? readUploadDates)(
+                  ch.sourceAccountId,
+                  uploads,
+                ),
+                signal,
               );
-            uploads = await (deps.dateUploads ?? readUploadDates)(
-              ch.sourceAccountId,
-              uploads,
+            }
+            signal.throwIfAborted();
+            mutateWatch((f) => applyCheck(f, ch.id, uploads, deps.now()));
+          } catch (e) {
+            mutateWatch((f) =>
+              checkFailed(
+                f,
+                ch.id,
+                (e instanceof Error ? e.message : String(e))
+                  .split("\n")
+                  .pop()!
+                  .slice(0, 200),
+                deps.now(),
+              ),
             );
           }
-          mutateWatch((f) => applyCheck(f, ch.id, uploads, deps.now()));
-        } catch (e) {
-          mutateWatch((f) =>
-            checkFailed(
-              f,
-              ch.id,
-              (e instanceof Error ? e.message : String(e))
-                .split("\n")
-                .pop()!
-                .slice(0, 200),
-              deps.now(),
-            ),
-          );
         }
-      }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(3, channels.length) }, checkChannel),
+      );
     } finally {
       state().checking = false;
     }
@@ -153,7 +210,8 @@ export async function watcherTick(
 
   let next: ReturnType<typeof takeDue>["due"];
   mutateWatch((f) => {
-    const r = takeDue(f, now);
+    const destination = loadAccounts().youtube.account?.id;
+    const r = takeDue(f, now, destination ? [destination] : []);
     next = r.due;
     return r.file;
   });

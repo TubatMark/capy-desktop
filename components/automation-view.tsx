@@ -308,6 +308,19 @@ function ChannelCard({
           <AlertTriangle className="size-3.5" /> {c.lastError}
         </p>
       )}
+      {c.discoveryStatus && (
+        <p className="text-xs text-muted-foreground">
+          Discovery succeeded {ago(c.discoveryStatus.lastSuccessAt)} ·{" "}
+          {c.discoveryStatus.deferred} deferred · {c.discoveryStatus.excluded}{" "}
+          excluded.
+          {c.discoveryStatus.method === "videos-tab"
+            ? " Videos tab only; Shorts and stream archives are not covered. Connect a YouTube reading account for the complete uploads feed."
+            : " Complete uploads playlist, including Shorts and stream archives; duration and readiness rules apply."}
+          {c.discoveryStatus.nextAttemptAt
+            ? ` Retry after ${new Date(c.discoveryStatus.nextAttemptAt).toLocaleTimeString()}.`
+            : ""}
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="Clips per video">
           <Select

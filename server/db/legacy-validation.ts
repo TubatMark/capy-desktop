@@ -179,6 +179,15 @@ export const watchSchema = z
           enabled: z.boolean(),
           addedAt: number,
           discoveryAfter: z.number().finite().nonnegative().optional(),
+          discoveryStatus: z
+            .object({
+              lastSuccessAt: number.nonnegative().optional(),
+              nextAttemptAt: number.nonnegative().optional(),
+              deferred: number.int().nonnegative(),
+              excluded: number.int().nonnegative(),
+              method: z.enum(["uploads-playlist", "videos-tab"]),
+            })
+            .optional(),
           handle: string.optional(),
           lastCheckedAt: number.optional(),
           lastError: string.optional(),
