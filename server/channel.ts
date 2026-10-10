@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { ChannelSnapshot, ChannelVideo, SeoText } from "../lib/types";
 import {
   hasScopes,
@@ -9,10 +10,11 @@ import {
 } from "../src/youtube-api";
 import { scoreSeo, type SeoKind } from "../src/seo/score";
 import { getAccessToken, loadAccounts } from "./accounts";
-import { readJsonFile, saveJsonAtomic } from "./json-file";
 import { call, readJson } from "./platforms/types";
 import { dataDir } from "./settings";
 import { hashManifest } from "./publication-policy";
+import { runtimeStore } from "./db/runtime";
+import { channelCacheGeneration } from "./channel-cache";
 
 /**
  * The user's own YouTube channel: its details, its uploads with their numbers, and (with the Analytics
@@ -284,19 +286,77 @@ export async function updateVideoText(
 // ---------- the stored snapshot ----------
 
 export const channelFile = () => path.join(dataDir(), "channel.json");
+interface ChannelCacheBinding {
+  accountId: string;
+  identityHash: string;
+  consentGeneration: number;
+}
+type BoundChannelSnapshot = ChannelSnapshot & {
+  metricSchemaVersion?: number;
+  cacheBinding?: ChannelCacheBinding;
+};
+function channelCacheIdentity(): ChannelCacheBinding | undefined {
+  const account = loadAccounts().youtube;
+  if (!account.account?.id || !channelAccess().connected) return;
+  return {
+    accountId: account.account.id,
+    identityHash: hashManifest({
+      accountId: account.account.id,
+      clientId: account.clientId,
+      clientSecret: account.clientSecret,
+      connectedAt: account.connectedAt,
+      scope: account.tokens?.scope?.split(/\s+/).filter(Boolean).sort(),
+    }),
+    consentGeneration: channelCacheGeneration(
+      runtimeStore(),
+      account.account.id,
+    ),
+  };
+}
+function saveBoundSnapshot(
+  snapshot: BoundChannelSnapshot,
+  binding: ChannelCacheBinding,
+) {
+  runtimeStore().transaction(() => {
+    if (
+      hashManifest(channelCacheIdentity()) !== hashManifest(binding) ||
+      snapshot.channel.id !== binding.accountId
+    )
+      throw new ApiError("The publishing channel changed during refresh.", 409);
+    const file = channelFile(),
+      tmp = `${file}.${process.pid}.tmp`;
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(tmp, JSON.stringify({ ...snapshot, cacheBinding: binding }));
+    renameSync(tmp, file);
+  });
+}
 export async function loadSnapshot() {
-  const id = loadAccounts().youtube.account?.id;
-  const snapshot = await readJsonFile<
-    ChannelSnapshot & { metricSchemaVersion?: number }
-  >(channelFile());
-  if (snapshot?.analytics && snapshot.metricSchemaVersion !== 2)
-    snapshot.analytics.avgViewPct = undefined;
-  return channelAccess().connected &&
-    id &&
-    snapshot?.channel.id === id &&
-    Date.now() - snapshot.fetchedAt < 30 * 86400_000
-    ? snapshot
-    : null;
+  return runtimeStore().transaction(() => {
+    const binding = channelCacheIdentity();
+    if (!binding) return null;
+    let snapshot: BoundChannelSnapshot;
+    try {
+      snapshot = JSON.parse(readFileSync(channelFile(), "utf8"));
+    } catch (e) {
+      if (
+        e instanceof SyntaxError ||
+        (e as NodeJS.ErrnoException).code === "ENOENT"
+      )
+        return null;
+      throw e;
+    }
+    if (
+      !snapshot?.cacheBinding ||
+      hashManifest(snapshot.cacheBinding) !== hashManifest(binding) ||
+      snapshot.channel?.id !== binding.accountId ||
+      !Number.isFinite(snapshot.fetchedAt) ||
+      Date.now() - snapshot.fetchedAt >= 30 * 86400000
+    )
+      return null;
+    if (snapshot.analytics && snapshot.metricSchemaVersion !== 2)
+      snapshot.analytics.avgViewPct = undefined;
+    return snapshot;
+  });
 }
 
 export function channelAccess() {
@@ -321,19 +381,12 @@ export async function channelState(
 ) {
   const access = channelAccess();
   const account = loadAccounts().youtube;
-  const identity = hashManifest({
-    id: account.account?.id,
-    client: account.clientId,
-    connectedAt: account.connectedAt,
-  });
+  const binding = channelCacheIdentity(),
+    identity = hashManifest(binding);
   const unchanged = () => {
-    const current = loadAccounts().youtube;
     return (
-      hashManifest({
-        id: current.account?.id,
-        client: current.clientId,
-        connectedAt: current.connectedAt,
-      }) === identity && channelAccess().connected
+      hashManifest(channelCacheIdentity()) === identity &&
+      channelAccess().connected
     );
   };
   let snapshot = await loadSnapshot();
@@ -361,8 +414,8 @@ export async function channelState(
           "The publishing channel changed during refresh.",
           409,
         );
-      snapshot = result;
-      await saveJsonAtomic(channelFile(), snapshot);
+      saveBoundSnapshot(result, binding!);
+      snapshot = { ...result, cacheBinding: binding };
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -385,5 +438,5 @@ export async function replaceVideo(v: ChannelVideo) {
     minutes: s.videos[i]!.minutes,
     avgViewPct: s.videos[i]!.avgViewPct,
   };
-  await saveJsonAtomic(channelFile(), s);
+  saveBoundSnapshot(s, s.cacheBinding!);
 }

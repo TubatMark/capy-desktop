@@ -23,6 +23,7 @@ import {
 import { createPerformanceService } from "../../../server/performance";
 import { watch, addChannel } from "../../../server/watch";
 import { run } from "../../../src/exec";
+import { channelState } from "../../../server/channel";
 const now = Date.now(),
   store = runtimeStore(),
   creator = "performance-creator";
@@ -188,23 +189,35 @@ const service = createPerformanceService({
     )) as typeof fetch,
 });
 await service.refreshPublicationMetrics("fixture-account");
-writeFileSync(
-  path.join(dataDir(), "channel.json"),
-  JSON.stringify({
-    channel: {
-      id: "fixture-account",
-      title: "Performance fixture",
-      description: "Owned local fixture",
-      keywords: [],
-      subscribers: 10,
-      views: 100,
-      videos: 1,
-    },
-    videos: [],
-    notes: [],
-    fetchedAt: now,
-    metricSchemaVersion: 2,
-  }),
+await channelState(
+  { refresh: true },
+  {
+    now: () => new Date(now),
+    token: async () => "fixture",
+    fetch: (async (input) =>
+      new Response(
+        JSON.stringify(
+          String(input).includes("/channels?")
+            ? {
+                items: [
+                  {
+                    id: "fixture-account",
+                    snippet: {
+                      title: "Performance fixture",
+                      description: "Owned local fixture",
+                    },
+                    statistics: {
+                      subscriberCount: "10",
+                      viewCount: "100",
+                      videoCount: "1",
+                    },
+                  },
+                ],
+              }
+            : { columnHeaders: [], rows: [] },
+        ),
+      )) as typeof fetch,
+  },
 );
 writeFileSync(
   path.join(process.env.CAPY_STUDIO_TEST_ROOT!, "performance-fixture.json"),

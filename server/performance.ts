@@ -21,6 +21,7 @@ import { getPublicationAttribution } from "./publication-attribution";
 import { getAccessToken, loadAccounts } from "./accounts";
 import { hashManifest } from "./publication-policy";
 import { call, readJson } from "./platforms/types";
+import { purgeChannelCache } from "./channel-cache";
 const TTL = 30 * 86400000;
 export const METRICS_STALE_MS = 6 * 3600000;
 const LIMIT = 50;
@@ -192,6 +193,7 @@ export function createPerformanceService(d: PerformanceDeps) {
   }
   function purgePublicationMetrics(accountId: string) {
     d.store.transaction(() => {
+      purgeChannelCache(d.store, accountId);
       d.store.mutate(
         "performance-refresh",
         accountId,
@@ -369,20 +371,14 @@ export function createPerformanceService(d: PerformanceDeps) {
     const eligible = snapshot.publications.filter(
       (p) => p.remoteId && p.delivery.platform === "youtube",
     );
-    // Oldest checked first: bounded continuation eventually refreshes every exact retained ID.
-    eligible.sort(
-      (a, b) =>
-        Math.min(
-          ...Object.values(a.metrics).map((m) =>
-            m.availability === "available" ? m.measuredAt : m.checkedAt,
-          ),
-        ) -
-        Math.min(
-          ...Object.values(b.metrics).map((m) =>
-            m.availability === "available" ? m.measuredAt : m.checkedAt,
-          ),
-        ),
-    );
+    // Missing/expired/invalid cache is unchecked; projection placeholders are not durable checks.
+    const checkedAt = (p: PerformancePublication) => {
+      const cached = CacheSchema.safeParse(
+        d.store.get("publication-metrics", p.key)?.value,
+      );
+      return cached.success ? cached.data.checkedAt : Number.NEGATIVE_INFINITY;
+    };
+    eligible.sort((a, b) => checkedAt(a) - checkedAt(b));
     const selected = eligible.slice(0, LIMIT);
     if (!selected.length)
       return { ...snapshot, status: "skipped", completedAt: d.now() };

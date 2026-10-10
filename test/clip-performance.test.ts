@@ -484,3 +484,33 @@ it("recipe summaries are exact raw rows, no ranking, lift or performance-driven 
     ),
   ).toBe(true);
 });
+it.each([200, 403])(
+  "bounded continuation covers every ID including failed caches and expiry (HTTP %s)",
+  async (status) => {
+    published();
+    const delivery = runtimeStore().list<{ id: string }>("deliveries")[0]!
+      .value;
+    const ids = Array.from({ length: 51 }, (_, n) => `publication-${n}`);
+    updateDelivery(delivery.id, (x) => ({ ...x, publicationIds: ids }));
+    const batches: string[][] = [];
+    const { s } = service({
+      scope: "",
+      fetch: (async (input) => {
+        const u = new URL(String(input));
+        batches.push(u.searchParams.get("id")!.split(","));
+        return reply({ items: [] }, status);
+      }) as typeof fetch,
+    });
+    await s.refreshPublicationMetrics("fixture-account");
+    expect(batches[0]).toHaveLength(50);
+    time += 1000;
+    await s.refreshPublicationMetrics("fixture-account");
+    expect(batches[1]).toContain("publication-50");
+    expect(runtimeStore().list("publication-metrics")).toHaveLength(51);
+    time += 31 * 86400000;
+    await s.refreshPublicationMetrics("fixture-account");
+    time += 1000;
+    await s.refreshPublicationMetrics("fixture-account");
+    expect(new Set(batches.slice(2).flat()).size).toBe(51);
+  },
+);
