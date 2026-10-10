@@ -43,7 +43,7 @@ test.beforeAll(() => {
     }),
   );
 });
-test("saves immutable draft recipe, separate worker controls, bounded policy and locked publication through real APIs", async ({
+test("saves channel options, separate pause controls, bounded policy and locked publication through real APIs", async ({
   page,
   request,
 }) => {
@@ -59,13 +59,14 @@ test("saves immutable draft recipe, separate worker controls, bounded policy and
   });
   expect(imported.ok(), await imported.text()).toBe(true);
   await page.goto("/automation");
-  const dashboard = page.getByRole("region", { name: "Automation operations" });
-  await expect(dashboard).toContainText("Automatic publication is disabled");
+  await page.getByText("Behind the scenes", { exact: true }).click();
+  const dashboard = page.getByRole("region", { name: "Behind the scenes" });
+  await expect(dashboard).toContainText("Automatic posting is off");
   await dashboard
-    .getByRole("button", { name: "Stop rendering", exact: true })
+    .getByRole("button", { name: "Pause making clips", exact: true })
     .click();
   await expect(
-    dashboard.getByRole("button", { name: "Resume rendering", exact: true }),
+    dashboard.getByRole("button", { name: "Resume making clips", exact: true }),
   ).toBeVisible();
   let health = await (await request.get("/api/automation/health")).json();
   expect(health.controls).toMatchObject({
@@ -74,34 +75,23 @@ test("saves immutable draft recipe, separate worker controls, bounded policy and
     monitorPaused: false,
     postPaused: false,
   });
-  await dashboard
-    .getByText("Creator recipe and capacity", { exact: true })
-    .click();
-  await dashboard
-    .getByLabel("Automation mode")
-    .selectOption("automatic_drafts");
-  await dashboard.getByLabel("Edit template").selectOption("clean-portrait-v1");
-  await dashboard.getByLabel("Recipe clips per source").fill("2");
-  await dashboard.getByLabel("Daily automated clip limit").fill("4");
-  await dashboard
-    .getByRole("button", { name: "Save creator recipe", exact: true })
-    .click();
-  await expect(dashboard).toContainText("Saved recipe version:");
+  const card = page.getByRole("article").filter({ hasText: "More options" });
+  await card.getByText("More options", { exact: true }).click();
+  await card.getByLabel("New videos").selectOption("automatic_drafts");
+  await card.getByLabel("Caption style").selectOption("clean-portrait-v1");
+  await card.getByLabel("Most clips a day").fill("4");
+  await card.getByRole("button", { name: "Save options", exact: true }).click();
+  await expect(card).toContainText("Saved.");
   health = await (await request.get("/api/automation/health")).json();
   const first = health.policies[channel].recipeId;
   expect(health.policies[channel]).toMatchObject({
     mode: "automatic_drafts",
-    clips: 2,
     dailyClipCap: 4,
     editTemplate: "clean-portrait-v1",
   });
-  await dashboard
-    .getByText("Creator recipe and capacity", { exact: true })
-    .click();
-  await dashboard.getByLabel("Edit template").selectOption("bold-portrait-v1");
-  await dashboard
-    .getByRole("button", { name: "Save creator recipe", exact: true })
-    .click();
+  await card.getByText("More options", { exact: true }).click();
+  await card.getByLabel("Caption style").selectOption("bold-portrait-v1");
+  await card.getByRole("button", { name: "Save options", exact: true }).click();
   await expect
     .poll(async () => {
       const h = await (await request.get("/api/automation/health")).json();
@@ -118,9 +108,10 @@ test("saves immutable draft recipe, separate worker controls, bounded policy and
   expect(blocked.status()).toBe(400);
   expect((await blocked.json()).error).toMatch(/72.hour|soak/i);
   await page.reload();
+  await page.getByText("Behind the scenes", { exact: true }).click();
   await expect(
-    page.getByRole("region", { name: "Automation operations" }),
-  ).toContainText("Automatic publication is disabled");
+    page.getByRole("region", { name: "Behind the scenes" }),
+  ).toContainText("Automatic posting is off");
   await page.screenshot({
     path: path.join(root, "automation-policy.png"),
     fullPage: true,

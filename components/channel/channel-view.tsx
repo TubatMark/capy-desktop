@@ -4,7 +4,7 @@ import Link from "next/link";
 import {
   KeyRound,
   Loader2,
-  MonitorPlay,
+  LayoutDashboard,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -236,7 +236,7 @@ export function ChannelView() {
 function Title() {
   return (
     <h1 className="flex items-center gap-2 text-2xl font-semibold">
-      <MonitorPlay className="size-6 text-primary" /> Channel
+      <LayoutDashboard className="size-6 text-primary" /> Dashboard
     </h1>
   );
 }

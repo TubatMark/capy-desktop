@@ -58,7 +58,7 @@ export function SubscriptionPicker({
       if (!reading.connected || !reading.account?.id) {
         setReconnect(true);
         throw new Error(
-          "Connect or reconnect your YouTube reading account in Settings",
+          "Connect your YouTube account in Settings first",
         );
       }
       const params = new URLSearchParams({ accountId: reading.account.id });
@@ -111,11 +111,11 @@ export function SubscriptionPicker({
       };
       if (!response.ok) {
         setReconnect(!!result.reconnect);
-        throw new Error(result.error ?? "Could not import creators");
+        throw new Error(result.error ?? "Couldn't add those channels");
       }
       await onImport();
       setSaved(
-        `Imported ${result.imported.length} creators; ${result.existing.length} already present`,
+        `Added ${result.imported.length} channel${result.imported.length === 1 ? "" : "s"}${result.existing.length ? `; ${result.existing.length} you were already watching` : ""}`,
       );
       setSelected(new Set());
     } catch (e) {
@@ -129,17 +129,13 @@ export function SubscriptionPicker({
   );
   return (
     <section
-      aria-label="Import YouTube subscriptions"
+      aria-label="Add from your subscriptions"
       className="space-y-3 rounded-xl border bg-card p-4"
     >
-      <h2 className="font-semibold">Import YouTube subscriptions</h2>
+      <h2 className="font-semibold">Add from your subscriptions</h2>
       <p className="text-sm text-muted-foreground">
-        Reading account: {account?.account?.name ?? "Not connected"}. Publishing
-        destinations are selected in{" "}
-        <Link className="underline" href="/settings#accounts">
-          Settings → Accounts
-        </Link>
-        .
+        Pick channels you already follow on YouTube. YouTube account:{" "}
+        {account?.account?.name ?? "not connected"}.
       </p>
       <Button
         type="button"
@@ -147,13 +143,13 @@ export function SubscriptionPicker({
         disabled={busy}
         onClick={() => void load(true)}
       >
-        Refresh subscriptions
+        {channels.length ? "Reload my subscriptions" : "Show my subscriptions"}
       </Button>
       {(reconnect || !account?.connected) && (
         <Link href="/settings#accounts" className="ml-3 text-sm underline">
           {account?.needsReconnect || reconnect
-            ? "Reconnect reading account"
-            : "Connect reading account"}
+            ? "Sign in to YouTube again"
+            : "Connect your YouTube account"}
         </Link>
       )}
       {channels.length > 0 && (
@@ -162,7 +158,7 @@ export function SubscriptionPicker({
             aria-label="Search subscriptions"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search loaded subscriptions"
+            placeholder="Search by name"
           />
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -177,7 +173,7 @@ export function SubscriptionPicker({
                 )
               }
             >
-              Select loaded matches
+              Select all shown
             </Button>
             <Button
               type="button"
@@ -189,7 +185,7 @@ export function SubscriptionPicker({
               Clear selection
             </Button>
             <span className="text-sm">
-              {channels.length} loaded · {selected.size} selected
+              {channels.length} channels · {selected.size} selected
             </span>
           </div>
           <div className="max-h-72 overflow-auto rounded-lg border p-2">
@@ -221,7 +217,7 @@ export function SubscriptionPicker({
             ))}
             {visible.length === 0 && (
               <p className="p-2 text-sm">
-                No loaded subscriptions match this search.
+                No channels match that name.
               </p>
             )}
           </div>
@@ -232,20 +228,20 @@ export function SubscriptionPicker({
               disabled={busy}
               onClick={() => void load(false)}
             >
-              Load more subscriptions
+              Show more
             </Button>
           )}
           <label className="flex flex-col gap-1 text-sm">
-            Initial creator mode
+            What to do with their new videos
             <Select
-              aria-label="Initial creator mode"
+              aria-label="What to do with their new videos"
               value={mode}
               disabled={busy}
               onChange={(e) => setMode(e.target.value as CreatorImport["mode"])}
             >
-              <option value="manual">Manual: import only</option>
+              <option value="manual">Just add them for now</option>
               <option value="automatic_drafts">
-                Automatic drafts: clip new uploads for review
+                Make clips automatically
               </option>
             </Select>
           </label>
@@ -256,18 +252,18 @@ export function SubscriptionPicker({
               disabled={busy}
               onChange={(e) => setBackfill(e.target.checked)}
             />
-            Also queue their latest eligible upload (backfill)
+            Also make clips from each one's newest video now
           </label>
           <p className="text-xs text-muted-foreground">
-            Existing creator preferences are preserved. Imported clips require
-            approval before publication.
+            Channels you already watch keep their settings. Nothing is posted
+            without your OK.
           </p>
           <Button
             type="button"
             disabled={busy || selected.size === 0}
             onClick={() => void importSelected()}
           >
-            {busy ? "Working…" : `Import ${selected.size} selected creators`}
+            {busy ? "Working…" : `Add ${selected.size} channel${selected.size === 1 ? "" : "s"}`}
           </Button>
         </>
       )}

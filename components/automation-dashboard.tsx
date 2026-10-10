@@ -1,124 +1,114 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   AutomationHealth,
   AutomationControls,
 } from "@/lib/creator-policy";
 import { api } from "@/hooks/use-job";
 import { Button } from "./ui/button";
-import { CreatorPolicyForm } from "./creator-policy-form";
 const date = (at?: number) => (at ? new Date(at).toLocaleString() : "Never");
-export function AutomationDashboard() {
-  const [health, setHealth] = useState<AutomationHealth | null>(null),
-    [error, setError] = useState("");
-  const refresh = useCallback(async () => {
-    try {
-      setHealth(await api<AutomationHealth>("/api/automation/health"));
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [refresh]);
+
+/** The background helper's details, folded away: most people never need this, but it's where to look when nothing happens. */
+export function AutomationDashboard({
+  health,
+  onChange,
+}: {
+  health: AutomationHealth;
+  onChange: () => Promise<void>;
+}) {
+  const [error, setError] = useState("");
   const control = async (key: keyof AutomationControls) => {
-    if (!health) return;
     try {
-      setHealth(
-        await api<AutomationHealth>("/api/automation/health", {
-          method: "PUT",
-          body: JSON.stringify({
-            controls: { ...health.controls, [key]: !health.controls[key] },
-          }),
+      await api<AutomationHealth>("/api/automation/health", {
+        method: "PUT",
+        body: JSON.stringify({
+          controls: { ...health.controls, [key]: !health.controls[key] },
         }),
-      );
+      });
+      setError("");
+      await onChange();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
   return (
-    <section
-      aria-label="Automation operations"
-      className="space-y-4 rounded-xl border bg-card p-4"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold">Worker and automation</h2>
-        <span className="text-sm" data-testid="worker-status">
-          {health?.online ? "Worker online" : "Worker offline"}
+    <details className="group rounded-xl border bg-card">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+        <span>Behind the scenes</span>
+        <span className="ml-2 font-normal text-muted-foreground">
+          {health.online ? "running" : "not running"}
+          {health.reasons.length > 0 &&
+            ` · ${health.reasons.length} skipped or stuck`}
         </span>
-      </div>
-      {error && (
-        <p role="alert" className="text-sm text-red-600">
-          {error}
+      </summary>
+      <section
+        aria-label="Behind the scenes"
+        className="space-y-4 border-t px-4 py-4"
+      >
+        <p className="text-xs text-muted-foreground">
+          A helper runs in the background to check channels, make clips and
+          post. Look here if nothing seems to be happening.
         </p>
-      )}
-      {!health ? (
-        <p className="text-sm text-muted-foreground">
-          Loading persisted worker status…
-        </p>
-      ) : (
-        <>
-          {!health.online && (
-            <p className="text-sm text-muted-foreground">
-              The worker is offline. Work waits while this Mac is asleep or the
-              worker is stopped.
-            </p>
-          )}
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-            {[
-              ["Heartbeat", date(health.heartbeat)],
-              [
-                "Current stage",
-                health.activeStage ?? (health.online ? "Idle" : "Offline"),
-              ],
-              ["Last successful work", date(health.lastSuccessAt)],
-              ["Oldest pending", date(health.oldestPendingAt)],
-              ["Next post", date(health.nextPostAt)],
-              ["Pending work", health.pending],
-              [
-                "Disk available",
-                health.disk.availableBytes === undefined
-                  ? "Unavailable"
-                  : `${(health.disk.availableBytes / 1024 ** 3).toFixed(1)} GB`,
-              ],
-              [
-                "AI budget",
-                `$${health.budget.reservedUsd.toFixed(2)} reserved / $${health.budget.maxDayUsd.toFixed(2)} daily`,
-              ],
-              [
-                "AI request allowance",
-                `${health.budget.requests} / ${health.budget.maxDayRequests}`,
-              ],
-            ].map(([label, text]) => (
-              <div key={label}>
-                <dt className="text-xs text-muted-foreground">{label}</dt>
-                <dd>{text}</dd>
-              </div>
-            ))}
-          </dl>
-          {health.disk.error && (
-            <p className="text-xs text-red-600">
-              Disk status: {health.disk.error}
-            </p>
-          )}
-          {health.budget.unknown > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {health.budget.unknown} AI runs have unknown usage. Reserved
-              allowance is retained.
-            </p>
-          )}
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+          {[
+            ["Helper", health.online ? "Running" : "Not running"],
+            [
+              "Doing now",
+              health.activeStage ?? (health.online ? "Nothing" : "—"),
+            ],
+            ["Last sign of life", date(health.heartbeat)],
+            ["Last finished task", date(health.lastSuccessAt)],
+            ["Tasks waiting", health.pending],
+            ["Oldest waiting task", date(health.oldestPendingAt)],
+            ["Next post", date(health.nextPostAt)],
+            [
+              "Free disk space",
+              health.disk.availableBytes === undefined
+                ? "Unknown"
+                : `${(health.disk.availableBytes / 1024 ** 3).toFixed(1)} GB`,
+            ],
+            [
+              "AI spend today",
+              `$${health.budget.reservedUsd.toFixed(2)} of $${health.budget.maxDayUsd.toFixed(2)}`,
+            ],
+            [
+              "AI requests today",
+              `${health.budget.requests} of ${health.budget.maxDayRequests}`,
+            ],
+          ].map(([label, text]) => (
+            <div key={label}>
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd>{text}</dd>
+            </div>
+          ))}
+        </dl>
+        {health.disk.error && (
+          <p className="text-xs text-red-600">
+            Couldn&apos;t read disk space: {health.disk.error}
+          </p>
+        )}
+        {health.budget.unknown > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {health.budget.unknown} AI runs didn&apos;t report their cost, so
+            their share of today&apos;s budget stays held.
+          </p>
+        )}
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Pause one step at a time. Anything already running finishes first.
+          </p>
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["monitorPaused", "monitoring"],
-                ["renderPaused", "rendering"],
+                ["monitorPaused", "checking channels"],
+                ["renderPaused", "making clips"],
                 ["postPaused", "posting"],
-                ["globalStop", "all future work"],
+                ["globalStop", "everything"],
               ] as const
             ).map(([key, label]) => (
               <Button
@@ -127,61 +117,46 @@ export function AutomationDashboard() {
                 size="sm"
                 onClick={() => void control(key)}
               >
-                {health.controls[key] ? "Resume" : "Stop"} {label}
+                {health.controls[key] ? "Resume" : "Pause"} {label}
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Controls prevent future worker stages. An already running external
-            operation keeps its existing cancellation and recovery rules.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {health.publication.reason}.
-          </p>
-          <div className="text-xs">
-            {health.accounts.map((a) => (
-              <p key={a.platform}>
-                {a.platform}:{" "}
-                {a.needsReconnect
-                  ? "Reconnect required"
-                  : a.connected
-                    ? `Connected ${a.id ?? ""}`
-                    : "Disconnected"}
-              </p>
-            ))}
-          </div>
-          <details>
-            <summary className="cursor-pointer text-sm">
-              Deferred work and exceptions ({health.reasons.length})
-            </summary>
-            <ul className="mt-2 space-y-2 text-sm">
-              {health.reasons.map((r, i) => (
-                <li key={`${r.id}:${i}`}>
-                  <span className="font-medium">{r.id}</span> · {r.reason}
-                </li>
-              ))}
-            </ul>
-            {!health.reasons.length && (
-              <p className="text-xs text-muted-foreground">
-                No saved exceptions.
-              </p>
-            )}
-          </details>
-          {Object.entries(health.policies).map(([id, policy]) => (
-            <div key={`${id}:${policy.recipeId ?? "initial"}`}>
-              <p className="mb-2 text-sm font-medium">
-                {health.creatorNames[id] ?? id}
-              </p>
-              <CreatorPolicyForm
-                channelId={id}
-                policy={policy}
-                accounts={health.accounts}
-                onSaved={() => void refresh()}
-              />
-            </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Automatic posting is off for now: every clip waits in Queue for your
+          OK.
+        </p>
+        <div className="text-xs">
+          {health.accounts.map((a) => (
+            <p key={a.platform}>
+              {a.platform}:{" "}
+              {a.needsReconnect
+                ? "needs you to sign in again"
+                : a.connected
+                  ? `connected${a.id ? ` (${a.id})` : ""}`
+                  : "not connected"}
+            </p>
           ))}
-        </>
-      )}
-    </section>
+        </div>
+        <details>
+          <summary className="cursor-pointer text-sm">
+            Skipped videos and problems ({health.reasons.length})
+          </summary>
+          <ul className="mt-2 space-y-2 text-sm">
+            {health.reasons.map((r, i) => (
+              <li key={`${r.id}:${i}`}>
+                <span className="font-medium">
+                  {health.creatorNames[r.id] ?? r.id}
+                </span>{" "}
+                · {r.reason}
+              </li>
+            ))}
+          </ul>
+          {!health.reasons.length && (
+            <p className="text-xs text-muted-foreground">Nothing skipped.</p>
+          )}
+        </details>
+      </section>
+    </details>
   );
 }

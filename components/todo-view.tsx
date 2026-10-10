@@ -95,9 +95,9 @@ export function TodoView() {
                 <Link href="/stories" className="underline underline-offset-2">
                   Stories
                 </Link>{" "}
-                or watch a creator in{" "}
+                or add a channel in{" "}
                 <Link href="/automation" className="underline underline-offset-2">
-                  Automation
+                  Monitor
                 </Link>
                 ; what they make shows up here once it&apos;s been checked.
               </p>

@@ -60,50 +60,14 @@ export function CreatorPolicyForm({
   return (
     <details className="rounded-lg border p-3">
       <summary className="cursor-pointer text-sm font-medium">
-        Creator recipe and capacity
+        More options
       </summary>
-      <div className="mt-3 space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Recipes retain immutable versions. Automatic publishing is unavailable
-          until the worker fault soak and controlled upload are verified.
-        </p>
-        <div
-          className="rounded-lg border p-3 space-y-2"
-          aria-label="Local recipe suggestions"
-        >
-          <p className="text-xs text-muted-foreground">
-            Capy suggestions are local editing options; performance improvement
-            is unproven. Choose a template for this creator's draft, review your
-            own topic filters below, and save only if you decide to adopt it.
-            Source duration limits filter source videos; clip length is edited
-            on the local clip page.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setValue({ ...value, editTemplate: "clean-portrait-v1" })
-              }
-            >
-              Use Clean in recipe draft
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setValue({ ...value, editTemplate: "bold-portrait-v1" })
-              }
-            >
-              Use Bold in recipe draft
-            </Button>
-          </div>
-        </div>
+      <div className="mt-3 space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <label className="text-xs">
-            Automation mode
+            New videos
             <Select
-              aria-label="Automation mode"
+              aria-label="New videos"
               value={value.mode}
               onChange={(e) =>
                 setValue({
@@ -112,18 +76,18 @@ export function CreatorPolicyForm({
                 })
               }
             >
-              <option value="disabled">Disabled</option>
-              <option value="manual">Manual imports</option>
-              <option value="automatic_drafts">Automatic drafts</option>
+              <option value="disabled">Ignore them</option>
+              <option value="manual">Only when I ask</option>
+              <option value="automatic_drafts">Make clips automatically</option>
               <option value="automatic_publish" disabled>
-                Automatic publish · release proof required
+                Post automatically (coming later)
               </option>
             </Select>
           </label>
           <label className="text-xs">
-            Edit template
+            Caption style
             <Select
-              aria-label="Edit template"
+              aria-label="Caption style"
               value={value.editTemplate}
               onChange={(e) =>
                 setValue({
@@ -132,73 +96,17 @@ export function CreatorPolicyForm({
                 })
               }
             >
-              <option value="bold-portrait-v1">Bold portrait v1</option>
-              <option value="clean-portrait-v1">Clean portrait v1</option>
+              <option value="bold-portrait-v1">Bold</option>
+              <option value="clean-portrait-v1">Clean</option>
             </Select>
           </label>
-          {number("maxJobUsd", "AI job budget USD", 0, 100)}
-          {number("maxDayUsd", "AI daily budget USD", 0, 1000)}
-          {number("maxBlackRatio", "Maximum black-frame fraction", 0, 1)}
-          {number("maxFrozenRatio", "Maximum frozen-frame fraction", 0, 1)}
-          {number("clips", "Recipe clips per source", 1, 8)}
-          {number("dailyClipCap", "Daily automated clip limit", 1, 100)}
-          {number("destinationDailySlots", "Destination slots per day", 1, 100)}
-          {number("targetQueueDays", "Target queue days", 1, 7)}
-          {number("maxBacklogDays", "Maximum backlog days", 1, 30)}
-          {number("freshnessHours", "Freshness hours", 1, 8760)}
-          {number("minDurationSec", "Minimum source seconds", 0, 86400)}
-          {number("maxDurationSec", "Maximum source seconds", 1, 86400)}
-          <label className="text-xs">
-            Caption language
-            <Input
-              aria-label="Caption language"
-              value={value.language}
-              onChange={(e) => setValue({ ...value, language: e.target.value })}
-            />
-          </label>
-          <label className="text-xs">
-            Thumbnail generation
-            <Select
-              aria-label="Thumbnail generation"
-              value={value.thumbnailGeneration}
-              onChange={(e) =>
-                setValue({
-                  ...value,
-                  thumbnailGeneration: e.target
-                    .value as CreatorPolicy["thumbnailGeneration"],
-                })
-              }
-            >
-              <option value="manual">Manual</option>
-              <option value="automatic">
-                Automatic local designs after final render
-              </option>
-            </Select>
-          </label>
-          <label className="text-xs">
-            Optional thumbnail fallback
-            <Select
-              aria-label="Optional thumbnail fallback"
-              value={value.optionalThumbnailFallback}
-              onChange={(e) =>
-                setValue({
-                  ...value,
-                  optionalThumbnailFallback: e.target
-                    .value as CreatorPolicy["optionalThumbnailFallback"],
-                })
-              }
-            >
-              <option value="none">No thumbnail</option>
-              <option value="source_frame">
-                Exact source frame · attach before posting
-              </option>
-            </Select>
-          </label>
+          {number("dailyClipCap", "Most clips a day", 1, 100)}
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <label className="text-xs">
-            Include title topics (comma separated)
+            Only videos whose title mentions
             <Input
+              placeholder="e.g. podcast, interview (blank = any)"
               value={value.includeTopics.join(", ")}
               onChange={(e) =>
                 setValue({
@@ -212,8 +120,9 @@ export function CreatorPolicyForm({
             />
           </label>
           <label className="text-xs">
-            Exclude title topics (comma separated)
+            Skip videos whose title mentions
             <Input
+              placeholder="e.g. sponsored, trailer"
               value={value.excludeTopics.join(", ")}
               onChange={(e) =>
                 setValue({
@@ -228,29 +137,7 @@ export function CreatorPolicyForm({
           </label>
         </div>
         <fieldset className="space-y-2">
-          <legend className="mb-1 text-xs">Permitted reading methods</legend>
-          {(["uploads-playlist", "videos-tab"] as const).map((method) => (
-            <label key={method} className="flex gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={value.sourceMethods.includes(method)}
-                onChange={(e) =>
-                  setValue({
-                    ...value,
-                    sourceMethods: e.target.checked
-                      ? [...value.sourceMethods, method]
-                      : value.sourceMethods.filter((m) => m !== method),
-                  })
-                }
-              />
-              {method === "uploads-playlist"
-                ? "Connected reading account · complete uploads"
-                : "Account-free Videos tab · incomplete format coverage"}
-            </label>
-          ))}
-        </fieldset>
-        <fieldset className="space-y-2">
-          <legend className="mb-1 text-xs">Publishing destinations</legend>
+          <legend className="mb-1 text-xs">Post to</legend>
           {accounts
             .filter((a) => a.id && a.connected && !a.needsReconnect)
             .map((a) => (
@@ -274,35 +161,101 @@ export function CreatorPolicyForm({
             ))}
           {!accounts.some((a) => a.id && a.connected) && (
             <p className="text-xs text-muted-foreground">
-              Connect a publishing account to configure calendar capacity.
+              Connect an account in Settings to choose where clips go.
             </p>
           )}
         </fieldset>
-        {toggle("allowArchives", "Allow finished stream archives")}
-        {toggle(
-          "allowShortSources",
-          "Allow sources of 180 seconds or less (duration rule)",
-        )}
-        {toggle(
-          "expireFreshness",
-          "Explicitly expire sources outside freshness window",
-        )}
-        {toggle(
-          "requireAudio",
-          "Require audible audio (silent footage otherwise allowed)",
-        )}
-        {toggle(
-          "requireModelReview",
-          "Require supplementary content review before publishing",
-        )}
-        {toggle(
-          "thumbnailRequired",
-          "Require an approved current thumbnail version",
-        )}
+        <details className="rounded-lg border p-3">
+          <summary className="cursor-pointer text-xs font-medium">
+            Advanced
+          </summary>
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {number("maxDurationSec", "Skip videos longer than (seconds)", 1, 86400)}
+              {number("freshnessHours", "Skip videos older than (hours)", 1, 8760)}
+              {number("destinationDailySlots", "Posts a day per account", 1, 100)}
+              {number("targetQueueDays", "Days of posts to keep ready", 1, 7)}
+              {number("maxBacklogDays", "Stop once this many days are queued", 1, 30)}
+              {number("maxJobUsd", "Most AI spend per video ($)", 0, 100)}
+              {number("maxDayUsd", "Most AI spend per day ($)", 0, 1000)}
+              {number("maxBlackRatio", "Skip if this share is black (0–1)", 0, 1)}
+              {number("maxFrozenRatio", "Skip if this share is frozen (0–1)", 0, 1)}
+              <label className="text-xs">
+                Caption language code
+                <Input
+                  aria-label="Caption language code"
+                  placeholder="blank = automatic"
+                  value={value.language}
+                  onChange={(e) => setValue({ ...value, language: e.target.value })}
+                />
+              </label>
+              <label className="text-xs">
+                Thumbnails
+                <Select
+                  aria-label="Thumbnails"
+                  value={value.thumbnailGeneration}
+                  onChange={(e) =>
+                    setValue({
+                      ...value,
+                      thumbnailGeneration: e.target
+                        .value as CreatorPolicy["thumbnailGeneration"],
+                    })
+                  }
+                >
+                  <option value="manual">I&apos;ll make them</option>
+                  <option value="automatic">Make them automatically</option>
+                </Select>
+              </label>
+              <label className="text-xs">
+                If a clip has no thumbnail
+                <Select
+                  aria-label="If a clip has no thumbnail"
+                  value={value.optionalThumbnailFallback}
+                  onChange={(e) =>
+                    setValue({
+                      ...value,
+                      optionalThumbnailFallback: e.target
+                        .value as CreatorPolicy["optionalThumbnailFallback"],
+                    })
+                  }
+                >
+                  <option value="none">Post without one</option>
+                  <option value="source_frame">Use a frame from the video</option>
+                </Select>
+              </label>
+            </div>
+            <fieldset className="space-y-2">
+              <legend className="mb-1 text-xs">How capy finds new videos</legend>
+              {(["uploads-playlist", "videos-tab"] as const).map((method) => (
+                <label key={method} className="flex gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={value.sourceMethods.includes(method)}
+                    onChange={(e) =>
+                      setValue({
+                        ...value,
+                        sourceMethods: e.target.checked
+                          ? [...value.sourceMethods, method]
+                          : value.sourceMethods.filter((m) => m !== method),
+                      })
+                    }
+                  />
+                  {method === "uploads-playlist"
+                    ? "Through your YouTube account (sees everything, including Shorts and live replays)"
+                    : "Without an account (regular videos only)"}
+                </label>
+              ))}
+            </fieldset>
+            {toggle("allowArchives", "Use replays of live streams")}
+            {toggle("allowShortSources", "Use videos 3 minutes or shorter")}
+            {toggle("expireFreshness", "Drop videos that get too old while waiting")}
+            {toggle("requireAudio", "Skip videos with no sound")}
+            {toggle("requireModelReview", "Have AI double-check clips before they reach Queue")}
+            {toggle("thumbnailRequired", "Don't post a clip until its thumbnail is approved")}
+          </div>
+        </details>
         {value.recipeId && (
-          <p className="break-all text-xs text-muted-foreground">
-            Saved recipe version: {value.recipeId.slice(0, 12)}
-          </p>
+          <p className="text-xs text-muted-foreground">Saved.</p>
         )}
         {error && (
           <p role="alert" className="text-sm text-red-600">
@@ -328,7 +281,7 @@ export function CreatorPolicyForm({
             }
           }}
         >
-          Save creator recipe
+          Save options
         </Button>
       </div>
     </details>

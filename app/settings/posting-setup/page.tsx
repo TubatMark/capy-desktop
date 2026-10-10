@@ -53,7 +53,7 @@ export default function PostingSetupPage() {
           <A href="https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com">
             YouTube Analytics API
           </A>{" "}
-          too (the Channel page&apos;s watch time and search terms).
+          too (the Dashboard(the Channel page&apos;s watch timeapos;s watch time and search terms).
         </Step>
         <Step>
           Go to <b>OAuth consent screen</b>: choose <b>External</b>, fill in the

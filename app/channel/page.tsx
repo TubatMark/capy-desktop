@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ChannelView } from "@/components/channel/channel-view";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Channel · capy" };
+export const metadata: Metadata = { title: "Dashboard · capy" };
 
 export default function ChannelPage() {
   return (

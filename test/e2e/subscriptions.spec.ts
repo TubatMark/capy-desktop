@@ -57,17 +57,17 @@ test("imports selected unique creators across pages through the real API without
   const before = readFileSync(path.join(data, "accounts.json"), "utf8");
   await page.goto("/automation");
   const picker = page.getByRole("region", {
-    name: "Import YouTube subscriptions",
+    name: "Add from your subscriptions",
   });
-  await expect(picker).toContainText("Reading account: Reader A");
-  await picker.getByRole("button", { name: "Refresh subscriptions" }).click();
-  await expect(picker).toContainText("50 loaded");
-  await picker.getByRole("button", { name: "Load more subscriptions" }).click();
-  await expect(picker).toContainText("100 loaded");
-  await picker.getByRole("button", { name: "Load more subscriptions" }).click();
-  await expect(picker).toContainText("120 loaded");
+  await expect(picker).toContainText("YouTube account: Reader A");
+  await picker.getByRole("button", { name: /my subscriptions/ }).click();
+  await expect(picker).toContainText("50 channels");
+  await picker.getByRole("button", { name: "Show more" }).click();
+  await expect(picker).toContainText("100 channels");
+  await picker.getByRole("button", { name: "Show more" }).click();
+  await expect(picker).toContainText("120 channels");
   await expect(
-    picker.getByRole("button", { name: "Load more subscriptions" }),
+    picker.getByRole("button", { name: "Show more" }),
   ).toHaveCount(0);
   await picker.getByLabel("Search subscriptions").fill("Creator 11");
   await expect(
@@ -80,14 +80,14 @@ test("imports selected unique creators across pages through the real API without
   await picker
     .getByRole("checkbox", { name: "Select Creator 1", exact: true })
     .check();
-  await expect(picker.getByLabel("Initial creator mode")).toHaveValue("manual");
+  await expect(picker.getByLabel("What to do with their new videos")).toHaveValue("manual");
   await expect(
-    picker.getByRole("checkbox", { name: /backfill/ }),
+    picker.getByRole("checkbox", { name: /newest video/ }),
   ).not.toBeChecked();
   await picker
-    .getByRole("button", { name: "Import 2 selected creators" })
+    .getByRole("button", { name: "Add 2 channels" })
     .click();
-  await expect(picker.getByRole("status")).toContainText("Imported 2 creators");
+  await expect(picker.getByRole("status")).toContainText("Added 2 channels");
   const state = await (await request.get("/api/automation")).json();
   expect(state.channels.map((c: { id: string }) => c.id).sort()).toEqual(
     [...priorCreators.map((c: { id: string }) => c.id), ...selectedIds].sort(),
@@ -122,11 +122,11 @@ test("revoked reading access offers reconnect and changing the reading principal
   writeFileSync(marker, JSON.stringify({ revoked: true }));
   await page.goto("/automation");
   const picker = page.getByRole("region", {
-    name: "Import YouTube subscriptions",
+    name: "Add from your subscriptions",
   });
-  await picker.getByRole("button", { name: "Refresh subscriptions" }).click();
+  await picker.getByRole("button", { name: /my subscriptions/ }).click();
   await expect(picker.getByRole("alert")).toContainText("Reconnect");
-  await picker.getByRole("link", { name: "Reconnect reading account" }).click();
+  await picker.getByRole("link", { name: "Sign in to YouTube again" }).click();
   const reading = page.getByRole("region", {
     name: "Subscription reading account",
   });
@@ -152,7 +152,7 @@ test("revoked reading access offers reconnect and changing the reading principal
   await expect(reading).toContainText("Reader B");
   expect(readFileSync(path.join(data, "accounts.json"), "utf8")).toBe(before);
   await page.goto("/automation");
-  await expect(picker).toContainText("Reading account: Reader B");
+  await expect(picker).toContainText("YouTube account: Reader B");
   const creators = (await (await request.get("/api/automation")).json())
     .channels;
   expect(creators).toEqual(priorCreators);

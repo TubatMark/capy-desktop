@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { BookOpen, CalendarClock, Clapperboard, ListChecks, Layers, Menu, MonitorPlay, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { BookOpen, CalendarClock, LayoutDashboard, Clapperboard, ListChecks, Layers, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -24,14 +24,24 @@ interface Item {
   also?: (path: string) => boolean;
 }
 
-const MAIN: Item[] = [
-  { href: "/todo", label: "To do", icon: ListChecks },
-  { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
-  { href: "/studio", label: "Studio", icon: Layers },
-  { href: "/stories", label: "Stories", icon: BookOpen },
-  { href: "/automation", label: "Automation", icon: Radar },
-  { href: "/queue", label: "Queue", icon: CalendarClock },
-  { href: "/channel", label: "Channel", icon: MonitorPlay },
+/** Ordered by the loop: see how it's going, act on what needs you, make, then schedule. */
+const GROUPS: { label?: string; items: Item[] }[] = [
+  {
+    items: [
+      { href: "/channel", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/todo", label: "To do", icon: ListChecks },
+    ],
+  },
+  {
+    label: "Make",
+    items: [
+      { href: "/automation", label: "Monitor", icon: Radar },
+      { href: "/stories", label: "Stories", icon: BookOpen },
+      { href: "/studio", label: "Studio", icon: Layers },
+      { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
+    ],
+  },
+  { label: "Publish", items: [{ href: "/queue", label: "Queue", icon: CalendarClock }] },
 ];
 const SETTINGS: Item = { href: "/settings", label: "Settings", icon: Settings };
 
@@ -92,9 +102,7 @@ export function AppSidebar() {
           </Link>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
-          {MAIN.map((item) => (
-            <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={collapsed} />
-          ))}
+          <NavGroups path={path} counts={counts} collapsed={collapsed} />
         </nav>
         <div className="flex flex-col gap-1 border-t border-border/60 px-3 py-3">
           <NavItem item={SETTINGS} active={isActive(SETTINGS, path)} collapsed={collapsed} />
@@ -139,9 +147,7 @@ export function AppSidebar() {
             </div>
             <Dialog.Description className="sr-only">Go to another part of capy</Dialog.Description>
             <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
-              {MAIN.map((item) => (
-                <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={false} />
-              ))}
+              <NavGroups path={path} counts={counts} collapsed={false} />
             </nav>
             <div className="border-t border-border/60 px-3 py-3">
               <NavItem item={SETTINGS} active={isActive(SETTINGS, path)} collapsed={false} />
@@ -151,6 +157,18 @@ export function AppSidebar() {
       </Dialog.Root>
     </Tooltip.Provider>
   );
+}
+
+function NavGroups({ path, counts, collapsed }: { path: string; counts: Record<string, number | undefined>; collapsed: boolean }) {
+  return GROUPS.map((g, i) => (
+    <div key={g.label ?? i} role="group" aria-label={g.label} className={cn("flex flex-col gap-1", i > 0 && "mt-3")}>
+      {/* on the folded rail the heading becomes a thin divider */}
+      {g.label && (collapsed ? <hr className="mx-2 mb-1 border-border/60" /> : <p className="sb-label px-3 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">{g.label}</p>)}
+      {g.items.map((item) => (
+        <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={collapsed} />
+      ))}
+    </div>
+  ));
 }
 
 function NavItem({ item, active, count, urgent, collapsed }: { item: Item; active: boolean; count?: number; urgent?: boolean; collapsed: boolean }) {
