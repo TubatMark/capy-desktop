@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { PLATFORMS, type AccountPublic, type Platform } from "../lib/types";
+import { runtimeStore } from "./db/runtime";
 import { dataDir } from "./settings";
 import { OAuthError, refreshTokens, type TokenSet } from "./oauth";
 
@@ -18,6 +19,7 @@ import { OAuthError, refreshTokens, type TokenSet } from "./oauth";
  */
 
 export interface StoredAccount {
+  connectedAt?: number;
   clientId?: string;
   clientSecret?: string;
   tokens?: TokenSet;
@@ -43,7 +45,9 @@ const NAMES: Record<Platform, string> = {
 declare global {
   // eslint-disable-next-line no-var
   var __capyAccounts:
-    { file: string; mtime: number; data: AccountsFile } | null | undefined;
+    | { file: string; mtime: number; data: AccountsFile }
+    | null
+    | undefined;
 }
 
 export function accountsFile(): string {
@@ -113,6 +117,8 @@ export function publicAccounts(): AccountPublic[] {
     const connected = !!a.tokens?.accessToken && !a.needsReconnect;
     return {
       platform,
+      role: "publishing",
+      connectedAt: a.connectedAt,
       configured: !!(a.clientId && a.clientSecret),
       connected,
       needsReconnect: a.needsReconnect || undefined,
@@ -166,6 +172,119 @@ export async function getAccessToken(
       saveAccount(p, { needsReconnect: true });
       throw new AuthError(
         `Reconnect ${NAMES[p]} in Settings → Accounts (${e.message})`,
+      );
+    }
+    throw e;
+  }
+}
+
+/** Reading consent is a separate principal; never reuse a posting token implicitly. */
+export function readingAccountsFile(): string {
+  return path.join(dataDir(), "youtube-reading.json");
+}
+export function loadReadingAccount(): StoredAccount {
+  try {
+    return JSON.parse(
+      readFileSync(readingAccountsFile(), "utf8"),
+    ) as StoredAccount;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw e;
+  }
+}
+export function saveReadingAccount(patch: {
+  [K in keyof StoredAccount]?: StoredAccount[K] | null;
+}): StoredAccount {
+  return fence(() => {
+    const next = { ...loadReadingAccount() };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      if (value === null) delete (next as Record<string, unknown>)[key];
+      else (next as Record<string, unknown>)[key] = value;
+    }
+    const file = readingAccountsFile();
+    mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, file);
+    runtimeStore().mutate(
+      "account-roles",
+      "youtube:reading",
+      () => ({}),
+      () => ({
+        role: "reading",
+        platform: "youtube",
+        accountId: next.account?.id,
+        needsReconnect: !!next.needsReconnect,
+      }),
+    );
+    return next;
+  });
+}
+export function publicReadingAccount(): AccountPublic {
+  const a = loadReadingAccount();
+  return {
+    platform: "youtube",
+    role: "reading",
+    connectedAt: a.connectedAt,
+    configured: !!(a.clientId && a.clientSecret),
+    connected: !!a.tokens?.accessToken && !a.needsReconnect,
+    needsReconnect: a.needsReconnect || undefined,
+    account: a.account,
+    autoPost: false,
+    clientId: a.clientId,
+    clientSecret: a.clientSecret
+      ? `••••${a.clientSecret.slice(-4)}`
+      : undefined,
+  };
+}
+/** Refresh only this reading principal, guarding against a reconnect during the request. */
+export async function getReadingAccessToken(
+  accountId: string,
+  f: typeof fetch = fetch,
+): Promise<string> {
+  const a = loadReadingAccount();
+  if (
+    !a.tokens?.accessToken ||
+    a.needsReconnect ||
+    !accountId ||
+    a.account?.id !== accountId
+  )
+    throw new AuthError(
+      "Connect the YouTube reading account in Settings → Accounts",
+    );
+  if (
+    !a.tokens.scope
+      ?.split(/\s+/)
+      .includes("https://www.googleapis.com/auth/youtube.readonly")
+  ) {
+    saveReadingAccount({ needsReconnect: true });
+    throw new AuthError(
+      "Reconnect the YouTube reading account to grant subscription access",
+    );
+  }
+  if (a.tokens.expiresAt - Date.now() > refreshAhead("youtube"))
+    return a.tokens.accessToken;
+  if (!a.clientId || !a.clientSecret)
+    throw new AuthError("Configure the YouTube reading account first");
+  try {
+    const tokens = await refreshTokens(
+      "youtube",
+      a.tokens,
+      { clientId: a.clientId, clientSecret: a.clientSecret },
+      f,
+    );
+    if (loadReadingAccount().tokens?.accessToken !== a.tokens.accessToken)
+      throw new AuthError("The reading account changed; refresh subscriptions");
+    saveReadingAccount({ tokens });
+    return tokens.accessToken;
+  } catch (e) {
+    if (e instanceof OAuthError && e.isAuth) {
+      if (loadReadingAccount().tokens?.accessToken === a.tokens.accessToken)
+        saveReadingAccount({ needsReconnect: true });
+      throw new AuthError(
+        "Reconnect the YouTube reading account to restore subscription access",
       );
     }
     throw e;

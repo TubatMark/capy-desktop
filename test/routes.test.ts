@@ -66,7 +66,7 @@ describe("account routes", () => {
     await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "cid", clientSecret: "secret9876" }), params({ platform: "youtube" }));
     await putAccount(req("/api/accounts/youtube", "PUT", { clientId: "cid", clientSecret: "••••9876" }), params({ platform: "youtube" }));
     expect(loadAccounts().youtube.clientSecret).toBe("secret9876");
-    const list = await (await getAccounts()).json();
+    const list = await (await getAccounts(req("/api/accounts", "GET"))).json();
     expect(list[0]).toMatchObject({ platform: "youtube", configured: true, connected: false, clientSecret: "••••9876" });
     expect((await putAccount(req("/api/accounts/myspace", "PUT", {}), params({ platform: "myspace" }))).status).toBe(404);
   });

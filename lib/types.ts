@@ -63,8 +63,34 @@ export interface QueueEntry {
   updatedAt: number;
 }
 
+/** Source reading consent and publishing destinations are independent principals. */
+export type AccountRole = "reading" | "publishing";
+
+export interface SubscriptionChannel {
+  id: string;
+  name: string;
+  thumbnail?: string;
+}
+export interface SubscriptionPage {
+  accountId: string;
+  channels: SubscriptionChannel[];
+  nextCursor?: string;
+}
+export interface CreatorImport {
+  accountId: string;
+  selectedIds: string[];
+  backfill: boolean;
+  mode: "manual" | "automatic_drafts";
+}
+export interface ImportCreatorsResult {
+  imported: WatchedChannel[];
+  existing: string[];
+}
+
 /** A platform account as the browser sees it (no tokens, secret redacted). */
 export interface AccountPublic {
+  connectedAt?: number;
+  role?: AccountRole;
   platform: Platform;
   configured: boolean;
   connected: boolean;
@@ -90,6 +116,9 @@ export interface QueueSummary {
 
 /** A YouTube creator capy watches for new uploads (server/watch.ts owns these). */
 export interface WatchedChannel {
+  sourceAccountId?: string;
+  thumbnail?: string;
+  mode?: "manual" | "automatic_drafts";
   id: string;
   name: string;
   handle?: string;

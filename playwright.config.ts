@@ -2,7 +2,9 @@ import { defineConfig } from "@playwright/test";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-const root = mkdtempSync(path.join(os.tmpdir(), "capy-studio-e2e-"));
+const root =
+  process.env.CAPY_STUDIO_TEST_ROOT ??
+  mkdtempSync(path.join(os.tmpdir(), "capy-studio-e2e-"));
 const output = path.join(root, "output");
 mkdirSync(output, { recursive: true });
 process.env.CAPY_STUDIO_TEST_ROOT = root;
@@ -30,7 +32,7 @@ export default defineConfig({
       CAPY_STUDIO_TEST_ROOT: root,
       CAPY_DISK_RESERVE_BYTES: "0",
       CAPY_AI_ALLOW_CLOUD: "false",
-      NODE_OPTIONS: "--experimental-sqlite",
+      NODE_OPTIONS: `--experimental-sqlite --import=${JSON.stringify(path.resolve("test/fixtures/subscriptions-preload.mjs"))}`,
     },
   },
 });

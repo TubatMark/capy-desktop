@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { loadAccounts, publicAccounts, saveAccount } from "@/server/accounts";
+import {
+  loadAccounts,
+  publicAccounts,
+  saveAccount,
+  saveReadingAccount,
+  publicReadingAccount,
+} from "@/server/accounts";
 import { queue, reconnected } from "@/server/queue";
 import { effective } from "@/server/settings";
 import { audienceTz } from "@/lib/post-time";
@@ -16,32 +22,94 @@ const Patch = z.strictObject({
   igUserId: z.string().trim().max(64).optional(),
 });
 
-const isPlatform = (p: string): p is Platform => (PLATFORMS as string[]).includes(p);
+const isPlatform = (p: string): p is Platform =>
+  (PLATFORMS as string[]).includes(p);
 
 /** PUT = save this platform's app credentials and options. */
-export async function PUT(req: Request, ctx: { params: Promise<{ platform: string }> }) {
+export async function PUT(
+  req: Request,
+  ctx: { params: Promise<{ platform: string }> },
+) {
   const { platform } = await ctx.params;
-  if (!isPlatform(platform)) return NextResponse.json({ error: "Unknown platform" }, { status: 404 });
+  if (!isPlatform(platform))
+    return NextResponse.json({ error: "Unknown platform" }, { status: 404 });
   const parsed = Patch.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }, { status: 400 });
+  if (!parsed.success)
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+      { status: 400 },
+    );
+  const reading = new URL(req.url).searchParams.get("role") === "reading";
+  if (
+    reading &&
+    (platform !== "youtube" ||
+      parsed.data.autoPost !== undefined ||
+      parsed.data.mode !== undefined ||
+      parsed.data.igUserId !== undefined)
+  )
+    return NextResponse.json(
+      { error: "Reading accounts only support YouTube app credentials" },
+      { status: 400 },
+    );
   const patch: Parameters<typeof saveAccount>[1] = { ...parsed.data };
   // the form echoes the redacted secret back when the user didn't type a new one
   if (patch.clientSecret?.startsWith("••••")) delete patch.clientSecret;
   if (patch.igUserId !== undefined) {
-    const choice = loadAccounts().instagram.choices?.find((c) => c.id === patch.igUserId);
-    if (!choice) return NextResponse.json({ error: "Unknown Instagram account" }, { status: 400 });
+    const choice = loadAccounts().instagram.choices?.find(
+      (c) => c.id === patch.igUserId,
+    );
+    if (!choice)
+      return NextResponse.json(
+        { error: "Unknown Instagram account" },
+        { status: 400 },
+      );
     patch.account = choice;
+  }
+  if (reading) {
+    saveReadingAccount(patch);
+    return NextResponse.json(publicReadingAccount());
   }
   saveAccount(platform, patch);
   // posts that waited for an Instagram account to be picked can go now
-  if (patch.igUserId) queue().mutate((e) => reconnected(e, platform, audienceTz(effective().postingAudience), new Date()));
-  return NextResponse.json(publicAccounts().find((a) => a.platform === platform));
+  if (patch.igUserId)
+    queue().mutate((e) =>
+      reconnected(
+        e,
+        platform,
+        audienceTz(effective().postingAudience),
+        new Date(),
+      ),
+    );
+  return NextResponse.json(
+    publicAccounts().find((a) => a.platform === platform),
+  );
 }
 
 /** DELETE = disconnect: forget the tokens and the signed-in account, keep the app credentials. */
-export async function DELETE(_req: Request, ctx: { params: Promise<{ platform: string }> }) {
+export async function DELETE(
+  req: Request,
+  ctx: { params: Promise<{ platform: string }> },
+) {
   const { platform } = await ctx.params;
-  if (!isPlatform(platform)) return NextResponse.json({ error: "Unknown platform" }, { status: 404 });
-  saveAccount(platform, { tokens: null, account: null, needsReconnect: null, choices: null, igUserId: null });
-  return NextResponse.json(publicAccounts().find((a) => a.platform === platform));
+  if (!isPlatform(platform))
+    return NextResponse.json({ error: "Unknown platform" }, { status: 404 });
+  if (new URL(req.url).searchParams.get("role") === "reading") {
+    if (platform !== "youtube")
+      return NextResponse.json(
+        { error: "Unknown reading platform" },
+        { status: 404 },
+      );
+    saveReadingAccount({ tokens: null, account: null, needsReconnect: null });
+    return NextResponse.json(publicReadingAccount());
+  }
+  saveAccount(platform, {
+    tokens: null,
+    account: null,
+    needsReconnect: null,
+    choices: null,
+    igUserId: null,
+  });
+  return NextResponse.json(
+    publicAccounts().find((a) => a.platform === platform),
+  );
 }
