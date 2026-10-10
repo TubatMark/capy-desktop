@@ -1,0 +1,16 @@
+import { afterAll, beforeAll, expect, test } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { run } from "../src/exec";
+import { compileProject, renderProject } from "../src/studio/renderer";
+import type { AssetRef, ProjectDocument } from "../lib/studio/types";
+let dir:string; let asset:AssetRef;
+const project:ProjectDocument={schemaVersion:1,id:"fixture",revision:2,canvas:{width:160,height:90},fps:{numerator:30,denominator:1},tracks:[{id:"v",kind:"video"}],items:[0,1,2].map(i=>({id:`i${i}`,trackId:"v",assetId:"a",startFrame:i*300,durationFrames:300,sourceInUs:0,sourceOutUs:10000000,speed:1})),sourceMappings:[0,1,2].map(i=>({itemId:`i${i}`,assetId:"a",sourceInUs:0,sourceOutUs:10000000})),captionCues:[],thumbnailIds:[]};
+beforeAll(async()=>{dir=await mkdtemp(path.join(tmpdir(),"capy-fixture-"));const file=path.join(dir,"source.mp4");await run("ffmpeg",["-v","error","-f","lavfi","-i","color=c=red:s=160x90:r=30:d=10","-an","-c:v","libx264","-preset","ultrafast","-y",file]);asset={id:"a",kind:"video",checksum:createHash("sha256").update(await readFile(file)).digest("hex"),location:file,durationUs:10000000,status:"ready",streams:[{kind:"video",codec:"h264"}]};});
+afterAll(async()=>{await rm(dir,{recursive:true,force:true});});
+test("compiles 900 frames with exact source mappings and revision",()=>{const plan=compileProject(project,[asset]);expect(plan.frameCount).toBe(900);expect(plan.revision).toBe(2);expect(plan.clips[2]!.startFrame).toBe(600);});
+test("rejects operations before silently dropping them",()=>{expect(()=>compileProject({...project,captionCues:[{id:"c",startFrame:0,durationFrames:30,text:"hello"}]},[asset])).toThrow("captions");expect(()=>compileProject({...project,items:project.items.map((i,n)=>({...i,startFrame:i.startFrame+(n===1?1:0)}))},[asset])).toThrow("gaps/overlaps");expect(()=>compileProject(project,[{...asset,checksum:"changed"}])).toThrow("checksum");});
+test("exports actual 900 frames and ties artifact to input revision",async()=>{const artifact=await renderProject(compileProject(project,[asset]),new AbortController().signal);expect(artifact.probe.durationUs).toBe(30000000);expect(artifact.probe.hasAudio).toBe(false);expect(artifact.revision).toBe(2);await rm(path.dirname(artifact.path),{recursive:true,force:true});},30000);
+test("already cancelled renders never publish artifacts",async()=>{const controller=new AbortController();controller.abort();await expect(renderProject(compileProject(project,[asset]),controller.signal)).rejects.toThrow("Cancelled");});
