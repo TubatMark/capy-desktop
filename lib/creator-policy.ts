@@ -87,8 +87,8 @@ export const DEFAULT_CREATOR_POLICY: CreatorPolicy = {
   targetQueueDays: 3,
   maxBacklogDays: 7,
   destinationDailySlots: 2,
-  freshnessHours: 72,
-  expireFreshness: false,
+  freshnessHours: 24,
+  expireFreshness: true,
   requireAudio: false,
   requireModelReview: true,
   editTemplate: "bold-portrait-v1",
@@ -111,6 +111,8 @@ export interface CreatorCandidate {
   channelId: string;
   title: string;
   foundAt: number;
+  /** Exact upload time when a reading account could date it; freshness falls back to foundAt. */
+  publishedAt?: number;
   durationSec?: number;
   priority?: number;
   sourceMethod?: "uploads-playlist" | "videos-tab";

@@ -109,7 +109,7 @@ export function planCreatorWork(input: CreatorWorkInput): WorkDecision {
       "skip",
       "Source title does not match the configured included topics",
     );
-  if (input.now - c.foundAt > p.freshnessHours * 3600000)
+  if (input.now - (c.publishedAt ?? c.foundAt) > p.freshnessHours * 3600000)
     return result(
       p.expireFreshness ? "skip" : "defer",
       p.expireFreshness

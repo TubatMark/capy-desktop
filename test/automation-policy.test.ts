@@ -78,7 +78,11 @@ describe("creator automation", () => {
       }).kind,
     ).toBe("proceed");
     expect(
-      planCreatorWork({ ...input("old"), now: 1000 + 80 * 3600000 }).kind,
+      planCreatorWork({
+        ...input("old"),
+        now: 1000 + 80 * 3600000,
+        policy: { ...policy, expireFreshness: false },
+      }).kind,
     ).toBe("defer");
     expect(
       planCreatorWork({
@@ -594,4 +598,16 @@ it("a channel without saved options may post to the connected accounts it is cli
   // saved options still win
   saveCreatorPolicy("fresh", { ...policy, destinationAccountIds: [] });
   expect(creatorPolicy("fresh").destinationAccountIds).toEqual([]);
+});
+it("only uploads from the last 24 hours are clipped, judged by the real upload time when known", () => {
+  const hour = 3600000;
+  const at = (c: Partial<ReturnType<typeof input>["candidate"]> & { publishedAt?: number }, now: number) =>
+    planCreatorWork({ ...input("v"), candidate: { ...input("v").candidate, ...c }, now }).kind;
+  const now = 100 * hour;
+  // found just now, but uploaded two days ago: too old
+  expect(at({ foundAt: now, publishedAt: now - 48 * hour }, now)).toBe("skip");
+  expect(at({ foundAt: now, publishedAt: now - 2 * hour }, now)).not.toBe("skip");
+  // no upload time (no reading account): when capy first saw it
+  expect(at({ foundAt: now - 25 * hour }, now)).toBe("skip");
+  expect(at({ foundAt: now - hour }, now)).not.toBe("skip");
 });

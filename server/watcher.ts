@@ -352,10 +352,15 @@ export async function watcherTick(
               foundAt: v.foundAt,
               durationSec: v.duration,
               sourceMethod: c.discoveryStatus?.method,
-              isArchive: !!runtimeStore().get<{ video?: { endedAt?: number } }>(
-                "discovery-videos",
-                `${c.id}:${v.id}`,
-              )?.value.video?.endedAt,
+              ...(() => {
+                const video = runtimeStore().get<{
+                  video?: { endedAt?: number; publishedAt?: number };
+                }>("discovery-videos", `${c.id}:${v.id}`)?.value.video;
+                return {
+                  isArchive: !!video?.endedAt,
+                  publishedAt: video?.publishedAt,
+                };
+              })(),
             },
             policy,
             now: now.getTime(),
