@@ -376,6 +376,19 @@ export async function composeThumbnail(
     )
   )
     throw Error("Thumbnail layers exceed canvas or contain unsupported colors");
+  if (
+    image.crop &&
+    (![image.crop.x, image.crop.y, image.crop.width, image.crop.height].every(
+      Number.isFinite,
+    ) ||
+      image.crop.x < 0 ||
+      image.crop.y < 0 ||
+      image.crop.width <= 0 ||
+      image.crop.height <= 0 ||
+      image.crop.x + image.crop.width > 1 ||
+      image.crop.y + image.crop.height > 1)
+  )
+    throw Error("Invalid normalized source crop");
   if ((await checksum(input.frame.path)) !== input.frame.checksum)
     throw Error("Source frame bytes changed before composition");
   if (
@@ -417,7 +430,7 @@ export async function composeThumbnail(
     filters.push("[0:v][background]overlay=0:0:shortest=1[base]");
   } else filters.push("[0:v]null[base]");
   filters.push(
-    `[1:v]format=rgba,scale=${image.width}:${image.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${image.width}:${image.height}:(ow-iw)/2:(oh-ih)/2:0x${baseColor}[subject]`,
+    `[1:v]format=rgba,${image.crop ? `crop=iw*${image.crop.width}:ih*${image.crop.height}:iw*${image.crop.x}:ih*${image.crop.y},` : ""}scale=${image.width}:${image.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=${image.width}:${image.height}:(ow-iw)/2:(oh-ih)/2:0x${baseColor}[subject]`,
     `[${current}][subject]overlay=${image.x}:${image.y}:shortest=1[source]`,
   );
   current = "source";

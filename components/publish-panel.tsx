@@ -84,7 +84,8 @@ export function PublishPanel({ jobId, clip, locked = false }: { jobId: string; c
         </>
       )}
 
-      {locked && <p className="text-xs text-muted-foreground">This clip is rendered. Request a re-render to change the upload text or thumbnail.</p>}
+      {locked && <a className="text-sm underline" href={`/thumbnails/new?jobId=${encodeURIComponent(jobId)}&clipN=${clip.n}`}>Edit thumbnail and attach an exact version</a>}
+      {locked && <p className="text-xs text-muted-foreground">This clip is rendered. Request a re-render to change upload text. Edit and download a thumbnail in Thumbnail Studio.</p>}
     </div>
   );
 }

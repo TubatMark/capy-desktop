@@ -98,6 +98,8 @@ export interface ThumbnailLayer {
   y: number;
   width: number;
   height: number;
+  /** Normalized crop in original source pixels, before contain composition. */
+  crop?: { x: number; y: number; width: number; height: number };
   color?: string;
   fontSize?: number;
   fontFamily?: string;
@@ -164,4 +166,46 @@ export interface ThumbnailRequest {
   allowLocal?: boolean;
   maxJobUsd?: number;
   maxDayUsd?: number;
+}
+
+/** editRevision is independent of the exact footage/project revision. */
+export interface ThumbnailStudioDocument extends ThumbnailDesign {
+  editRevision: number;
+}
+export interface ThumbnailExportOptions {
+  format: "png" | "jpg";
+  aspect: ThumbnailAspect;
+  text: boolean;
+}
+export interface ThumbnailExport {
+  path: string;
+  filename: string;
+  checksum: string;
+  width: number;
+  height: number;
+  layers: ThumbnailLayer[];
+}
+export interface ThumbnailReviewAudit {
+  thumbnailId: string;
+  editRevision: number;
+  digest: string;
+  state: "approved";
+  at: number;
+  sourceIdentity: ThumbnailSourceRef;
+  versionChecksums: { id: string; checksum: string }[];
+}
+/** Shared pure manifest permits the central publication gate to verify the exact review audit. */
+export function thumbnailReviewManifest(doc: ThumbnailStudioDocument) {
+  return {
+    id: doc.id,
+    editRevision: doc.editRevision,
+    sourceIdentity: doc.sourceIdentity,
+    renderChecksum: doc.renderChecksum,
+    sourceFrames: doc.sourceFrames,
+    layout: doc.layout,
+    aspectPreset: doc.aspectPreset,
+    layers: doc.layers,
+    versions: doc.versions,
+    provenance: doc.provenance,
+  };
 }

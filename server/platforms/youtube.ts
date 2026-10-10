@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { openAsBlob, statSync } from "node:fs";
 import {
   call,
@@ -76,15 +77,31 @@ async function upload(
 
   if (job.thumbFile) {
     // custom thumbnails need a verified channel; a refusal must not fail the post
+    const thumbnailBytes = Buffer.from(
+      await (await openAsBlob(job.thumbFile)).arrayBuffer(),
+    );
     const t = await call(
       ctx.fetch,
       `${API}/upload/youtube/v3/thumbnails/set?videoId=${id}`,
       {
         method: "POST",
         headers: { ...auth, "Content-Type": "image/jpeg" },
-        body: await openAsBlob(job.thumbFile),
+        body: new Blob([thumbnailBytes]),
       },
     ).catch(() => null);
+    ctx.checkpoint?.({
+      videoId: id,
+      deliveryPhase: "acknowledged",
+      thumbnailStatus: t ? (t.ok ? "accepted" : "refused") : "unknown",
+      thumbnailChecksum: createHash("sha256")
+        .update(thumbnailBytes)
+        .digest("hex"),
+      ...(t ? { thumbnailHttpStatus: String(t.status) } : {}),
+    });
+    if (!t)
+      ctx.log(
+        "Thumbnail upload result uncertain; download success does not establish upload",
+      );
     if (t && !t.ok)
       ctx.log(
         `thumbnail not set (HTTP ${t.status}); custom thumbnails need a verified channel`,

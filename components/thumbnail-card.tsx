@@ -59,6 +59,7 @@ export function ThumbnailCard({ jobId, clip }: { jobId: string; clip: ClipState 
     <section className="space-y-3 rounded-xl border bg-card p-5">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">Thumbnail</h2>
+        <a className="text-sm underline" href={`/thumbnails/new?jobId=${encodeURIComponent(jobId)}&clipN=${clip.n}`}>Open Thumbnail Studio</a>
         <Button size="sm" variant="outline" onClick={toggle} aria-expanded={open}>
           <ImageIcon /> {open ? "Hide options" : "See options"}
         </Button>
