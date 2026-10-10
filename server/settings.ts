@@ -1,4 +1,9 @@
 import {
+  AutomationControlsSchema,
+  CreatorPoliciesSchema,
+  DEFAULT_CONTROLS,
+} from "../lib/creator-policy";
+import {
   AiRoutingSchema,
   DEFAULT_AI_ROUTING,
   DISABLED_AI_ROUTING,
@@ -129,6 +134,33 @@ function clean(
   strictRouting = true,
 ): Partial<AppSettings> {
   const out: Partial<AppSettings> = {};
+  for (const [key, schema] of [
+    ["automationControls", AutomationControlsSchema],
+    ["creatorPolicies", CreatorPoliciesSchema],
+  ] as const) {
+    if (!Object.hasOwn(obj, key)) continue;
+    const parsed = schema.safeParse(obj[key]);
+    if (!parsed.success) {
+      if (strictRouting) throw parsed.error;
+      out.automationControls = { ...DEFAULT_CONTROLS, globalStop: true };
+      continue;
+    }
+    if (key === "automationControls")
+      out.automationControls = AutomationControlsSchema.parse(parsed.data);
+    else {
+      const policies = CreatorPoliciesSchema.parse(parsed.data);
+      // No imported/saved setting can activate unattended publication before release proof.
+      if (Object.values(policies).some((p) => p.mode === "automatic_publish")) {
+        if (strictRouting)
+          throw Error(
+            "Automatic publication requires a real 72-hour soak and separately authorized upload",
+          );
+        for (const p of Object.values(policies))
+          if (p.mode === "automatic_publish") p.mode = "automatic_drafts";
+      }
+      out.creatorPolicies = policies;
+    }
+  }
   if (Object.hasOwn(obj, "aiRouting")) {
     const routing = AiRoutingSchema.safeParse(obj.aiRouting);
     if (routing.success) out.aiRouting = routing.data;

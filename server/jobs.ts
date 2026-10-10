@@ -1,3 +1,11 @@
+import {
+  creatorPolicy,
+  creatorRecipe,
+  recipeSettings,
+} from "./automation-policy";
+import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
+import { checksum as mediaChecksum } from "./studio/assets";
+import { runtimeStore as automationStore } from "./db/runtime";
 import { createHash } from "node:crypto";
 import { validateLegacy } from "./db/legacy-validation";
 import { runtimeStore } from "./db/runtime";
@@ -385,6 +393,7 @@ class JobManager extends EventEmitter {
       inputRevision: revision,
       payload: {
         jobId: job.id,
+        automated: !!job.automation,
         operation,
         args,
         inputFingerprint: jobInputFingerprint(job),
@@ -488,6 +497,56 @@ class JobManager extends EventEmitter {
           ...args,
         );
         currentWork()!.queue.checkpoint(lease, op, { result });
+      }
+      if (op === "render") {
+        const link = automationStore().get<{ channelId: string }>(
+          "automation-jobs",
+          job.id,
+        )?.value;
+        const policy = link ? creatorPolicy(link.channelId) : undefined;
+        if (policy?.thumbnailGeneration === "automatic") {
+          const { generateThumbnails } = await import("./thumbnails");
+          const revision = automationStore().get(
+            "legacy-jobs",
+            job.id,
+          )!.revision;
+          for (const clip of job.clips.filter(
+            (c) => c.render.status === "done" && c.selected,
+          )) {
+            const file = renderedFile(job, clip);
+            if (!file) continue;
+            await generateThumbnails({
+              source: {
+                kind: "legacy",
+                jobId: job.id,
+                clipN: clip.n,
+                revision,
+                renderChecksum: await mediaChecksum(file),
+              },
+              aspect: "portrait",
+              headline: clip.hook || clip.title,
+              style: job.settings.style,
+              mode: "automatic",
+              allowCloud: false,
+              allowLocal: true,
+              maxJobUsd: policy.maxJobUsd,
+              maxDayUsd: policy.maxDayUsd,
+            }).catch((error) => {
+              fence(() =>
+                automationStore().put(
+                  "automation-decisions",
+                  `thumbnail:${job.id}:${clip.n}`,
+                  {
+                    candidateId: `${job.id}:${clip.n}`,
+                    kind: "defer",
+                    reason: `Automatic thumbnail failed: ${error instanceof Error ? error.message : String(error)}`,
+                    at: Date.now(),
+                  },
+                ),
+              );
+            });
+          }
+        }
       }
       return job;
     } finally {
@@ -645,6 +704,12 @@ class JobManager extends EventEmitter {
       ...settingsIn,
     };
     settings.audience ??= effective().audience;
+    if (extra.automation?.recipeId) {
+      const recipe = creatorRecipe(extra.automation.recipeId);
+      if (!recipe) throw Error("Creator recipe revision is missing");
+      Object.assign(settings, recipeSettings(recipe));
+      // Draft production never creates an authorization to publish.
+    }
     if (existing) {
       if (extra.automation) {
         // automation reached a video that is already here: keep the user's settings and picks, render only what isn't
@@ -1642,6 +1707,58 @@ class JobManager extends EventEmitter {
         "render",
         `clip ${c.n} done in ${(tookMs / 1000).toFixed(1)}s`,
       );
+      let qualityChecksum: string | undefined;
+      const creatorLink = automationStore().get<{ channelId: string }>(
+        "automation-jobs",
+        job.id,
+      )?.value;
+      if (creatorLink) {
+        const policy = creatorPolicy(creatorLink.channelId);
+        const hash = await mediaChecksum(file);
+        qualityChecksum = hash;
+        const report = await recordMediaQuality(
+          {
+            id: `${job.id}:${c.n}`,
+            projectId: job.id,
+            revision: 0,
+            checksum: hash,
+            path: file,
+            probe: {
+              durationUs: Math.round(len * 1e6),
+              width: 1080,
+              height: 1920,
+              fps: { numerator: 30, denominator: 1 },
+              hasAudio: true,
+            },
+            renderer: "ffmpeg",
+            rendererVersion: "legacy-v1",
+            reviewIds: [],
+          },
+          {
+            aspect: "portrait",
+            requireAudio: policy.requireAudio,
+            maxBlackRatio: policy.maxBlackRatio,
+            maxFrozenRatio: policy.maxFrozenRatio,
+            captionOverlayPath:
+              job.settings.captions || job.settings.hook
+                ? path.join(
+                    jobDir,
+                    "work",
+                    `${String(c.n).padStart(2, "0")}.ass`,
+                  )
+                : undefined,
+          },
+        );
+        if (!report.passed)
+          this.log(
+            job,
+            "render",
+            `Media quality needs attention: ${report.checks
+              .filter((check) => !check.pass)
+              .map((check) => check.reason)
+              .join("; ")}`,
+          );
+      }
       // the AI content reviewer looks at every clip that is about to be posted (and everything automation makes)
       const queueing =
         job.settings.autoPost !== false &&
@@ -1667,6 +1784,8 @@ class JobManager extends EventEmitter {
           `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`,
         );
       }
+      if (qualityChecksum && c.contentReview)
+        recordSupplementaryReview(qualityChecksum, c.contentReview);
       try {
         await this.save(job);
         fence(() => onRendered(job, c, toMediaUrl));

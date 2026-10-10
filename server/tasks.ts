@@ -60,3 +60,8 @@ export function tasksFrom(stories: StoryState[], series: StorySeries[], queue: Q
   }
   return out.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone] || b.at - a.at);
 }
+
+/** Durable automation exceptions are surfaced alongside the existing story/queue tasks. */
+export function automationTasks(reasons: {id:string;reason:string;at:number}[]):TodoTask[]{
+  return reasons.map(r=>({id:`automation:${r.id}`,kind:"error",tone:"warn",href:"/automation",title:"Creator automation needs attention",detail:r.reason,at:r.at}));
+}

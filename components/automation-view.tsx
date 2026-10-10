@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { AutomationDashboard } from "@/components/automation-dashboard";
 import { SubscriptionPicker } from "@/components/subscription-picker";
 import { api } from "@/hooks/use-job";
 import type { WatchedChannel, WatchFile } from "@/lib/types";
@@ -91,6 +92,7 @@ export function AutomationView() {
         </p>
       </div>
 
+      <AutomationDashboard />
       <SubscriptionPicker onImport={load} />
 
       <form onSubmit={add} className="space-y-3 rounded-xl border bg-card p-4">
@@ -122,13 +124,13 @@ export function AutomationView() {
 
       {data && !data.postingReady && (
         <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900">
-          No posting account is connected, so automation&apos;s clips stay on
-          each video&apos;s page instead of waiting in Queue.{" "}
+          No publishing destination is enabled for adding drafts to Queue. Clips
+          stay on their video pages.{" "}
           <Link
             href="/settings#accounts"
             className="underline underline-offset-2"
           >
-            Connect an account
+            Configure destinations
           </Link>
         </p>
       )}

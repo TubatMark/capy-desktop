@@ -1,27 +1,65 @@
+import type { AutomationHealth } from "../lib/creator-policy";
 import { Menu, nativeImage, Notification, Tray } from "electron";
 import { newReviewNotice, trayMenuModel, type TraySummary } from "./tray-model";
 
 /** build/trayTemplate@2x.png (the capy silhouette), inlined so the packaged app needs no extra file. */
-const ICON_2X = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAYAAADhAJiYAAAAlklEQVR4nO2U4QqAIAyEN/H9X/kiSCjRMMntqH3/CvI+z6VIEHwMXbw+nmYlI5nWs6kQZj/MXsFvCkEWkgcC1UCkrK1qufuDXqau/sum8BZC3ZrHkfUuSdzdntazhPLOU2hHR2bISqaZ5T3UtRSSYzstlKGhSxEsQtIS8j4u/oaohCAkJCEjCQfKJiRnIYb5gbdAEPyHDQksGyU7i3HFAAAAAElFTkSuQmCC";
+const ICON_2X =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAYAAADhAJiYAAAAlklEQVR4nO2U4QqAIAyEN/H9X/kiSCjRMMntqH3/CvI+z6VIEHwMXbw+nmYlI5nWs6kQZj/MXsFvCkEWkgcC1UCkrK1qufuDXqau/sum8BZC3ZrHkfUuSdzdntazhPLOU2hHR2bISqaZ5T3UtRSSYzstlKGhSxEsQtIS8j4u/oaohCAkJCEjCQfKJiRnIYb5gbdAEPyHDQksGyU7i3HFAAAAAElFTkSuQmCC";
 
 /**
  * The menu-bar icon: shows the next scheduled post and keeps capy posting while the window is closed.
  * State comes from the app's own server (/api/queue/summary).
  */
-export function createTray(o: { serverUrl: () => string | undefined; show: (path?: string) => void; quit: () => void }) {
-  const img = nativeImage.createFromBuffer(Buffer.from(ICON_2X.split(",")[1]!, "base64"), { scaleFactor: 2 });
+export function createTray(o: {
+  serverUrl: () => string | undefined;
+  show: (path?: string) => void;
+  quit: () => void;
+}) {
+  const img = nativeImage.createFromBuffer(
+    Buffer.from(ICON_2X.split(",")[1]!, "base64"),
+    { scaleFactor: 2 },
+  );
   img.setTemplateImage(true);
   const tray = new Tray(img);
   tray.setToolTip("capy");
-  let summary: TraySummary & { paused?: boolean } = { review: 0, activeCount: 0 };
+  let summary: TraySummary & { paused?: boolean } = {
+    review: 0,
+    activeCount: 0,
+  };
+  let health: AutomationHealth | undefined;
   let seenReview: number | undefined;
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   function render() {
-    const items = trayMenuModel(summary, !!summary.paused, tz);
+    const items = trayMenuModel(
+      summary,
+      !!summary.paused || !!health?.controls.postPaused,
+      tz,
+    );
+    const controls = health?.controls;
+    const extra = [
+      {
+        label: health?.online
+          ? "Worker online"
+          : "Worker offline · future work waits",
+        enabled: false,
+      },
+      ...(
+        [
+          ["monitorPaused", "monitoring"],
+          ["renderPaused", "rendering"],
+          ["globalStop", "all future work"],
+        ] as const
+      ).map(([key, label]) => ({
+        label: `${controls?.[key] ? "Resume" : "Stop"} ${label}`,
+        enabled: !!health,
+        click: () => void setControl(key),
+      })),
+    ];
     tray.setContextMenu(
-      Menu.buildFromTemplate(
-        items.map((it) =>
+      Menu.buildFromTemplate([
+        ...extra,
+        ...items.map((it) =>
           it.separator
             ? { type: "separator" as const }
             : {
@@ -32,18 +70,46 @@ export function createTray(o: { serverUrl: () => string | undefined; show: (path
                   else if (it.id === "queue") o.show("/queue");
                   else if (it.id === "automation") o.show("/automation");
                   else if (it.id === "quit") o.quit();
-                  else if (it.id === "pause") void setPaused(!summary.paused);
+                  else if (it.id === "pause")
+                    void setPaused(
+                      !summary.paused && !health?.controls.postPaused,
+                    );
                 },
               },
         ),
-      ),
+      ]),
     );
+  }
+
+  async function setControl(key: keyof AutomationHealth["controls"]) {
+    const url = o.serverUrl();
+    if (!url || !health) return;
+    await fetch(`${url}/api/automation/health`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        controls: { ...health.controls, [key]: !health.controls[key] },
+      }),
+    }).catch(() => {});
+    await refresh();
   }
 
   async function setPaused(paused: boolean) {
     const url = o.serverUrl();
     if (!url) return;
-    await fetch(`${url}/api/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ postingPaused: paused }) }).catch(() => {});
+    await fetch(`${url}/api/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postingPaused: paused }),
+    }).catch(() => {});
+    if (health)
+      await fetch(`${url}/api/automation/health`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          controls: { ...health.controls, postPaused: paused },
+        }),
+      }).catch(() => {});
     await refresh();
   }
 
@@ -66,6 +132,13 @@ export function createTray(o: { serverUrl: () => string | undefined; show: (path
       }
     } catch {
       /* server restarting */
+    }
+    try {
+      const r = await fetch(`${url}/api/automation/health`);
+      if (r.ok) health = await r.json();
+      else health = undefined;
+    } catch {
+      health = undefined;
     }
     render();
   }

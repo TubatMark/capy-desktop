@@ -23,6 +23,7 @@ export interface PublishPackageInput {
 export interface PublishPackage extends PublishPackageInput { packageHash: string }
 export interface PublicationDecision { kind: "human" | "human_override"; packageHash: string; at: number }
 export interface PublicationContext {
+  automationChecks?: {required:boolean;reasons:string[]};
   studio?: { currentRevision?: number; projectId?: string; artifactId?: string; artifactRevision?: number; artifactChecksum?: string };
   deliveryOptions: PublicationDeliveryOptions;
   artifactHash?: string;
@@ -89,6 +90,7 @@ export function evaluatePublication(pkg: PublishPackage | undefined, c: Publicat
   if (pkg.policyVersion !== c.policyVersion) reasons.push("Publication policy changed");
   if (pkg.packageHash !== c.packageHash) reasons.push("Publication snapshot changed");
   if (c.reviewHash !== c.packageReviewHash) reasons.push("Review changed or stale");
+  if(c.automationChecks?.required) reasons.push(...c.automationChecks.reasons);
   const decision = PublicationDecisionSchema.safeParse(c.approval);
   const human = decision.success && decision.data.packageHash === pkg.packageHash;
   const policy = AutomaticPublicationPolicySchema.safeParse(c.automaticPolicy);

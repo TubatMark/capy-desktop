@@ -1,3 +1,4 @@
+import { admissionReasons } from "../automation-policy";
 import { jobs } from "../jobs";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -94,7 +95,10 @@ export async function workerOnce(
     queue: q,
     stages,
     artifactRoot: OUTPUT_ROOT,
-    admit: async (job, stage) => admitResources(job, OUTPUT_ROOT, stage),
+    admit: async (job, stage) => [
+      ...admissionReasons(job),
+      ...(stage.expensive ? admitResources(job, OUTPUT_ROOT, stage) : []),
+    ],
   });
   return true;
 }

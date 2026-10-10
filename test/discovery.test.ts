@@ -1,3 +1,5 @@
+import { DEFAULT_CREATOR_POLICY } from "../lib/creator-policy";
+import { saveCreatorPolicy } from "../server/automation-policy";
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -352,6 +354,9 @@ it("repeated catch-up creates exactly one real durable media work item per sourc
     })),
     maxPerDay: 100,
   }));
+  // Catch-up deduplication is tested with explicit ample creator capacity; ordinary intake remains bounded.
+  saveAccount("youtube", {account:{id:"fixture-destination",name:"Fixture"},tokens:{accessToken:"fixture",expiresAt:Date.now()+3600000},autoPost:true});
+  saveCreatorPolicy(id,{...DEFAULT_CREATOR_POLICY,mode:"automatic_drafts",clips:1,dailyClipCap:100,destinationDailySlots:100,destinationAccountIds:["fixture-destination"]});
   for (let i = 0; i < 40; i++) {
     await watcherTick({
       now: () => new Date(now + 1000),

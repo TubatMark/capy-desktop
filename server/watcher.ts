@@ -1,3 +1,14 @@
+import { DEFAULT_CREATOR_POLICY } from "../lib/creator-policy";
+import {
+  admissionReasons,
+  unpublishedAutomatedClips,
+  rankCreatorWork,
+  saveCreatorPolicy,
+  saveWorkDecision,
+  recipeSettings,
+} from "./automation-policy";
+import { loadSettings } from "./settings";
+import { loadReadingAccount, publicAccounts } from "./accounts";
 import { fence, currentWork } from "./worker/context";
 import { enqueueWork, workQueue } from "./worker/api";
 import path from "node:path";
@@ -130,6 +141,7 @@ export async function watcherTick(
   const deps = d ?? defaultDeps();
   if (deps.lock() === "busy") return;
   const now = deps.now();
+  if (admissionReasons({ kind: "watcher" }).length) return;
   if (deps.pullEvents) {
     const workerSignal = currentWork()?.signal ?? new AbortController().signal;
     try {
@@ -267,10 +279,139 @@ export async function watcherTick(
     .channels.some((c) => c.history.some((h) => h.status === "processing"));
   if (inFlight) return;
 
+  if (admissionReasons({ kind: "media" }).length) return;
+  const settings = loadSettings();
+  const current = watch().get();
+  const accounts = publicAccounts().filter(
+    (a) => a.connected && !a.needsReconnect && a.account?.id,
+  );
+  const reading = loadReadingAccount();
+  const unpublished = unpublishedAutomatedClips();
+  const admissions = runtimeStore()
+    .list<{ at: number; clips: number }>("automation-admissions")
+    .map((r) => r.value)
+    .filter((r) => now.getTime() - r.at < 86400000);
+  const dayClips = Math.max(
+    admissions.reduce((n, r) => n + r.clips, 0),
+    current.channels.reduce(
+      (n, c) =>
+        n +
+        c.history.filter((h) => now.getTime() - h.at < 86400000).length *
+          (settings.creatorPolicies?.[c.id]?.clips ?? c.settings.clips),
+      0,
+    ),
+  );
+  const decisions = rankCreatorWork(
+    current.channels
+      .filter((c) => c.enabled)
+      .flatMap((c) =>
+        c.pending.map((v) => {
+          const configured = settings.creatorPolicies?.[c.id];
+          const policy = configured ?? {
+            ...DEFAULT_CREATOR_POLICY,
+            mode: "automatic_drafts",
+            clips: c.settings.clips,
+            minDurationSec: c.settings.minVideoSec,
+            destinationAccountIds: [
+              "local-drafts",
+              ...accounts.map((a) => a.account!.id),
+            ],
+            requireModelReview: true,
+          };
+          const destination =
+            configured && policy.destinationAccountIds.length
+              ? accounts.find((a) =>
+                  policy.destinationAccountIds.includes(a.account!.id),
+                )?.account?.id
+              : "local-drafts";
+          return {
+            candidate: {
+              id: v.id,
+              channelId: c.id,
+              title: v.title,
+              foundAt: v.foundAt,
+              durationSec: v.duration,
+              sourceMethod: c.discoveryStatus?.method,
+              isArchive: !!runtimeStore().get<{ video?: { endedAt?: number } }>(
+                "discovery-videos",
+                `${c.id}:${v.id}`,
+              )?.value.video?.endedAt,
+            },
+            policy,
+            now: now.getTime(),
+            sourceAllowed:
+              !c.sourceAccountId ||
+              (!!reading.tokens?.accessToken &&
+                !reading.needsReconnect &&
+                reading.account?.id === c.sourceAccountId),
+            destinationAccountId: destination,
+            capacity: {
+              unpublished,
+              reservedClips: 0,
+              destinationDailySlots: policy.destinationDailySlots,
+              targetDays: policy.targetQueueDays,
+              maxBacklogDays: policy.maxBacklogDays,
+              remainingRenderClips:
+                current.channels.reduce(
+                  (n, ch) =>
+                    n +
+                    ch.history.filter((h) => now.getTime() - h.at < 86400000)
+                      .length,
+                  0,
+                ) >= current.maxPerDay ||
+                c.history.filter((h) => now.getTime() - h.at < 86400000)
+                  .length >= c.settings.perDay
+                  ? 0
+                  : Math.max(0, policy.dailyClipCap - dayClips),
+            },
+          };
+        }),
+      ),
+  );
+  for (const decision of decisions) {
+    const channel = current.channels.find((c) =>
+      c.pending.some((v) => v.id === decision.candidateId),
+    );
+    if (channel) saveWorkDecision(channel.id, decision);
+  }
+  const skipped = new Set(
+    decisions.filter((d) => d.kind === "skip").map((d) => d.candidateId),
+  );
+  if (skipped.size)
+    mutateWatch((f) => ({
+      ...f,
+      channels: f.channels.map((c) => ({
+        ...c,
+        pending: c.pending.filter((v) => !skipped.has(v.id)),
+        seen: [
+          ...c.seen,
+          ...c.pending.filter((v) => skipped.has(v.id)).map((v) => v.id),
+        ].slice(-1000),
+      })),
+    }));
+  const admitted = decisions.find((d) => d.kind === "proceed");
+  if (!admitted) return;
   let next: ReturnType<typeof takeDue>["due"];
   mutateWatch((f) => {
     const destination = loadAccounts().youtube.account?.id;
-    const r = takeDue(f, now, destination ? [destination] : []);
+    // Rank first; only the selected affordable candidate is eligible for this one-at-a-time admission.
+    const eligible = {
+      ...f,
+      channels: f.channels.map((c) => ({
+        ...c,
+        pending: c.pending.filter((v) => v.id === admitted.candidateId),
+      })),
+    };
+    const r = takeDue(eligible, now, destination ? [destination] : []);
+    r.file = {
+      ...r.file,
+      channels: r.file.channels.map((c) => ({
+        ...c,
+        pending: f.channels
+          .find((original) => original.id === c.id)!
+          .pending.filter((v) => v.id !== r.due?.videoId),
+      })),
+    };
     next = r.due;
     return r.file;
   });
@@ -279,13 +420,40 @@ export async function watcherTick(
     .get()
     .channels.find((c) => c.id === next!.channelId)!;
   try {
+    const configured = settings.creatorPolicies?.[ch.id];
+    const recipe = admitted.recipe!;
+    if (configured && !configured.recipeId)
+      saveCreatorPolicy(ch.id, configured);
+    fence(() => {
+      if (!runtimeStore().get("creator-recipes", recipe.id))
+        runtimeStore().put("creator-recipes", recipe.id, recipe);
+      runtimeStore().put("automation-jobs", next!.videoId, {
+        channelId: ch.id,
+        recipeId: recipe.id,
+        sourceAccountId: ch.sourceAccountId,
+        sourceMethod:
+          ch.discoveryStatus?.method ??
+          (ch.sourceAccountId ? "uploads-playlist" : "videos-tab"),
+      });
+      runtimeStore().put("automation-admissions", next!.videoId, {
+        channelId: ch.id,
+        clips: recipe.clips,
+        at: now.getTime(),
+        destination: admitted.destination,
+      });
+    });
     await deps.createJob(
       next.videoId,
       {
-        count: ch.settings.clips,
+        ...recipeSettings(recipe),
+        count: recipe.clips,
         ...(ch.settings.audience ? { audience: ch.settings.audience } : {}),
       },
-      { channelId: ch.id, channelName: ch.name },
+      {
+        channelId: ch.id,
+        channelName: ch.name,
+        ...(configured ? { recipeId: recipe.id } : {}),
+      },
     );
   } catch (e) {
     mutateWatch((f) =>

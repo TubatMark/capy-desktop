@@ -3,6 +3,8 @@ import path from "node:path";
 import { isCancelled, withCancel, withExecution } from "../../src/exec";
 import { LeaseLostError, type JobLease, type WorkQueue } from "./leases";
 import { withWork } from "./context";
+import { creatorPolicy } from "../automation-policy";
+import { runtimeStore } from "../db/runtime";
 import { withAiContext } from "../ai-router";
 export interface StageContext {
   workspace: string;
@@ -56,7 +58,7 @@ export async function runJob(
       const current = queue.get(lease.id)!;
       const complete = (current.checkpoint.complete ?? []) as string[];
       if (complete.includes(stage.name)) continue;
-      if (stage.expensive && opts.admit) {
+      if (opts.admit) {
         const reasons = await opts.admit(lease, stage);
         if (reasons.length) {
           queue.finish(
@@ -107,6 +109,18 @@ export async function runJob(
                     lease.payload.jobId ?? lease.payload.assetId ?? lease.id,
                   ),
                   inputVersion: String(lease.inputRevision),
+                  creatorOverride: (() => {
+                    const link = runtimeStore().get<{ channelId: string }>(
+                      "automation-jobs",
+                      String(lease.payload.jobId),
+                    )?.value;
+                    if (!link) return undefined;
+                    const policy = creatorPolicy(link.channelId);
+                    return {
+                      maxJobUsd: policy.maxJobUsd,
+                      maxDayUsd: policy.maxDayUsd,
+                    };
+                  })(),
                 },
                 () => withCancel(ac.signal, () => stage.run(ctx)),
               ),
@@ -120,6 +134,13 @@ export async function runJob(
         });
       });
     }
+    queue.fenced(lease, () =>
+      queue.store.put("automation-health", "worker", {
+        lastSuccessAt: Date.now(),
+        kind: lease.kind,
+        stage: queue.get(lease.id)?.stage,
+      }),
+    );
     queue.finish(lease, "complete");
   } catch (error) {
     opts.onError?.(error);

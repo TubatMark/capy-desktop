@@ -548,7 +548,7 @@ export interface JobState {
   /** Source-video ranges whose captions are translated into words.en.json. */
   translated?: { start: number; end: number }[];
   /** Started by creator automation: render the picks on its own once they're ready. */
-  automation?: { channelId: string; channelName: string };
+  automation?: { channelId: string; channelName: string; recipeId?: string };
 }
 
 export interface Word {
@@ -598,6 +598,8 @@ export const MODELS = [
 
 /** App-wide settings stored in <CAPY_DATA_DIR>/settings.json (see server/settings.ts). */
 export interface AppSettings {
+  creatorPolicies?: Record<string, import("./creator-policy").CreatorPolicy>;
+  automationControls?: import("./creator-policy").AutomationControls;
   aiRouting?: AiRoutingSettings;
   /** Present invalid privacy/budget policy disables AI until repaired. Never persisted as policy. */
   aiRoutingError?: string;

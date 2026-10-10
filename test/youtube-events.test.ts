@@ -190,7 +190,7 @@ it("event_edits_do_not_reclip: upload, duplicate, metadata change and restart pr
         lock: () => "held",
         list: async () => [],
         reconcile: (id, signal) =>
-          reconcileCreator(id, signal, { fetch: api, force: true }),
+          reconcileCreator(id, signal, { fetch: api, force: true, now: () => new Date(now + 1000) }),
         createJob: async (id) => {
           jobs.push(id);
         },

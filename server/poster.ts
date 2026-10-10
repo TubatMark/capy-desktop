@@ -4,6 +4,7 @@ import { enqueueWork } from "./worker/api";
 import { canResumeDelivery, isTransportFailure } from "./platforms/types";
 import { scopedFetch } from "./worker/http";
 import { eligibility } from "./publication-policy";
+import { automationPublicationFiles } from "./automation-policy";
 import { existsSync } from "node:fs";
 import { audienceTz as tzOf } from "../lib/post-time";
 import type { ClipState, JobState, Platform, QueueEntry } from "../lib/types";
@@ -72,12 +73,12 @@ const state = () => (globalThis.__capyPoster ??= { busy: new Set<Platform>() });
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export const resolvePublicationFiles = async (
-  e: QueueEntry,
-): Promise<ClipFile> =>
-  !e.source && e.publicationFiles && existsSync(e.publicationFiles.file)
+export const resolvePublicationFiles = async (e: QueueEntry): Promise<ClipFile> => {
+  const files = !e.source && e.publicationFiles && existsSync(e.publicationFiles.file)
     ? e.publicationFiles
-    : defaultDeps().fileFor(e);
+    : await defaultDeps().fileFor(e);
+  return typeof files === "string" ? files : automationPublicationFiles(e,files);
+};
 
 function defaultDeps(): PosterDeps {
   return {
@@ -266,15 +267,16 @@ export async function tick(d?: PosterDeps): Promise<void> {
             .list()
             .find((x) => x.key === e.key);
           if (!current || current.status !== "posting") return;
-          const result = eligibility(current, f);
+          const uploadFiles = automationPublicationFiles(current, f);
+          const result = eligibility(current, uploadFiles);
           if (!result.allowed) return void stop(result.reasons.join("; "));
           assertWork();
           r = {
             outcome: await deps.post(
               current,
               {
-                file: f.file,
-                thumbFile: f.thumbFile,
+                file: uploadFiles.file,
+                thumbFile: uploadFiles.thumbFile,
                 thumbAt: current.thumbAt,
                 text: current.publishPackage!.text,
                 resume: current.progress,
