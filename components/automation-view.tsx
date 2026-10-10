@@ -112,7 +112,10 @@ export function AutomationView() {
         <Notice>
           You haven&apos;t connected an account to post to, so clips stay in
           Library instead of going to Queue.{" "}
-          <Link href="/settings#accounts" className="underline underline-offset-2">
+          <Link
+            href="/settings#accounts"
+            className="underline underline-offset-2"
+          >
             Connect one in Settings
           </Link>
         </Notice>
@@ -121,7 +124,10 @@ export function AutomationView() {
         <Notice>
           {reconnect.map((a) => a.platform).join(" and ")} needs you to sign in
           again.{" "}
-          <Link href="/settings#accounts" className="underline underline-offset-2">
+          <Link
+            href="/settings#accounts"
+            className="underline underline-offset-2"
+          >
             Go to Settings
           </Link>
         </Notice>
@@ -167,12 +173,7 @@ export function AutomationView() {
             </p>
           )}
           {data.channels.map((c) => (
-            <ChannelCard
-              key={c.id}
-              c={c}
-              health={health}
-              onChange={load}
-            />
+            <ChannelCard key={c.id} c={c} health={health} onChange={load} />
           ))}
         </section>
       )}
@@ -202,7 +203,10 @@ function StatusBar({
         ? { label: "On", tone: "bg-emerald-500" }
         : { label: "Not running", tone: "bg-muted-foreground/50" };
   const put = async (body: Record<string, unknown>) => {
-    await api("/api/automation", { method: "PUT", body: JSON.stringify(body) }).catch(() => {});
+    await api("/api/automation", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }).catch(() => {});
     await onChange();
   };
   const togglePause = async () => {
@@ -237,17 +241,27 @@ function StatusBar({
             disabled={checking || data.checking || data.channels.length === 0}
             onClick={async () => {
               setChecking(true);
-              await api("/api/automation/check", { method: "POST" }).catch(() => {});
+              await api("/api/automation/check", { method: "POST" }).catch(
+                () => {},
+              );
               setTimeout(() => {
                 setChecking(false);
                 void onChange();
               }, 1500);
             }}
           >
-            {checking || data.checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}{" "}
+            {checking || data.checking ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <RefreshCw />
+            )}{" "}
             Check now
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void togglePause()}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void togglePause()}
+          >
             {stopped ? <Play /> : <Pause />} {stopped ? "Turn on" : "Pause"}
           </Button>
         </div>
@@ -294,35 +308,72 @@ function StatusBar({
 /** The owner's switch for scheduling clips that pass every check without waiting for approval (on by default). */
 function AutoSchedule() {
   const [on, setOn] = useState<boolean | null>(null);
+  const [caution, setCaution] = useState(true);
   useEffect(() => {
-    void api<{ settings: { autoSchedule?: boolean } }>("/api/settings")
-      .then((r) => setOn(r.settings.autoSchedule ?? true))
+    void api<{
+      settings: { autoSchedule?: boolean; autoScheduleCaution?: boolean };
+    }>("/api/settings")
+      .then((r) => {
+        setOn(r.settings.autoSchedule ?? true);
+        setCaution(r.settings.autoScheduleCaution ?? true);
+      })
       .catch(() => {});
   }, []);
   if (on === null) return null;
   return (
-    <label className="flex items-start gap-2 border-t pt-2 text-sm">
-      <input
-        type="checkbox"
-        className="mt-0.5 size-4 accent-[var(--primary)]"
-        checked={on}
-        onChange={async (e) => {
-          const next = e.target.checked;
-          setOn(next);
-          await api("/api/settings", { method: "PUT", body: JSON.stringify({ autoSchedule: next }) }).catch(() =>
-            setOn(!next),
-          );
-        }}
-      />
-      <span>
-        <span className="font-medium">Schedule clips that pass every check without asking me</span>
-        <span className="block text-xs text-muted-foreground">
-          At least one AI says it&apos;s OK and none says don&apos;t post, it isn&apos;t a near-copy of your recent
-          clips, and it has a designed thumbnail. It still waits for its time slot, so you can remove it from Queue
-          before it posts. Turning this off also holds back clips it already scheduled.
+    <div className="space-y-2 border-t pt-2">
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 accent-[var(--primary)]"
+          checked={on}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            setOn(next);
+            await api("/api/settings", {
+              method: "PUT",
+              body: JSON.stringify({ autoSchedule: next }),
+            }).catch(() => setOn(!next));
+          }}
+        />
+        <span>
+          <span className="font-medium">
+            Schedule clips that pass every check without asking me
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            No AI says don&apos;t post, it isn&apos;t a near-copy of your recent
+            clips, and it has a designed thumbnail. It still waits for its time
+            slot, so you can remove it from Queue before it posts. Turning this
+            off also holds back clips it already scheduled.
+          </span>
         </span>
-      </span>
-    </label>
+      </label>
+      {on && (
+        <label className="ml-6 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-[var(--primary)]"
+            checked={caution}
+            onChange={async (e) => {
+              const next = e.target.checked;
+              setCaution(next);
+              await api("/api/settings", {
+                method: "PUT",
+                body: JSON.stringify({ autoScheduleCaution: next }),
+              }).catch(() => setCaution(!next));
+            }}
+          />
+          <span>
+            <span className="font-medium">
+              Also schedule clips the AI marked &quot;check this&quot;
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Only clips an AI says not to post wait for you.
+            </span>
+          </span>
+        </label>
+      )}
+    </div>
   );
 }
 
@@ -365,7 +416,10 @@ function ChannelCard({
   return (
     <article
       aria-label={c.name}
-      className={cn("space-y-3 rounded-xl border bg-card p-4", !c.enabled && "opacity-70")}
+      className={cn(
+        "space-y-3 rounded-xl border bg-card p-4",
+        !c.enabled && "opacity-70",
+      )}
     >
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
@@ -429,7 +483,10 @@ function ChannelCard({
         <p className="text-xs text-muted-foreground">
           capy can only see this channel&apos;s regular videos, not its Shorts
           or live replays.{" "}
-          <Link href="/settings#accounts" className="underline underline-offset-2">
+          <Link
+            href="/settings#accounts"
+            className="underline underline-offset-2"
+          >
             Connect your YouTube account
           </Link>{" "}
           to see everything.
@@ -491,7 +548,9 @@ function ChannelCard({
       </div>
       {c.history.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">Recent videos</p>
+          <p className="text-xs font-medium text-muted-foreground">
+            Recent videos
+          </p>
           <ul className="space-y-1 text-sm">
             {c.history.slice(0, 5).map((h) => (
               <li

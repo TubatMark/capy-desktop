@@ -754,6 +754,8 @@ export interface AppSettings {
   postingPaused?: boolean;
   /** Schedule Monitor clips that pass every check without waiting for approval (on unless turned off). */
   autoSchedule?: boolean;
+  /** Auto-scheduling also takes clips the AI marked "check this"; only "don't post" waits (on unless turned off). */
+  autoScheduleCaution?: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {

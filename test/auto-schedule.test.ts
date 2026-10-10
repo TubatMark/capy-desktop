@@ -60,7 +60,9 @@ it("auto-schedule waits for an OK review, a finished similar-clips check and a d
     publishPackage: { thumbnail: { designId: "d" } },
   } as unknown as QueueEntry;
   expect(autoScheduleBlockers([yt], sim({}))).toEqual([]);
-  expect(autoScheduleBlockers([{ ...yt, aiReview: r("caution") }], sim({}))).toHaveLength(1);
+  // "check this" is accepted by default (owner's choice); "don't post" never is
+  expect(autoScheduleBlockers([{ ...yt, aiReview: r("caution") }], sim({}))).toEqual([]);
+  expect(autoScheduleBlockers([{ ...yt, aiReview: r("block") }], sim({}))).toEqual(["An AI reviewer said don't post it"]);
   expect(autoScheduleBlockers([yt], undefined)).toEqual(["The similar-clips check hasn't finished"]);
   expect(autoScheduleBlockers([yt], sim({ checking: 5 }))).toEqual(["The similar-clips check hasn't finished"]);
   expect(autoScheduleBlockers([{ ...yt, publishPackage: undefined }], sim({}))).toEqual(["No designed thumbnail is attached yet"]);

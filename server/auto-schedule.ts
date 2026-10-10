@@ -22,8 +22,13 @@ export function autoScheduleBlockers(
 ): string[] {
   const out: string[] = [];
   const review = entries.find((e) => e.aiReview)?.aiReview;
-  if (review?.verdict !== "ok")
-    out.push("The AI reviewers didn't both clear it (at least one OK, no block)");
+  const caution = effective().autoScheduleCaution;
+  if (!review || review.verdict === "block" || (review.verdict === "caution" && !caution))
+    out.push(
+      review?.verdict === "block"
+        ? "An AI reviewer said don't post it"
+        : "The AI reviewers didn't clear it (at least one OK, no block)",
+    );
   if (!similarity || similarity.checking !== undefined || !similarity.checkedAt)
     out.push("The similar-clips check hasn't finished");
   else if (!similarClear(similarity))

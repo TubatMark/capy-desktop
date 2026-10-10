@@ -201,6 +201,8 @@ function clean(
     out.postingPaused = obj.postingPaused;
   if (typeof obj.autoSchedule === "boolean")
     out.autoSchedule = obj.autoSchedule;
+  if (typeof obj.autoScheduleCaution === "boolean")
+    out.autoScheduleCaution = obj.autoScheduleCaution;
   return out;
 }
 
@@ -292,6 +294,7 @@ export interface EffectiveSettings {
   postingAudience: string;
   postingPaused: boolean;
   autoSchedule: boolean;
+  autoScheduleCaution: boolean;
 }
 
 function env(...names: string[]): string | undefined {
@@ -324,6 +327,7 @@ export function effective(): EffectiveSettings {
     postingAudience: s.postingAudience ?? "us-east",
     postingPaused: s.postingPaused ?? false,
     autoSchedule: s.autoSchedule ?? true,
+    autoScheduleCaution: s.autoScheduleCaution ?? true,
   };
 }
 

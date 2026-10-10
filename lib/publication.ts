@@ -83,6 +83,7 @@ export interface PublicationContext {
     enabled: boolean;
     policyVersion: string;
     accountId: string;
+    acceptCaution?: boolean;
   };
   packageHash: string;
 }
@@ -112,6 +113,8 @@ export const AutomaticPublicationPolicySchema = z.strictObject({
   enabled: z.boolean(),
   policyVersion: z.string().min(1),
   accountId: z.string().min(1),
+  /** The owner lets auto-scheduling post clips the AI marked "check this" (never "block"). */
+  acceptCaution: z.boolean().optional(),
 });
 export const PublicationDeliveryOptionsSchema = z.discriminatedUnion("mode", [
   z.strictObject({
@@ -302,7 +305,11 @@ export function evaluatePublication(
     !(human && decision.success && decision.data.kind === "human_override")
   )
     reasons.push("Content review blocked publication");
-  if (!human && c.review?.verdict !== "ok")
+  if (
+    !human &&
+    c.review?.verdict !== "ok" &&
+    !(automatic && policy.data.acceptCaution && c.review?.verdict === "caution")
+  )
     reasons.push("Automatic publication requires a successful review");
   return { allowed: reasons.length === 0, reasons };
 }

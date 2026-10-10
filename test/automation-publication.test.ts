@@ -292,12 +292,19 @@ it("auto-scheduling: a clip with an OK review is scheduled without a human decis
   saveSettings({ autoSchedule: false });
   expect(eligibility(s).reasons).toContain("Publication decision missing or stale");
   saveSettings({ autoSchedule: true });
-  // without an OK review the automatic path never authorizes
-  const caution = approve([{ ...e, aiReview: { ...review, verdict: "caution" as const } }], "", undefined, {
-    group: queueGroup(e),
-    automatic: true,
-    audienceTz: "UTC",
-    now: new Date(),
-  });
-  expect(caution.scheduled).toHaveLength(0);
+  const auto = (verdict: "caution" | "block") =>
+    approve([{ ...e, aiReview: { ...review, verdict, opinions: undefined } }], "", undefined, {
+      group: queueGroup(e),
+      automatic: true,
+      audienceTz: "UTC",
+      now: new Date(),
+    }).scheduled;
+  // "check this" goes out while the owner accepts it (the default)...
+  expect(auto("caution")).toHaveLength(1);
+  // ...and waits when they don't
+  saveSettings({ autoScheduleCaution: false });
+  expect(auto("caution")).toHaveLength(0);
+  saveSettings({ autoScheduleCaution: true });
+  // "don't post" never goes out automatically
+  expect(auto("block")).toHaveLength(0);
 });

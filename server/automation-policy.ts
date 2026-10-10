@@ -12,7 +12,7 @@ import {
   type MediaQualityReport,
 } from "../lib/creator-policy";
 import type { JobSettings, QueueEntry, JobState, WatchedChannel } from "../lib/types";
-import { loadSettings, saveSettings } from "./settings";
+import { effective, loadSettings, saveSettings } from "./settings";
 import { runtimeStore } from "./db/runtime";
 import { loadReadingAccount, publicAccounts } from "./accounts";
 import { watch } from "./watch";
@@ -575,10 +575,17 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
   // Your approval of this exact package is the human check when the AI asked for one or couldn't run;
   // an AI "block" still needs the explicit override, which evaluatePublication enforces.
   const approved = e.publicationDecision?.packageHash === pkg.packageHash;
+  // auto-scheduled under the owner's "check this is fine" setting counts like their approval (never for a block)
+  const acceptedCaution =
+    !!e.autoScheduledAt &&
+    effective().autoSchedule &&
+    effective().autoScheduleCaution &&
+    pkg.review?.verdict === "caution";
   if (
     p.requireModelReview &&
     (!pkg.review || pkg.review.verdict !== "ok") &&
-    !approved
+    !approved &&
+    !acceptedCaution
   )
     reasons.push(
       "The AI review flagged this clip or couldn't run; read it, then approve",

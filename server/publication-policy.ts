@@ -151,7 +151,12 @@ export function publicationContext(
     // holds back what it already scheduled too. evaluatePublication still requires an "ok" review for these.
     automaticPolicy:
       e.autoScheduledAt && pkg && effective().autoSchedule
-        ? { enabled: true, policyVersion: pkg.policyVersion, accountId: pkg.accountId }
+        ? {
+            enabled: true,
+            policyVersion: pkg.policyVersion,
+            accountId: pkg.accountId,
+            acceptCaution: effective().autoScheduleCaution,
+          }
         : undefined,
     packageHash: packageDigest(snapshot),
   };
