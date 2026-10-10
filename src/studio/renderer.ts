@@ -29,6 +29,19 @@ function inspectSource(file: string, fps: {numerator:number;denominator:number})
   if (!video || video.avg_frame_rate !== video.r_frame_rate) reject("non-CFR source");
   const [n,d] = video.r_frame_rate.split("/").map(Number);
   if (n * fps.denominator !== d * fps.numerator) reject("source fps must match output fps in bounded contract");
+  const cadence = spawnSync(resolveBin("ffprobe"), ["-v","error","-select_streams","v:0","-show_frames","-show_entries","frame=best_effort_timestamp","-of","json",file], {encoding:"utf8",maxBuffer:64*1024*1024});
+  if (cadence.status !== 0) reject("source cadence probe failed");
+  const frames = JSON.parse(cadence.stdout).frames;
+  const [tbN,tbD] = video.time_base.split("/").map(BigInt);
+  if (!frames.length || tbN <= 0n || tbD <= 0n) reject("invalid source cadence");
+  // Half a native timebase tick permits container rounding, never cumulative drift.
+  const denominator = BigInt(fps.numerator)*tbN;
+  frames.forEach((frame:{best_effort_timestamp?:number},index:number) => {
+    if (!Number.isSafeInteger(frame.best_effort_timestamp)) reject("missing source timestamp");
+    const actual = BigInt(frame.best_effort_timestamp!)*denominator;
+    const expected = BigInt(index)*BigInt(fps.denominator)*tbD;
+    if ((actual > expected ? actual-expected : expected-actual)*2n > denominator) reject("non-CFR decoded timestamps");
+  });
 }
 /** Bounded R1 compiler. Never silently drops an operation it cannot export. */
 export function compileProject(project: ProjectDocument, assets: AssetRef[]): RenderPlan {

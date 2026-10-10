@@ -50,3 +50,12 @@ test("arbitrary microsecond offset deterministically rounds to next CFR frame",a
   expect(luma(first.stdout)).toBeCloseTo(luma(reference.stdout),0);
   await rm(path.dirname(artifact.path),{recursive:true,force:true});
 });
+test("matching aggregate rates cannot hide variable decoded timestamps",async()=>{
+  const file=path.join(dir,"variable.mp4");
+  await run("ffmpeg",["-v","error","-f","lavfi","-i","color=red:s=160x90:r=30:d=1","-vf","settb=1/30000,setpts=PTS+if(eq(N\\,10)\\,150\\,0)","-fps_mode","passthrough","-enc_time_base","1/30000","-video_track_timescale","30000","-c:v","libx264","-y",file]);
+  const probe=JSON.parse((await run("ffprobe",["-v","error","-show_streams","-of","json",file])).stdout);
+  expect(probe.streams[0].r_frame_rate).toBe("30/1");expect(probe.streams[0].avg_frame_rate).toBe("30/1");
+  const ref={...asset,location:file,durationUs:1000000,checksum:createHash("sha256").update(await readFile(file)).digest("hex")};
+  const one={...project,items:[{...project.items[0]!,durationFrames:30,sourceOutUs:1000000}],sourceMappings:[{itemId:"i0",assetId:"a",sourceInUs:0,sourceOutUs:1000000}]};
+  expect(()=>compileProject(one,[ref])).toThrow("non-CFR decoded timestamps");
+});
