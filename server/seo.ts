@@ -112,7 +112,7 @@ async function searchOnce(d: SeoDeps, c: Cache, q: string, token: string): Promi
   return videos;
 }
 
-/** Scored keywords for a topic from autocomplete, what ranks, and the channel's own search terms. */
+/** Local text heuristics, not observed publication lift. Scored keywords for a topic from autocomplete, what ranks, and the channel's own search terms. */
 export async function research(seedRaw: string, o: { search?: boolean } = {}, d: SeoDeps = defaultDeps()): Promise<KeywordResearch> {
   const seed = norm(seedRaw);
   const c = await cache(d);

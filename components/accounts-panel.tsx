@@ -38,7 +38,7 @@ const HINTS: Record<Platform, { id: string; secret: string; note: string }> = {
   youtube: {
     id: "OAuth client ID",
     secret: "Client secret",
-    note: "Posts as Shorts. Until Google audits your project (free), uploads stay private and capy reminds you to make them public.",
+    note: "YouTube reports processing and visibility separately. capy checks the exact returned state; public visibility does not prove app review or thumbnail eligibility.",
   },
   instagram: {
     id: "App ID",
@@ -48,7 +48,7 @@ const HINTS: Record<Platform, { id: string; secret: string; note: string }> = {
   tiktok: {
     id: "Client key",
     secret: "Client secret",
-    note: "Until TikTok audits your app, clips go to your TikTok inbox and you tap Post.",
+    note: "Clips go to your TikTok inbox for you to finish and post. Direct publishing remains unavailable until its separate eligibility and consent requirements are verified.",
   },
 };
 
@@ -346,6 +346,19 @@ function AccountCard({
         </div>
       </div>
 
+      {a.capabilities && (
+        <div className="rounded-lg border p-3 text-xs space-y-1">
+          <p>
+            Remote scheduling: {a.capabilities.scheduling}. Custom thumbnail:{" "}
+            {a.capabilities.customThumbnail}.
+          </p>
+          <p>{a.capabilities.reason}.</p>
+          <p>
+            Capability documentation checked {a.capabilities.docsCheckedAt};
+            this is not account verification.
+          </p>
+        </div>
+      )}
       {a.platform === "tiktok" && (
         <div className="flex flex-col gap-1.5">
           <Label>How to post</Label>
@@ -360,9 +373,8 @@ function AccountCard({
             <option value="inbox">
               Send to my TikTok inbox (works now; I tap Post)
             </option>
-            <option value="direct">
-              Post directly (after TikTok approves my app; reconnect after
-              switching)
+            <option value="direct" disabled>
+              Direct publishing unavailable (eligibility unverified)
             </option>
           </Select>
         </div>

@@ -319,3 +319,30 @@ it("an existing directory from failed mkdir-parent sync is synced again before s
   expect(rootSyncs).toBeGreaterThanOrEqual(3);
   expect(readDelivery(d.id)?.checkpoint).toBe(1);
 });
+
+it("failed temporary checkpoint writes do not accumulate artifacts or remove the accepted checkpoint", () => {
+  const d = createDelivery(entry());
+  const accepted = saveDeliveryHandles(d, {
+    session: "https://fixture/original",
+  });
+  expect(() =>
+    saveDeliveryHandles(
+      accepted,
+      { offset: "10" },
+      {
+        ...nativeFs,
+        writeFileSync: (() => {
+          throw Object.assign(Error("injected disk full"), { code: "ENOSPC" });
+        }) as typeof nativeFs.writeFileSync,
+      },
+    ),
+  ).toThrow(/disk full/);
+  expect(
+    nativeFs
+      .readdirSync(path.join(root, "delivery-private"))
+      .filter((x) => x.endsWith(".tmp")),
+  ).toEqual([]);
+  expect(readDeliveryHandles(accepted).session).toBe(
+    "https://fixture/original",
+  );
+});

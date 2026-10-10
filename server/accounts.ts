@@ -1,6 +1,12 @@
+import { purgePublicationMetrics } from "./performance";
+import { capabilitiesForAccount } from "./platform-capabilities";
+import { createHash, randomUUID } from "node:crypto";
 import { fence } from "./worker/context";
 import {
   chmodSync,
+  openSync,
+  closeSync,
+  fsyncSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -45,9 +51,7 @@ const NAMES: Record<Platform, string> = {
 declare global {
   // eslint-disable-next-line no-var
   var __capyAccounts:
-    | { file: string; mtime: number; data: AccountsFile }
-    | null
-    | undefined;
+    { file: string; mtime: number; data: AccountsFile } | null | undefined;
 }
 
 export function accountsFile(): string {
@@ -90,24 +94,52 @@ export function saveAccount(
   p: Platform,
   patch: { [K in keyof StoredAccount]?: StoredAccount[K] | null },
 ): StoredAccount {
-  return fence(() => {
-    const all = { ...loadAccounts() };
-    const next: Record<string, unknown> = { ...all[p] };
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === undefined) continue;
-      if (v === null) delete next[k];
-      else next[k] = v;
-    }
-    all[p] = next as StoredAccount;
-    const file = accountsFile();
-    mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, file);
-    globalThis.__capyAccounts = { file, mtime: mtimeOf(file), data: all };
-    return all[p];
-  });
+  return fence(() =>
+    runtimeStore().transaction(() => {
+      resetAccountsCache();
+      const all = { ...loadAccounts() };
+      const previous = all[p];
+      const next: Record<string, unknown> = { ...all[p] };
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined) continue;
+        if (v === null) delete next[k];
+        else next[k] = v;
+      }
+      all[p] = next as StoredAccount;
+      const previousId =
+        p === "instagram" ? previous.igUserId : previous.account?.id;
+      const nextId = p === "instagram" ? all[p].igUserId : all[p].account?.id;
+      if (
+        previousId &&
+        (previousId !== nextId ||
+          previous.clientId !== all[p].clientId ||
+          previous.clientSecret !== all[p].clientSecret ||
+          !all[p].tokens?.accessToken ||
+          all[p].needsReconnect)
+      )
+        purgePublicationMetrics(previousId);
+      const file = accountsFile();
+      mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
+      chmodSync(tmp, 0o600);
+      const fd = openSync(tmp, "r");
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(tmp, file);
+      const parent = openSync(path.dirname(file), "r");
+      try {
+        fsyncSync(parent);
+      } finally {
+        closeSync(parent);
+      }
+      globalThis.__capyAccounts = { file, mtime: mtimeOf(file), data: all };
+      return all[p];
+    }),
+  );
 }
 
 export function publicAccounts(): AccountPublic[] {
@@ -117,6 +149,7 @@ export function publicAccounts(): AccountPublic[] {
     const connected = !!a.tokens?.accessToken && !a.needsReconnect;
     return {
       platform,
+      capabilities: capabilitiesForAccount(platform, a),
       role: "publishing",
       connectedAt: a.connectedAt,
       configured: !!(a.clientId && a.clientSecret),
@@ -143,38 +176,169 @@ const refreshAhead = (p: Platform) =>
   p === "instagram" ? 7 * 86_400_000 : 30 * 60_000;
 
 /** A usable access token, refreshed when it's about to expire. Auth failures flag the account for reconnect. */
+const refreshFlights = new Map<string, Promise<string>>();
+const principal = (p: Platform, a: StoredAccount) =>
+  p === "instagram" ? a.igUserId : a.account?.id;
+const credentialHash = (a: StoredAccount) =>
+  createHash("sha256")
+    .update(
+      JSON.stringify([
+        a.account?.id,
+        a.igUserId,
+        a.clientId,
+        a.clientSecret,
+        a.tokens,
+      ]),
+    )
+    .digest("hex");
+const freshAccounts = () => {
+  resetAccountsCache();
+  return loadAccounts();
+};
+/** Exact-principal refresh, single-flight across callers and leased across app processes. */
 export async function getAccessToken(
   p: Platform,
   f: typeof fetch = fetch,
+  expectedAccountId?: string,
 ): Promise<string> {
-  const a = loadAccounts()[p];
-  if (!a?.tokens?.accessToken || a.needsReconnect)
-    throw new AuthError(`Connect ${NAMES[p]} in Settings → Accounts`);
+  const a = freshAccounts()[p];
+  if (
+    !a.tokens?.accessToken ||
+    a.needsReconnect ||
+    (expectedAccountId !== undefined && principal(p, a) !== expectedAccountId)
+  )
+    throw new AuthError(`Connect the selected ${NAMES[p]} publishing account`);
   if (a.tokens.expiresAt - Date.now() > refreshAhead(p))
     return a.tokens.accessToken;
   if (!a.clientId || !a.clientSecret)
-    throw new AuthError(
-      `Add your ${NAMES[p]} app's client ID and secret in Settings → Accounts`,
-    );
+    throw new AuthError(`Configure ${NAMES[p]} client credentials`);
+  const epoch = credentialHash(a),
+    key = `${accountsFile()}:${p}:${epoch}`;
+  const existing = refreshFlights.get(key);
+  if (existing) return existing;
+  const promise = refreshExact(p, a, epoch, f);
+  refreshFlights.set(key, promise);
   try {
+    return await promise;
+  } finally {
+    if (refreshFlights.get(key) === promise) refreshFlights.delete(key);
+  }
+}
+async function refreshExact(
+  p: Platform,
+  a: StoredAccount,
+  epoch: string,
+  f: typeof fetch,
+): Promise<string> {
+  const store = runtimeStore(),
+    lockKey = `${p}:${principal(p, a) ?? ""}`,
+    owner = randomUUID(),
+    started = Date.now();
+  type Lease = {
+    owner: string;
+    epoch: string;
+    expiresAt: number;
+    state: "pending" | "done" | "uncertain";
+  };
+  const unchanged = () => {
+    const now = freshAccounts()[p];
+    if (credentialHash(now) !== epoch)
+      throw new AuthError(
+        "Publishing account or credentials changed during refresh",
+      );
+    return now;
+  };
+  while (true) {
+    const current = freshAccounts()[p];
+    if (credentialHash(current) !== epoch) {
+      if (
+        principal(p, current) !== principal(p, a) ||
+        current.clientId !== a.clientId ||
+        current.clientSecret !== a.clientSecret
+      )
+        throw new AuthError("Publishing account changed during refresh");
+      return getAccessToken(p, f, principal(p, a));
+    }
+    const claim = fence(() =>
+      store.transaction(() => {
+        const lease = store.get<Lease>("account-refresh", lockKey)?.value;
+        if (lease && lease.epoch === epoch && lease.state !== "done") {
+          if (lease.state === "uncertain" || lease.expiresAt <= Date.now())
+            throw new AuthError(
+              "A prior token refresh has an uncertain outcome; reconnect this publishing account",
+            );
+          return false;
+        }
+        store.put("account-refresh", lockKey, {
+          owner,
+          epoch,
+          expiresAt: Date.now() + 45000,
+          state: "pending",
+        });
+        return true;
+      }),
+    );
+    if (claim) break;
+    if (Date.now() - started > 35000)
+      throw new Error("Publishing token refresh is still in progress");
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  try {
+    const bounded = (async (input, init) =>
+      f(input, {
+        ...init,
+        signal: AbortSignal.any([
+          AbortSignal.timeout(30000),
+          ...(init?.signal ? [init.signal] : []),
+        ]),
+      })) as typeof fetch;
     const tokens = await refreshTokens(
       p,
-      a.tokens,
-      { clientId: a.clientId, clientSecret: a.clientSecret },
-      f,
+      a.tokens!,
+      { clientId: a.clientId!, clientSecret: a.clientSecret! },
+      bounded,
     );
-    saveAccount(p, { tokens });
-    return tokens.accessToken;
-  } catch (e) {
-    // the current token still works (a hiccup while renewing early): keep using it; try again next time
-    if (a.tokens.expiresAt > Date.now() + 60_000) return a.tokens.accessToken;
-    if (e instanceof OAuthError && e.isAuth) {
-      saveAccount(p, { needsReconnect: true });
-      throw new AuthError(
-        `Reconnect ${NAMES[p]} in Settings → Accounts (${e.message})`,
-      );
-    }
-    throw e;
+    return fence(() =>
+      store.transaction(() => {
+        unchanged();
+        const lease = store.get<Lease>("account-refresh", lockKey)?.value;
+        if (
+          lease?.owner !== owner ||
+          lease.epoch !== epoch ||
+          lease.state !== "pending" ||
+          lease.expiresAt <= Date.now()
+        )
+          throw new AuthError(
+            "Publishing refresh ownership expired; reconnect if needed",
+          );
+        saveAccount(p, { tokens });
+        store.put("account-refresh", lockKey, { ...lease, state: "done" });
+        return tokens.accessToken;
+      }),
+    );
+  } catch (error) {
+    // Never save a stale token or reconnect flag over a newly connected principal.
+    unchanged();
+    fence(() =>
+      store.transaction(() => {
+        const lease = store.get<Lease>("account-refresh", lockKey)?.value;
+        if (lease?.owner === owner)
+          store.put("account-refresh", lockKey, {
+            ...lease,
+            state: error instanceof OAuthError ? "done" : "uncertain",
+          });
+        if (
+          error instanceof OAuthError &&
+          error.isAuth &&
+          a.tokens!.expiresAt <= Date.now() + 60000
+        )
+          saveAccount(p, { needsReconnect: true });
+      }),
+    );
+    if (a.tokens!.expiresAt > Date.now() + 60000) return a.tokens!.accessToken;
+    if (error instanceof OAuthError && error.isAuth)
+      throw new AuthError(`Reconnect ${NAMES[p]} to restore publishing access`);
+    throw error;
   }
 }
 

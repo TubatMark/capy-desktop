@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { allocateSlot, audienceTz } from "@/lib/post-time";
 import { publicAccounts } from "@/server/accounts";
-import { queue, summary, taken } from "@/server/queue";
+import { queue, summary, taken, publicQueueEntry } from "@/server/queue";
 import { effective } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,10 @@ export async function GET() {
     ? allocateSlot(taken(entries, now), platforms, tz, now)?.getTime()
     : undefined;
   return NextResponse.json({
-    entries,
+    entries: entries.map(publicQueueEntry),
+    capabilities: publicAccounts()
+      .map((a) => a.capabilities)
+      .filter(Boolean),
     summary: summary(entries, now),
     nextFree,
     audienceTz: tz,

@@ -4,6 +4,8 @@ import {
   call,
   httpError,
   PlatformError,
+  DeliveryUnknownError,
+  remoteId,
   readJson,
   type ClientCtx,
   type PostJob,
@@ -29,13 +31,20 @@ export async function postInstagram(
 ): Promise<PostOutcome> {
   const r = job.resume ?? {};
   if (r.mediaId) return finish(r.mediaId, ctx);
-  if (r.uploaded && r.deliveryPhase !== "prepared")
+  if (r.uploaded && !r.deliveryPhase)
     throw new PlatformError(
       "Instagram delivery uncertain; check the destination before retrying",
       false,
     );
-  let container = r.uploaded ? r.container : undefined;
+  let container = r.container;
+  const uncertainPublish = r.deliveryPhase === "attempted";
   if (!container) {
+    if (ctx.reconcileOnly)
+      throw new DeliveryUnknownError(
+        "Instagram has no recorded container to reconcile",
+      );
+    ctx.beforeMutation?.();
+    ctx.checkpoint?.({ deliveryPhase: "session-create-intent" });
     const size = statSync(job.file).size;
     const c = await call(
       ctx.fetch,
@@ -54,7 +63,13 @@ export async function postInstagram(
     );
     const cb = await readJson(c);
     if (!c.ok) throw httpError(c, cb);
-    container = String(cb.id);
+    container = remoteId(cb.id);
+    const uploadUri =
+      (cb.uri as string | undefined) ??
+      `https://rupload.facebook.com/ig-api-upload/${GRAPH}/${container}`;
+    ctx.checkpoint?.({ container, uploadUri, deliveryPhase: "session-known" });
+    ctx.beforeMutation?.();
+    ctx.checkpoint?.({ deliveryPhase: "transfer-intent" });
     const up = await call(
       ctx.fetch,
       (cb.uri as string | undefined) ??
@@ -71,7 +86,6 @@ export async function postInstagram(
     );
     if (!up.ok) throw httpError(up, await readJson(up));
     ctx.checkpoint?.({ container, uploaded: "1", deliveryPhase: "prepared" });
-    ctx.log(`uploaded to container ${container}`);
   }
 
   for (let i = 0; ; i++) {
@@ -81,12 +95,48 @@ export async function postInstagram(
     );
     const b = await readJson(s);
     if (!s.ok) throw httpError(s, b);
-    if (b.status_code === "FINISHED") break;
+    if (uncertainPublish) {
+      ctx.observe?.({
+        state: "delivery-unknown",
+        visibility: "unknown",
+        remoteStatus: String(b.status_code ?? "unknown"),
+      });
+      return {
+        kind: "needs_action",
+        note: "Instagram publication was attempted; check the destination. It will not be published again automatically.",
+      };
+    }
+    if (b.status_code === "FINISHED") {
+      ctx.checkpoint?.({ container, uploaded: "1", deliveryPhase: "prepared" });
+      if (ctx.reconcileOnly) {
+        ctx.observe?.({
+          state: "uploaded",
+          visibility: "unknown",
+          remoteStatus: "FINISHED",
+        });
+        return {
+          kind: "needs_action",
+          note: "Instagram has prepared the media; publishing requires current checks",
+        };
+      }
+      break;
+    }
     if (b.status_code === "ERROR" || b.status_code === "EXPIRED")
       throw new PlatformError(
         `Instagram couldn't process the video: ${b.status ?? b.status_code}`,
         false,
       );
+    if (ctx.singlePoll) {
+      ctx.observe?.({
+        state: "processing",
+        visibility: "unknown",
+        remoteStatus: String(b.status_code ?? "unknown"),
+      });
+      return {
+        kind: "needs_action",
+        note: "Instagram is processing the saved container",
+      };
+    }
     if (i >= 120)
       throw new PlatformError(
         "Instagram is taking too long to process the video",
@@ -95,6 +145,7 @@ export async function postInstagram(
     await ctx.sleep(5_000);
   }
 
+  ctx.beforeMutation?.();
   ctx.checkpoint?.({ deliveryPhase: "attempted" });
   const p = await call(
     ctx.fetch,
@@ -103,21 +154,42 @@ export async function postInstagram(
   );
   const pb = await readJson(p);
   if (!p.ok) throw httpError(p, pb);
-  const id = String(pb.id);
+  const id = remoteId(pb.id);
   ctx.checkpoint?.({ mediaId: id, deliveryPhase: "acknowledged" });
   return finish(id, ctx);
 }
 
-/** Published: look up the link; failing that it is still posted. */
+/** Acknowledgement and permalink do not establish public visibility. */
 async function finish(id: string, ctx: ClientCtx): Promise<PostOutcome> {
   try {
     const l = await ctx.fetch(
       `${G}/${id}?fields=permalink&access_token=${encodeURIComponent(ctx.token)}`,
     );
     const lb = l.ok ? await readJson(l) : {};
-    return { kind: "posted", id, url: lb.permalink as string | undefined };
+    ctx.observe?.({
+      state: "needs-action",
+      visibility: "unknown",
+      publicationIds: [id],
+      remoteStatus: l.ok ? "published-visibility-unverified" : "lookup-failed",
+    });
+    return {
+      kind: "needs_action",
+      id,
+      url: lb.permalink as string | undefined,
+      note: "Instagram acknowledged publication; public visibility has not been verified.",
+    };
   } catch {
-    return { kind: "posted", id };
+    ctx.observe?.({
+      state: "delivery-unknown",
+      visibility: "unknown",
+      publicationIds: [id],
+      remoteStatus: "lookup-failed",
+    });
+    return {
+      kind: "needs_action",
+      id,
+      note: "Instagram acknowledged publication but its current status could not be checked.",
+    };
   }
 }
 

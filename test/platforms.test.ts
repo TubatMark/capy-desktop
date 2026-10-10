@@ -178,9 +178,10 @@ describe("instagram", () => {
     });
     expect(calls[4]!.url).toContain("IG1/media_publish");
     expect(out).toEqual({
-      kind: "posted",
+      kind: "needs_action",
       id: "m1",
       url: "https://www.instagram.com/reel/x/",
+      note: "Instagram acknowledged publication; public visibility has not been verified.",
     });
   });
   it("container ERROR → non-retryable PlatformError", async () => {
@@ -240,8 +241,8 @@ describe("tiktok", () => {
     expect(body.post_info.title).toBe("Cap #a");
     expect(body.post_info.video_cover_timestamp_ms).toBe(1400);
     expect(out).toMatchObject({
-      kind: "posted",
-      note: "Posted as private (app not audited)",
+      kind: "needs_action",
+      note: expect.stringContaining("public visibility is not confirmed"),
     });
   });
   it("an error code in the body becomes a PlatformError (auth for a bad token)", async () => {
@@ -289,10 +290,12 @@ describe("resume after a failure (never upload twice)", () => {
     await expect(
       postYouTube(job, { ...ctx(f), checkpoint: (p) => void saved.push(p) }),
     ).rejects.toMatchObject({ retryable: true });
-    expect(saved).toContainEqual({
-      videoId: "abc",
-      deliveryPhase: "acknowledged",
-    });
+    expect(saved).toContainEqual(
+      expect.objectContaining({
+        videoId: "abc",
+        deliveryPhase: "acknowledged",
+      }),
+    );
     const again = stub([
       json({
         items: [
@@ -306,7 +309,7 @@ describe("resume after a failure (never upload twice)", () => {
     expect(again.calls).toHaveLength(1);
     expect(again.calls[0]!.url).toContain("videos?part=status");
   });
-  it("instagram: a published media id resumes to the permalink; a failed permalink fetch still counts as posted", async () => {
+  it("instagram: a published media id resumes to the permalink; a failed permalink fetch remains uncertain", async () => {
     const { f, calls } = stub([
       () => {
         throw new Error("socket hang up");
@@ -317,7 +320,7 @@ describe("resume after a failure (never upload twice)", () => {
         { ...job, resume: { mediaId: "m1" } },
         { ...ctx(f), igUserId: "IG1" },
       ),
-    ).toMatchObject({ kind: "posted", id: "m1" });
+    ).toMatchObject({ kind: "needs_action", id: "m1" });
     expect(calls).toHaveLength(1);
   });
   it("instagram: an uploaded container resumes at the status check", async () => {
@@ -334,7 +337,7 @@ describe("resume after a failure (never upload twice)", () => {
         },
         { ...ctx(f), igUserId: "IG1" },
       ),
-    ).toMatchObject({ kind: "posted", id: "m2" });
+    ).toMatchObject({ kind: "needs_action", id: "m2" });
     expect(calls[0]!.url).toContain("/c1?fields=status_code");
   });
   it("tiktok: a publish id resumes at the status check", async () => {
@@ -374,7 +377,10 @@ describe("error buckets", () => {
       auth: false,
       retryable: true,
     });
-    expect(yt("forbidden")).toMatchObject({ auth: true });
+    expect(yt("forbidden")).toMatchObject({
+      auth: false,
+      failureClass: "permanent",
+    });
   });
 });
 
@@ -499,14 +505,15 @@ describe("durable publishing phases", () => {
     ).rejects.toBeInstanceOf(TransportError);
     expect(saved.deliveryPhase).toBe("attempted");
     expect(saved.mediaId).toBeUndefined();
-    const retry = stub([]);
+    const retry = stub([json({ status_code: "FINISHED" })]);
     await expect(
       postInstagram(
         { ...job, resume: { container: "c1", uploaded: "1", ...saved } },
         { ...ctx(retry.f), igUserId: "IG1" },
       ),
-    ).rejects.toThrow("delivery uncertain");
-    expect(retry.calls).toHaveLength(0);
+    ).resolves.toMatchObject({ kind: "needs_action" });
+    expect(retry.calls).toHaveLength(1);
+    expect(retry.calls[0]!.method).toBe("GET");
   });
   it("retains structured identity for response-body transport errors", async () => {
     const response = new Response();

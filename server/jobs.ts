@@ -9,6 +9,12 @@ import {
   recipeSettings,
 } from "./automation-policy";
 import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
+import {
+  captureRenderInputs,
+  measureRenderedAttribution,
+  recordSuccessfulRender,
+} from "./render-attribution";
+import type { RenderAttributionInput } from "../lib/performance";
 import { checksum as mediaChecksum } from "./studio/assets";
 import { runtimeStore as automationStore } from "./db/runtime";
 import { createHash } from "node:crypto";
@@ -353,7 +359,14 @@ class JobManager extends EventEmitter {
     return m;
   }
 
-  private save(job: JobState) {
+  private save(
+    job: JobState,
+    renderProof?: {
+      input: RenderAttributionInput;
+      file: string;
+      output: { checksum: string; durationUs: number };
+    },
+  ) {
     const store = runtimeStore();
     fence(() => {
       const expected =
@@ -369,6 +382,12 @@ class JobManager extends EventEmitter {
           status: 409,
         });
       if (currentWork()) promoteJobFiles(job);
+      if (renderProof)
+        recordSuccessfulRender(
+          renderProof.input,
+          canonicalPath(renderProof.file),
+          renderProof.output,
+        );
       const snapshot = JSON.parse(JSON.stringify(job), (_key, value) =>
         typeof value === "string" ? canonicalPath(value) : value,
       ) as JobState;
@@ -1716,6 +1735,7 @@ class JobManager extends EventEmitter {
     this.startTicker(job);
     this.log(job, "render", `rendering clip ${c.n}: ${c.title}`);
     try {
+      const attributionInput = captureRenderInputs(job, c);
       const file = await stageRender(
         jobDir,
         c.n,
@@ -1742,6 +1762,10 @@ class JobManager extends EventEmitter {
             this.emitJob(job);
           },
         },
+      );
+      // Missing probe evidence cannot invent attribution or discard an otherwise completed render.
+      const attributionOutput = await measureRenderedAttribution(file).catch(
+        () => undefined,
       );
       const tookMs = Date.now() - c.render.startedAt!;
       await learn("renderSecPerSec", tookMs / 1000 / len);
@@ -1839,8 +1863,13 @@ class JobManager extends EventEmitter {
       }
       if (qualityChecksum && c.contentReview)
         recordSupplementaryReview(qualityChecksum, c.contentReview);
+      await this.save(
+        job,
+        attributionOutput
+          ? { input: attributionInput, file, output: attributionOutput }
+          : undefined,
+      );
       try {
-        await this.save(job);
         fence(() => onRendered(job, c, toMediaUrl));
       } catch (e) {
         this.log(

@@ -73,11 +73,16 @@ const state = () => (globalThis.__capyPoster ??= { busy: new Set<Platform>() });
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export const resolvePublicationFiles = async (e: QueueEntry): Promise<ClipFile> => {
-  const files = !e.source && e.publicationFiles && existsSync(e.publicationFiles.file)
-    ? e.publicationFiles
-    : await defaultDeps().fileFor(e);
-  return typeof files === "string" ? files : automationPublicationFiles(e,files);
+export const resolvePublicationFiles = async (
+  e: QueueEntry,
+): Promise<ClipFile> => {
+  const files =
+    !e.source && e.publicationFiles && existsSync(e.publicationFiles.file)
+      ? e.publicationFiles
+      : await defaultDeps().fileFor(e);
+  return typeof files === "string"
+    ? files
+    : automationPublicationFiles(e, files);
 };
 
 function defaultDeps(): PosterDeps {
@@ -102,10 +107,22 @@ function defaultDeps(): PosterDeps {
       });
     },
     fileFor: async (e) => {
-      if(e.source) {
-        try { const artifact=await resolveRender(e.source.projectId,e.source.renderId,e.source.renderChecksum);return {file:artifact.path,thumbFile:e.publicationFiles?.thumbFile}; } catch {return "missing";}
+      if (e.source) {
+        try {
+          const artifact = await resolveRender(
+            e.source.projectId,
+            e.source.renderId,
+            e.source.renderChecksum,
+          );
+          return {
+            file: artifact.path,
+            thumbFile: e.publicationFiles?.thumbFile,
+          };
+        } catch {
+          return "missing";
+        }
       }
-      if(!e.jobId || e.n===undefined)return "missing";
+      if (!e.jobId || e.n === undefined) return "missing";
       if (e.jobId.startsWith("story-")) {
         const { stories, storyClipFile } = await import("./stories");
         await stories().init();
@@ -172,6 +189,10 @@ export async function tick(d?: PosterDeps): Promise<void> {
       payload: {},
     });
     return;
+  }
+  if (!d) {
+    const { tickDeliveries } = await import("./delivery");
+    return tickDeliveries(currentWork()!.signal);
   }
   const deps = d ?? defaultDeps();
   if (deps.paused()) return;

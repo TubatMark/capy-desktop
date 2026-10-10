@@ -67,6 +67,38 @@ export function CreatorPolicyForm({
           Recipes retain immutable versions. Automatic publishing is unavailable
           until the worker fault soak and controlled upload are verified.
         </p>
+        <div
+          className="rounded-lg border p-3 space-y-2"
+          aria-label="Local recipe suggestions"
+        >
+          <p className="text-xs text-muted-foreground">
+            Capy suggestions are local editing options; performance improvement
+            is unproven. Choose a template for this creator's draft, review your
+            own topic filters below, and save only if you decide to adopt it.
+            Source duration limits filter source videos; clip length is edited
+            on the local clip page.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setValue({ ...value, editTemplate: "clean-portrait-v1" })
+              }
+            >
+              Use Clean in recipe draft
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setValue({ ...value, editTemplate: "bold-portrait-v1" })
+              }
+            >
+              Use Bold in recipe draft
+            </Button>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <label className="text-xs">
             Automation mode

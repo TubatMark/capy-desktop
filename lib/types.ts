@@ -10,7 +10,14 @@ export type Audience = "original" | "en-us";
 export type Platform = "youtube" | "instagram" | "tiktok";
 export const PLATFORMS: Platform[] = ["youtube", "instagram", "tiktok"];
 
-export type QueueStatus = "review" | "scheduled" | "posting" | "posted" | "needs_action" | "failed" | "rejected";
+export type QueueStatus =
+  | "review"
+  | "scheduled"
+  | "posting"
+  | "posted"
+  | "needs_action"
+  | "failed"
+  | "rejected";
 
 /** Text sent with a post; YouTube uses title/description/tags, Instagram and TikTok use caption. */
 export interface PostText {
@@ -22,7 +29,20 @@ export interface PostText {
 
 /** One clip going to one platform (server/queue.ts owns these). */
 export interface QueueEntry {
-  source?: { kind: "studio"; projectId: string; revision: number; renderId: string; renderChecksum: string };
+  remoteSchedule?: {
+    publishAt: number;
+    uploadAheadMinutes: number;
+    schedulePolicy: "youtube-schedule-v1";
+  };
+  delivery?: import("./delivery").DeliveryAttributionProjection;
+  deliveryCanRetry?: boolean;
+  source?: {
+    kind: "studio";
+    projectId: string;
+    revision: number;
+    renderId: string;
+    renderChecksum: string;
+  };
   publishPackage?: PublishPackage;
   publicationDecision?: PublicationDecision;
   /** Server-resolved media locations; never derive content identity from URLs. */
@@ -90,6 +110,7 @@ export interface ImportCreatorsResult {
 
 /** A platform account as the browser sees it (no tokens, secret redacted). */
 export interface AccountPublic {
+  capabilities?: import("../server/platform-capabilities").DestinationCapabilities;
   connectedAt?: number;
   role?: AccountRole;
   platform: Platform;
@@ -143,8 +164,21 @@ export interface WatchedChannel {
   /** New uploads waiting for room under the daily caps, oldest first. */
   pending: { id: string; title: string; duration?: number; foundAt: number }[];
   /** Videos sent through the pipeline, newest first. */
-  history: { videoId: string; title: string; at: number; jobId: string; status: "processing" | "rendered" | "error"; error?: string; note?: string }[];
-  settings: { clips: number; minVideoSec: number; perDay: number; audience?: Audience };
+  history: {
+    videoId: string;
+    title: string;
+    at: number;
+    jobId: string;
+    status: "processing" | "rendered" | "error";
+    error?: string;
+    note?: string;
+  }[];
+  settings: {
+    clips: number;
+    minVideoSec: number;
+    perDay: number;
+    audience?: Audience;
+  };
 }
 
 export interface WatchFile {
@@ -272,7 +306,13 @@ export interface ChannelSnapshot {
   videos: ChannelVideo[];
   /** Last 28 days; missing without the Analytics permission. */
   analytics?: {
-    days: { day: string; views: number; minutes: number; subsGained: number; subsLost: number }[];
+    days: {
+      day: string;
+      views: number;
+      minutes: number;
+      subsGained: number;
+      subsLost: number;
+    }[];
     sources: { source: string; views: number }[];
     searches: { term: string; views: number }[];
     avgViewPct?: number;
@@ -339,7 +379,15 @@ export interface StoryReview {
   notes: string[];
 }
 
-export type StoryStatus = "planning" | "writing" | "script" | "illustrating" | "pages" | "rendering" | "done" | "error";
+export type StoryStatus =
+  | "planning"
+  | "writing"
+  | "script"
+  | "illustrating"
+  | "pages"
+  | "rendering"
+  | "done"
+  | "error";
 
 /** Planned at the brief, before a word is written: what parents search, the hook, the shape of the story. */
 export interface StoryPlan {
@@ -368,7 +416,13 @@ export interface StoryAssessment {
   at: number;
   /** 0–100 each. */
   overall: number;
-  scores: { hook: number; retention: number; search: number; safety: number; production: number };
+  scores: {
+    hook: number;
+    retention: number;
+    search: number;
+    safety: number;
+    production: number;
+  };
   verdict: "ready" | "fix" | "block";
   strengths: string[];
   fixes: { area: string; note: string }[];
@@ -400,11 +454,23 @@ export interface StoryState {
   /** The kid-safety story reviewer's verdict on the script. */
   review?: StoryReview;
   voice?: string;
-  video?: { url: string; file: string; duration: number; coverUrl?: string; renderedAt?: number };
+  video?: {
+    url: string;
+    file: string;
+    duration: number;
+    coverUrl?: string;
+    renderedAt?: number;
+  };
   /** The AI content reviewer on the finished video (kids profile). */
   contentReview?: ContentReview;
   /** Upload text, written for parents. */
-  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[]; /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean };
+  publish?: {
+    ytTitle: string;
+    description: string;
+    hashtags: string[];
+    tags?: string[];
+    /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean;
+  };
   seo?: SeoReport;
   plan?: StoryPlan;
   assessments?: { script?: StoryAssessment; video?: StoryAssessment };
@@ -418,7 +484,8 @@ export interface StoryState {
   updatedAt: number;
 }
 
-export type JobStatus = "queued" | "analyzing" | "preparing" | "ready" | "error";
+export type JobStatus =
+  "queued" | "analyzing" | "preparing" | "ready" | "error";
 export type Stage = "meta" | "captions" | "pick" | "segments" | "done";
 
 export interface Estimate {
@@ -466,7 +533,14 @@ export interface ClipState {
   score: number;
   selected: boolean;
   /** Padded segment on disk that the editor plays and renders from. */
-  segment?: { start: number; end: number; url: string; status: "queued" | "downloading" | "done" | "error"; error?: string; remaining?: number };
+  segment?: {
+    start: number;
+    end: number;
+    url: string;
+    status: "queued" | "downloading" | "done" | "error";
+    error?: string;
+    remaining?: number;
+  };
   thumbUrl?: string;
   /** Candidate frames for the YouTube thumbnail (from the rendered clip, or the source footage before a render). */
   thumbs?: ThumbOption[];
@@ -474,7 +548,13 @@ export interface ClipState {
   thumbAt?: number;
   render: RenderState;
   /** YouTube upload text. Editable; regenerated on demand. */
-  publish?: { ytTitle: string; description: string; hashtags: string[]; tags?: string[]; /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean };
+  publish?: {
+    ytTitle: string;
+    description: string;
+    hashtags: string[];
+    tags?: string[];
+    /** The user edited it: SEO scores it but never rewrites it. */ edited?: boolean;
+  };
   seo?: SeoReport;
   /** The independent reviewer's verdict on this pick. */
   review?: ClipReview;
@@ -508,7 +588,7 @@ export interface JobSettings {
   browser?: string;
   lang?: string;
   /** Who the clips are for; unset at create time = the app default (Settings). */
-  audience?: Audience;  /** Queue rendered clips for review before posting (default true). */
+  audience?: Audience; /** Queue rendered clips for review before posting (default true). */
   autoPost?: boolean;
 }
 
@@ -569,7 +649,17 @@ export const DEFAULT_SETTINGS: JobSettings = {
 };
 
 /** AI coding CLIs capy knows how to drive for picking clips and writing titles. */
-export const AGENT_IDS = ["claude", "codex", "cursor", "gemini", "opencode", "droid", "copilot", "qwen", "amp"] as const;
+export const AGENT_IDS = [
+  "claude",
+  "codex",
+  "cursor",
+  "gemini",
+  "opencode",
+  "droid",
+  "copilot",
+  "qwen",
+  "amp",
+] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export interface AgentInfo {
@@ -588,11 +678,16 @@ export interface AgentInfo {
   modelHint: string;
 }
 
-
 /** Picker models offered in Settings. First is the default. */
 export const MODELS = [
-  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 — mid-tier candidate, quality unverified" },
-  { id: "claude-haiku-5-5", label: "Haiku 5.5 — compact candidate, quality unverified" },
+  {
+    id: "claude-sonnet-5-5",
+    label: "Sonnet 5.5 — mid-tier candidate, quality unverified",
+  },
+  {
+    id: "claude-haiku-5-5",
+    label: "Haiku 5.5 — compact candidate, quality unverified",
+  },
   { id: "claude-opus-5-5", label: "Opus 5.5 — best picks, most usage" },
 ] as const;
 
@@ -617,13 +712,17 @@ export interface AppSettings {
   /** Unix ms of the last completed setup check. */
   checkedAt?: number;
   /** Default audience for new videos (en-us unless set). */
-  audience?: Audience;  /** Audience time zone for posting slots (an AUDIENCES id from lib/post-time.ts, default us-east). */
+  audience?: Audience; /** Audience time zone for posting slots (an AUDIENCES id from lib/post-time.ts, default us-east). */
   postingAudience?: string;
   /** Stop the poster without touching the queue. */
   postingPaused?: boolean;
 }
 
-export const DEFAULT_APP_SETTINGS: AppSettings = { agent: "claude", models: {}, claudeAuth: "subscription" };
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  agent: "claude",
+  models: {},
+  claudeAuth: "subscription",
+};
 
 /** One line of the setup check (server/doctor.ts, GET /api/check). */
 export interface CheckResult {

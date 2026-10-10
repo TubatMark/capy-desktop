@@ -143,6 +143,7 @@ type DeliveryFs = Pick<
   | "readFileSync"
   | "writeFileSync"
   | "renameSync"
+  | "unlinkSync"
 >;
 function syncDirectory(dir: string, fs: DeliveryFs) {
   const fd = fs.openSync(dir, nativeFs.constants.O_RDONLY);
@@ -306,12 +307,23 @@ export function saveDeliveryHandles(
         0o600,
       );
       try {
-        fs.writeFileSync(fd, JSON.stringify(v));
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
+        try {
+          fs.writeFileSync(fd, JSON.stringify(v));
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        fs.renameSync(tmp, file);
+      } catch (error) {
+        // Only this attempt's exclusively created temporary file is disposable.
+        // A renamed checkpoint is retained for the durable adoption path.
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          /* preserve the original storage failure */
+        }
+        throw error;
       }
-      fs.renameSync(tmp, file);
       syncDirectory(dir, fs);
       return updateDelivery(d.id, (x) => ({
         ...x,

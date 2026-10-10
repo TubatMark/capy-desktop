@@ -2,6 +2,8 @@ import { openAsBlob, statSync } from "node:fs";
 import {
   call,
   PlatformError,
+  DeliveryUnknownError,
+  remoteId,
   readJson,
   type ClientCtx,
   type PostJob,
@@ -38,7 +40,19 @@ async function api(
     r.status === 429 ||
     r.status >= 500 ||
     /rate_limit|internal_error/.test(code);
-  throw new PlatformError(`TikTok: ${err?.message || code}`, retryable, auth);
+  const limited = r.status === 429 || /rate_limit/.test(code);
+  throw new PlatformError(
+    `TikTok: ${err?.message || code}`,
+    retryable,
+    auth,
+    auth
+      ? "auth"
+      : limited
+        ? "rate-limit"
+        : retryable
+          ? "transient"
+          : "permanent",
+  );
 }
 
 /** Chunking rules: under 64 MB in one go, else 10 MB chunks with the remainder in the last one. */
@@ -65,6 +79,22 @@ export async function postTikTok(
       false,
     );
   const resumed = job.resume?.publishId;
+  if (ctx.reconcileOnly && !resumed)
+    throw new DeliveryUnknownError("TikTok has no saved publish identifier");
+  if (
+    resumed &&
+    job.resume?.uploadUrl &&
+    job.resume.uploaded !== "1" &&
+    !ctx.reconcileOnly
+  ) {
+    const status = await api(ctx, "/post/publish/status/fetch/", {
+      publish_id: resumed,
+    });
+    if (status.status === "PROCESSING_UPLOAD") {
+      const offset = Number(status.uploaded_bytes);
+      await uploadChunks(job, ctx, job.resume.uploadUrl, offset);
+    }
+  }
   if (
     resumed &&
     bound?.mode === "direct" &&
@@ -108,7 +138,8 @@ async function send(
         "TikTok offers no privacy allowed by the approved policy",
         false,
       );
-    ctx.checkpoint?.({ deliveryPhase: "attempted" });
+    ctx.beforeMutation?.();
+    ctx.checkpoint?.({ deliveryPhase: "session-create-intent" });
     init = await api(ctx, "/post/publish/video/init/", {
       post_info: {
         title: job.text.caption ?? "",
@@ -121,16 +152,54 @@ async function send(
       source_info,
     });
   } else {
-    ctx.checkpoint?.({ deliveryPhase: "attempted" });
+    ctx.beforeMutation?.();
+    ctx.checkpoint?.({ deliveryPhase: "session-create-intent" });
     init = await api(ctx, "/post/publish/inbox/video/init/", { source_info });
   }
-  const publishId = String(init.publish_id);
-  const uploadUrl = String(init.upload_url);
+  const publishId = remoteId(init.publish_id);
+  const uploadUrl = typeof init.upload_url === "string" ? init.upload_url : "";
+  if (!uploadUrl.startsWith("https://"))
+    throw new DeliveryUnknownError("TikTok did not return a valid upload URL");
+  ctx.checkpoint?.({
+    publishId,
+    uploadUrl,
+    privacy,
+    deliveryPhase: "session-known",
+  });
+  await uploadChunks(job, ctx, uploadUrl, 0);
+  return { publishId, privacy };
+}
+async function uploadChunks(
+  job: PostJob,
+  ctx: ClientCtx,
+  uploadUrl: string,
+  offset: number,
+) {
+  const size = statSync(job.file).size,
+    c = chunking(size);
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > size ||
+    (offset !== size && offset % c.chunk_size !== 0)
+  )
+    throw new DeliveryUnknownError(
+      "TikTok upload progress does not match a recoverable chunk boundary",
+    );
 
   const blob = await openAsBlob(job.file);
-  for (let i = 0; i < c.total_chunk_count; i++) {
+  for (
+    let i = Math.floor(offset / c.chunk_size);
+    i < c.total_chunk_count;
+    i++
+  ) {
     const a = i * c.chunk_size;
     const b = i === c.total_chunk_count - 1 ? size : a + c.chunk_size;
+    ctx.beforeMutation?.();
+    ctx.checkpoint?.({
+      deliveryPhase: "transfer-intent",
+      uploadOffset: String(a),
+    });
     const r = await call(ctx.fetch, uploadUrl, {
       method: "PUT",
       headers: {
@@ -146,9 +215,7 @@ async function send(
         r.status === 429 || r.status >= 500,
       );
   }
-  ctx.checkpoint?.({ publishId, privacy, deliveryPhase: "acknowledged" });
-  ctx.log(`uploaded ${publishId}`);
-  return { publishId, privacy };
+  ctx.checkpoint?.({ uploaded: "1", deliveryPhase: "acknowledged" });
 }
 
 async function follow(
@@ -167,6 +234,11 @@ async function follow(
         false,
       );
     if (st === "SEND_TO_USER_INBOX") {
+      ctx.observe?.({
+        state: "needs-action",
+        visibility: "inbox",
+        remoteStatus: st,
+      });
       return {
         kind: "needs_action",
         id: publishId,
@@ -174,23 +246,48 @@ async function follow(
       };
     }
     if (st === "PUBLISH_COMPLETE") {
-      const postId = (
-        s.publicaly_available_post_id as string[] | undefined
-      )?.[0];
-      const id = postId ?? publishId;
-      return {
-        kind: "posted",
-        id,
-        url:
-          postId && ctx.username
-            ? `https://www.tiktok.com/@${ctx.username}/video/${postId}`
-            : undefined,
-        note:
-          privacy && privacy !== "PUBLIC_TO_EVERYONE"
-            ? "Posted as private (app not audited)"
-            : undefined,
-      };
+      const ids = Array.isArray(s.publicaly_available_post_id)
+        ? s.publicaly_available_post_id.filter(
+            (id): id is string =>
+              typeof id === "string" && /^[a-zA-Z0-9_-]{1,200}$/.test(id),
+          )
+        : [];
+      const postId = ids[0];
+      ctx.observe?.({
+        state: postId ? "public" : "needs-action",
+        visibility: postId
+          ? "public"
+          : privacy === "SELF_ONLY"
+            ? "private"
+            : "unknown",
+        publicationIds: ids,
+        remoteStatus: st,
+      });
+      return postId
+        ? {
+            kind: "posted",
+            id: postId,
+            url: ctx.username
+              ? `https://www.tiktok.com/@${ctx.username}/video/${postId}`
+              : undefined,
+          }
+        : {
+            kind: "needs_action",
+            id: publishId,
+            note: "TikTok reports completion, but public visibility is not confirmed. Check the post in TikTok.",
+          };
     }
+    ctx.observe?.({
+      state: "processing",
+      visibility: "unknown",
+      remoteStatus: st,
+    });
+    if (ctx.singlePoll)
+      return {
+        kind: "needs_action",
+        id: publishId,
+        note: "TikTok is processing the saved upload",
+      };
     await ctx.sleep(5_000);
   }
   throw new PlatformError(

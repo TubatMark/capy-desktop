@@ -48,6 +48,7 @@ describe("channel snapshot", () => {
       [/\/videos\?/, () => ({ items: [video("a"), video("b")] })],
       [/dimensions=day/, () => ({ columnHeaders: [{ name: "day" }, { name: "views" }, { name: "estimatedMinutesWatched" }, { name: "subscribersGained" }, { name: "subscribersLost" }], rows: [["2026-10-01", 4, 2, 1, 0]] })],
       [/dimensions=video/, () => ({ columnHeaders: [{ name: "video" }, { name: "views" }, { name: "estimatedMinutesWatched" }, { name: "averageViewPercentage" }], rows: [["a", 30, 10, 80], ["b", 10, 2, 40]] })],
+      [/metrics=averageViewPercentage(?:&|$)/, () => ({ columnHeaders: [{ name: "averageViewPercentage" }], rows: [[93]] })],
       [/dimensions=insightTrafficSourceType/, () => ({ columnHeaders: [{ name: "insightTrafficSourceType" }, { name: "views" }], rows: [["SHORTS", 30]] })],
       [/insightTrafficSourceDetail/, () => ({ columnHeaders: [{ name: "insightTrafficSourceDetail" }, { name: "views" }], rows: [["bedtime story", 7]] })],
     ]);
@@ -56,7 +57,7 @@ describe("channel snapshot", () => {
     expect(s.videos.map((v) => v.id)).toEqual(["b", "a"]); // newest first
     expect(s.videos.find((v) => v.id === "a")).toMatchObject({ avgViewPct: 80, minutes: 10 });
     expect(s.videos[0]!.seo).toBeTypeOf("number");
-    expect(s.analytics).toMatchObject({ days: [{ day: "2026-10-01", views: 4, subsGained: 1 }], sources: [{ source: "SHORTS", views: 30 }], searches: [{ term: "bedtime story", views: 7 }], avgViewPct: 70 });
+    expect(s.analytics).toMatchObject({ days: [{ day: "2026-10-01", views: 4, subsGained: 1 }], sources: [{ source: "SHORTS", views: 30 }], searches: [{ term: "bedtime story", views: 7 }], avgViewPct: 93 });
     expect(s.notes).toEqual([]);
     expect(calls.every((c) => new Headers(c.init.headers).get("authorization") === "Bearer T")).toBe(true);
     expect(calls.find((c) => /dimensions=day/.test(c.url.href))!.url.searchParams.get("startDate")).toBe("2026-09-08");
@@ -81,7 +82,7 @@ describe("channel snapshot", () => {
       [/youtubeanalytics/, () => ({ error: { message: "nope", errors: [{ reason: "forbidden" }] } }), 403],
     ]);
     const s = await fetchSnapshot(deps(f), ALL);
-    expect(s.notes.length).toBe(4);
+    expect(s.notes.length).toBe(5);
     expect(s.notes[0]).toMatch(/Daily numbers: Reconnect YouTube/);
   });
 

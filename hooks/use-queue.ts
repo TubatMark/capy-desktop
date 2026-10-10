@@ -4,6 +4,7 @@ import type { QueueEntry, QueueSummary } from "@/lib/types";
 
 export interface QueueData {
   entries: QueueEntry[];
+  capabilities?: import("@/server/platform-capabilities").DestinationCapabilities[];
   summary: QueueSummary;
   /** Next free slot for the connected platforms (Unix ms). */
   nextFree?: number;
@@ -23,19 +24,32 @@ export function useQueue() {
   }, []);
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => document.visibilityState === "visible" && void refresh(), 5000);
+    const t = setInterval(
+      () => document.visibilityState === "visible" && void refresh(),
+      5000,
+    );
     return () => clearInterval(t);
   }, [refresh]);
   return { data, refresh };
 }
 
 export function fmtSlot(at: number, tz: string) {
-  return new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(at));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(at));
 }
 
 /** Review count, next post and watched creators for the navigation; refreshed every 15 s. */
 export function useQueueSummary() {
-  const [s, setS] = useState<(QueueSummary & { watching?: number; todo?: number }) | null>(null);
+  const [s, setS] = useState<
+    (QueueSummary & { watching?: number; todo?: number }) | null
+  >(null);
   useEffect(() => {
     let live = true;
     const load = () =>

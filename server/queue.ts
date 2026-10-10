@@ -1,3 +1,4 @@
+import { deliveryForPackage, deliveryProjection } from "./delivery-store";
 import { queueGroup } from "../lib/queue-source";
 import { legacyState, mutateLegacy } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
@@ -121,7 +122,7 @@ export function upsertForRender(
       continue;
     }
     const e = out[i]!;
-    if (e.status === "posting") continue; // mid-upload: leave it be
+    if (e.status === "posting" || deliveryMutationReason(e)) continue; // mid-upload: leave it be
     if (e.fp && e.fp !== fp) {
       // different footage under the same clip number: it was never approved, so it gets its own review
       const archived: QueueEntry =
@@ -194,10 +195,26 @@ export function approve(
   },
 ): { entries: QueueEntry[]; scheduled: QueueEntry[] } {
   let out = [...entries];
-  const groups = [...new Set(out.filter(e=>e.status==="review" && (o.group ? queueGroup(e)===o.group : !e.source && e.jobId===jobId && (n===undefined || e.n===n))).map(queueGroup))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  const groups = [
+    ...new Set(
+      out
+        .filter(
+          (e) =>
+            e.status === "review" &&
+            (o.group
+              ? queueGroup(e) === o.group
+              : !e.source &&
+                e.jobId === jobId &&
+                (n === undefined || e.n === n)),
+        )
+        .map(queueGroup),
+    ),
+  ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const scheduled: QueueEntry[] = [];
   for (const group of groups) {
-    const mine=out.filter(e=>queueGroup(e)===group && e.status==="review");
+    const mine = out.filter(
+      (e) => queueGroup(e) === group && e.status === "review",
+    );
     const selected = mine.filter(
       (e) => !o.platforms || o.platforms.includes(e.platform),
     );
@@ -241,12 +258,20 @@ export function approve(
 }
 
 export const reject = (entries: QueueEntry[], key: string, now: Date) =>
-  patch(entries, key, (e) =>
-    note({ ...e, status: "rejected", slotAt: undefined }, "Rejected", now),
+  patch(
+    entries,
+    key,
+    (e) => (
+      assertDeliveryMutable(e),
+      note({ ...e, status: "rejected", slotAt: undefined }, "Rejected", now)
+    ),
   );
 
 export const remove = (entries: QueueEntry[], key: string) =>
-  entries.filter((e) => e.key !== key);
+  entries.filter((e) => {
+    if (e.key === key) assertDeliveryMutable(e);
+    return e.key !== key;
+  });
 
 export const editText = (
   entries: QueueEntry[],
@@ -254,18 +279,31 @@ export const editText = (
   text: PostText,
   now: Date,
 ) =>
-  patch(entries, key, (e) => ({
-    ...e,
-    text: { ...e.text, ...text },
-    status: "review",
-    slotAt: undefined,
-    nextTryAt: undefined,
-    publicationDecision: undefined,
-    progress: undefined,
-    updatedAt: now.getTime(),
-  }));
+  patch(
+    entries,
+    key,
+    (e) => (
+      assertDeliveryMutable(e),
+      {
+        ...e,
+        remoteSchedule: undefined,
+        text: { ...e.text, ...text },
+        status: "review",
+        slotAt: undefined,
+        nextTryAt: undefined,
+        publicationDecision: undefined,
+        progress: undefined,
+        updatedAt: now.getTime(),
+      }
+    ),
+  );
 
 const gated = (e: QueueEntry, next: () => QueueEntry, now: Date) => {
+  assertDeliveryMutable(e);
+  if (e.remoteSchedule)
+    throw Error(
+      "Use explicit remote schedule approval to change its bound publication time",
+    );
   const result = eligibility(e);
   return result.allowed
     ? next()
@@ -353,15 +391,14 @@ export function reconcileMissed(
   const late = out.filter(
     (e) =>
       e.status === "scheduled" &&
+      !e.remoteSchedule &&
+      !deliveryMutationReason(e) &&
       e.slotAt !== undefined &&
       now.getTime() - e.slotAt > LATE_MS,
   );
   const groups = new Map<string, QueueEntry[]>();
   for (const e of late)
-    groups.set(queueGroup(e), [
-      ...(groups.get(queueGroup(e)) ?? []),
-      e,
-    ]);
+    groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
   for (const group of groups.values()) {
     const keys = new Set(group.map((e) => e.key));
     const slot = allocateSlot(
@@ -545,9 +582,7 @@ export function summary(entries: QueueEntry[], now: Date): QueueSummary {
   void now;
   return {
     review: new Set(
-      entries
-        .filter((e) => e.status === "review")
-        .map((e) => queueGroup(e)),
+      entries.filter((e) => e.status === "review").map((e) => queueGroup(e)),
     ).size,
     activeCount: active.length,
     nextPost: next
@@ -587,4 +622,66 @@ export function queue() {
       return mutateLegacy("queue", emptyQueue, validQueue, fn);
     },
   };
+}
+
+/** A local edit cannot revoke or repeat an already-started remote operation. */
+export function deliveryMutationReason(e: QueueEntry): string | undefined {
+  const d = e.publishPackage
+    ? deliveryForPackage(e.publishPackage.packageHash)
+    : undefined;
+  if (
+    d &&
+    ((d.phase !== "not-started" &&
+      d.phase !== "destination-pinned" &&
+      d.phase !== "initialization-rejected") ||
+      (d.checkpoint > 0 &&
+        d.phase !== "destination-pinned" &&
+        d.phase !== "initialization-rejected") ||
+      d.state === "public")
+  )
+    return "A remote delivery has already started. Check its status or manage it on the destination; local edits cannot change or repeat it.";
+}
+/** Explicit public fields only: private resume handles and filesystem locations never leave the server. */
+export function publicQueueEntry(e: QueueEntry): QueueEntry {
+  const d = e.publishPackage
+    ? deliveryForPackage(e.publishPackage.packageHash)
+    : undefined;
+  return {
+    key: e.key,
+    jobId: e.jobId,
+    n: e.n,
+    source: e.source,
+    platform: e.platform,
+    status: e.status,
+    clipTitle: e.clipTitle,
+    text: e.text,
+    attempts: e.attempts,
+    history: e.history,
+    createdAt: e.createdAt,
+    updatedAt: e.updatedAt,
+    aiReview: e.aiReview,
+    seo: e.seo,
+    fp: e.fp,
+    madeForKids: e.madeForKids,
+    link: e.link,
+    videoTitle: e.videoTitle,
+    videoUrl: e.videoUrl,
+    thumbUrl: e.thumbUrl,
+    thumbAt: e.thumbAt,
+    slotAt: e.slotAt,
+    nextTryAt: e.nextTryAt,
+    authBlocked: e.authBlocked,
+    result: e.result,
+    error: e.error,
+    publishPackage: e.publishPackage,
+    publicationDecision: e.publicationDecision,
+    remoteSchedule: e.remoteSchedule,
+    delivery: d ? deliveryProjection(d) : undefined,
+    deliveryCanRetry: d ? !deliveryMutationReason(e) : undefined,
+  };
+}
+
+function assertDeliveryMutable(e: QueueEntry) {
+  const reason = deliveryMutationReason(e);
+  if (reason) throw Error(reason);
 }

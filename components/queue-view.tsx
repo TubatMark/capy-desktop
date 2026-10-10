@@ -2,7 +2,17 @@
 import { queueGroup, queueCollection, queueLink } from "@/lib/queue-source";
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, RotateCw, Send, Trash2, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Loader2,
+  RotateCw,
+  Send,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CopyText } from "@/components/copy-text";
@@ -25,13 +35,38 @@ export function QueueView() {
   const [toast, setToast] = useState<string | null>(null);
   const tz = data?.audienceTz ?? "America/New_York";
 
-  const review = useMemo(() => group(data?.entries.filter((e) => e.status === "review") ?? [], (e) => queueGroup(e)), [data]);
-  const byVideo = useMemo(() => group([...review.values()].map((es) => es[0]!), (e) => queueCollection(e)), [review]);
+  const review = useMemo(
+    () =>
+      group(data?.entries.filter((e) => e.status === "review") ?? [], (e) =>
+        queueGroup(e),
+      ),
+    [data],
+  );
+  const byVideo = useMemo(
+    () =>
+      group(
+        [...review.values()].map((es) => es[0]!),
+        (e) => queueCollection(e),
+      ),
+    [review],
+  );
   const planned = useMemo(() => {
-    const live = data?.entries.filter((e) => e.status !== "review" && e.status !== "rejected") ?? [];
+    const live =
+      data?.entries.filter(
+        (e) => e.status !== "review" && e.status !== "rejected",
+      ) ?? [];
     const clips = group(live, (e) => queueGroup(e));
-    const rows = [...clips.values()].sort((a, b) => (a[0]!.slotAt ?? a[0]!.updatedAt) - (b[0]!.slotAt ?? b[0]!.updatedAt));
-    const day = (es: QueueEntry[]) => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" }).format(new Date(es[0]!.slotAt ?? es[0]!.updatedAt));
+    const rows = [...clips.values()].sort(
+      (a, b) =>
+        (a[0]!.slotAt ?? a[0]!.updatedAt) - (b[0]!.slotAt ?? b[0]!.updatedAt),
+    );
+    const day = (es: QueueEntry[]) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      }).format(new Date(es[0]!.slotAt ?? es[0]!.updatedAt));
     return group(rows, day);
   }, [data, tz]);
 
@@ -55,32 +90,69 @@ export function QueueView() {
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">Queue</h1>
         <p className="text-sm text-muted-foreground">
-          Rendered clips wait here for your OK. Approved clips post at staggered times (at most 2 a day per platform, 4 hours apart) in {tz.replace("_", " ")} time.{" "}
-          <Link href="/settings#accounts" className="underline underline-offset-2">
+          Rendered clips wait here for your OK. Approved clips post at staggered
+          times (at most 2 a day per platform, 4 hours apart) in{" "}
+          {tz.replace("_", " ")} time.{" "}
+          <Link
+            href="/settings#accounts"
+            className="underline underline-offset-2"
+          >
             Accounts
           </Link>
         </p>
       </div>
-      {toast && <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">{toast}</p>}
+      {toast && (
+        <p className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
+          {toast}
+        </p>
+      )}
 
       <section className="space-y-3">
         <h2 className="font-semibold">Waiting for your OK ({review.size})</h2>
-        {review.size === 0 && <p className="text-sm text-muted-foreground">Nothing to review. Render clips and they show up here (with Auto-post on and an account connected).</p>}
+        {review.size === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Nothing to review. Render clips and they show up here (with
+            Auto-post on and an account connected).
+          </p>
+        )}
         {[...byVideo.entries()].map(([jobId, firsts]) => (
           <div key={jobId} className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="min-w-0 truncate text-sm text-muted-foreground">{firsts[0]!.videoTitle ?? jobId}</p>
+              <p className="min-w-0 truncate text-sm text-muted-foreground">
+                {firsts[0]!.videoTitle ?? jobId}
+              </p>
               {firsts.length > 1 && !firsts[0]!.source && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={async () => {
-                    const all = data.entries.filter((e) => queueCollection(e) === jobId && e.status === "review");
-                    const blocked = new Set(all.filter((e) => e.aiReview?.verdict === "block").map((e) => e.n)).size;
-                    if (blocked && !window.confirm(`The AI reviewer blocked ${blocked} of these clips. Approve all of them anyway?`)) return;
+                    const all = data.entries.filter(
+                      (e) =>
+                        queueCollection(e) === jobId && e.status === "review",
+                    );
+                    const blocked = new Set(
+                      all
+                        .filter((e) => e.aiReview?.verdict === "block")
+                        .map((e) => e.n),
+                    ).size;
+                    if (
+                      blocked &&
+                      !window.confirm(
+                        `The AI reviewer blocked ${blocked} of these clips. Approve all of them anyway?`,
+                      )
+                    )
+                      return;
                     try {
-                      const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ jobId, force: blocked > 0 }) });
-                      done(`${new Set(r.scheduled.map((e) => e.n)).size} clips scheduled`);
+                      const r = await api<{ scheduled: QueueEntry[] }>(
+                        "/api/queue/approve",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({ jobId, force: blocked > 0 }),
+                        },
+                      );
+                      done(
+                        `${new Set(r.scheduled.map((e) => e.n)).size} clips scheduled`,
+                      );
                     } catch (e) {
                       done(e instanceof Error ? e.message : String(e));
                     }
@@ -91,7 +163,13 @@ export function QueueView() {
               )}
             </div>
             {firsts.map((f) => (
-              <ReviewCard key={queueGroup(f)} entries={review.get(queueGroup(f))!} nextFree={data.nextFree} tz={tz} onDone={done} />
+              <ReviewCard
+                key={queueGroup(f)}
+                entries={review.get(queueGroup(f))!}
+                nextFree={data.nextFree}
+                tz={tz}
+                onDone={done}
+              />
             ))}
           </div>
         ))}
@@ -99,12 +177,33 @@ export function QueueView() {
 
       <section className="space-y-4">
         <h2 className="font-semibold">Scheduled &amp; posted</h2>
-        {planned.size === 0 && <p className="text-sm text-muted-foreground">Nothing scheduled yet.</p>}
+        {planned.size === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Nothing scheduled yet.
+          </p>
+        )}
         {[...planned.entries()].map(([day, rows]) => (
           <div key={day} className="space-y-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{day}</h3>
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {day}
+            </h3>
             {rows.map((es) => (
-              <ScheduledRow key={queueGroup(es[0]!)} entries={es} tz={tz} onChange={done} />
+              <ScheduledRow
+                key={queueGroup(es[0]!)}
+                entries={es}
+                tz={tz}
+                onChange={done}
+                schedulingVerified={
+                  data.capabilities?.some(
+                    (c) =>
+                      c.platform === "youtube" &&
+                      c.accountId ===
+                        es.find((e) => e.platform === "youtube")?.publishPackage
+                          ?.accountId &&
+                      c.scheduling === "verified",
+                  ) ?? false
+                }
+              />
             ))}
           </div>
         ))}
@@ -113,29 +212,62 @@ export function QueueView() {
   );
 }
 
-function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: string; onChange: (msg?: string) => void }) {
+function ScheduledRow({
+  entries,
+  tz,
+  onChange,
+  schedulingVerified,
+}: {
+  entries: QueueEntry[];
+  tz: string;
+  onChange: (msg?: string) => void;
+  schedulingVerified: boolean;
+}) {
   const first = entries[0]!;
   const [moving, setMoving] = useState(false);
   const [when, setWhen] = useState("");
   const [open, setOpen] = useState(false);
-  const act = async (e: QueueEntry, action: "post-now" | "retry" | "reject") => {
-    await api(`/api/queue/${encodeURIComponent(e.key)}/${action}`, { method: "POST" }).catch(() => {});
-    onChange();
+  const act = async (
+    e: QueueEntry,
+    action: "post-now" | "retry" | "reject" | "check-status",
+  ) => {
+    try {
+      await api(`/api/queue/${encodeURIComponent(e.key)}/${action}`, {
+        method: "POST",
+      });
+      onChange();
+    } catch (error) {
+      onChange(error instanceof Error ? error.message : String(error));
+    }
   };
-  const pending = entries.filter((e) => e.status === "scheduled" || e.status === "failed");
+  const pending = entries.filter(
+    (e) =>
+      !e.delivery &&
+      !e.remoteSchedule &&
+      (e.status === "scheduled" || e.status === "failed"),
+  );
 
   return (
     <div className="space-y-2 rounded-xl border bg-card p-3">
       <div className="flex flex-wrap items-center gap-3">
         {first.thumbUrl && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={first.thumbUrl} alt="" className="h-14 w-8 shrink-0 rounded object-cover" />
+          <img
+            src={first.thumbUrl}
+            alt=""
+            className="h-14 w-8 shrink-0 rounded object-cover"
+          />
         )}
         <div className="min-w-0 flex-1">
-          <Link href={queueLink(first)} className="block truncate text-sm font-medium hover:underline">
+          <Link
+            href={queueLink(first)}
+            className="block truncate text-sm font-medium hover:underline"
+          >
             {first.clipTitle}
           </Link>
-          <p className="text-xs text-muted-foreground">{first.slotAt ? fmtSlot(first.slotAt, tz) : "No time set"}</p>
+          <p className="text-xs text-muted-foreground">
+            {first.slotAt ? fmtSlot(first.slotAt, tz) : "No time set"}
+          </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {entries.map((e) => (
@@ -144,10 +276,22 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
         </div>
         {pending.length > 0 && (
           <div className="flex gap-1">
-            <Button size="sm" variant="ghost" title="Post now" onClick={() => Promise.all(pending.map((e) => act(e, "post-now")))}>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Post now"
+              onClick={() =>
+                Promise.all(pending.map((e) => act(e, "post-now")))
+              }
+            >
               <Send />
             </Button>
-            <Button size="sm" variant="ghost" title="Move" onClick={() => setMoving(!moving)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Move"
+              onClick={() => setMoving(!moving)}
+            >
               <Clock />
             </Button>
             <Button
@@ -155,7 +299,10 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
               variant="ghost"
               title="Remove from the queue"
               onClick={async () => {
-                for (const e of pending) await api(`/api/queue/${encodeURIComponent(e.key)}`, { method: "DELETE" }).catch(() => {});
+                for (const e of pending)
+                  await api(`/api/queue/${encodeURIComponent(e.key)}`, {
+                    method: "DELETE",
+                  }).catch(() => {});
                 onChange();
               }}
             >
@@ -166,8 +313,15 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
       </div>
       {moving && (
         <div className="flex flex-wrap items-center gap-2">
-          <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} className="w-auto" />
-          <span className="text-xs text-muted-foreground">{tz.replace("_", " ")} time</span>
+          <Input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            className="w-auto"
+          />
+          <span className="text-xs text-muted-foreground">
+            {tz.replace("_", " ")} time
+          </span>
           <Button
             size="sm"
             disabled={!when}
@@ -176,7 +330,11 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
               const [y, m, day] = d!.split("-").map(Number);
               const [h, min] = t!.split(":").map(Number);
               const slotAt = zonedToUtc(y!, m!, day!, h!, min!, tz).getTime();
-              for (const e of pending) await api(`/api/queue/${encodeURIComponent(e.key)}`, { method: "PATCH", body: JSON.stringify({ slotAt }) }).catch(() => {});
+              for (const e of pending)
+                await api(`/api/queue/${encodeURIComponent(e.key)}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ slotAt }),
+                }).catch(() => {});
               setMoving(false);
               onChange(`Moved to ${fmtSlot(slotAt, tz)}`);
             }}
@@ -188,32 +346,111 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
       {entries.map((e) =>
         e.status === "needs_action" || e.status === "failed" ? (
           <div key={e.key} className="rounded-lg bg-muted/60 p-2 text-xs">
-            <p className={e.status === "failed" ? "text-red-700" : "text-amber-800"}>
+            <p
+              className={
+                e.status === "failed" ? "text-red-700" : "text-amber-800"
+              }
+            >
               <b>{PLATFORM_NAME[e.platform]}:</b> {e.result?.note ?? e.error}
               {e.nextTryAt ? ` · retrying ${fmtSlot(e.nextTryAt, tz)}` : ""}
             </p>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               {e.result?.url && (
-                <a href={e.result.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-2">
+                <a
+                  href={e.result.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 underline underline-offset-2"
+                >
                   Open <ExternalLink className="size-3" />
                 </a>
               )}
-              {e.platform === "tiktok" && e.status === "needs_action" && e.text.caption && <CopyText text={e.text.caption} />}
+              {e.platform === "tiktok" &&
+                e.status === "needs_action" &&
+                e.text.caption && <CopyText text={e.text.caption} />}
               {e.authBlocked && (
-                <Link href="/settings#accounts" className="underline underline-offset-2">
+                <Link
+                  href="/settings#accounts"
+                  className="underline underline-offset-2"
+                >
                   Reconnect in Settings
                 </Link>
               )}
-              {(e.status === "failed" || (e.status === "needs_action" && !e.result?.id)) && !e.authBlocked && (
-                <Button size="sm" variant="outline" className="h-7" onClick={() => act(e, "retry")}>
-                  <RotateCw /> Retry
-                </Button>
-              )}
+              {(!e.delivery || e.deliveryCanRetry) &&
+                !e.remoteSchedule &&
+                (e.status === "failed" ||
+                  (e.status === "needs_action" && !e.result?.id)) &&
+                !e.authBlocked && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7"
+                    onClick={() => act(e, "retry")}
+                  >
+                    <RotateCw /> Retry
+                  </Button>
+                )}
             </div>
           </div>
         ) : null,
       )}
-      <button type="button" className="text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setOpen(!open)}>
+      {entries.map((e) =>
+        e.delivery ? (
+          <div
+            key={`delivery-${e.key}`}
+            className="rounded-lg border p-2 text-xs space-y-1"
+          >
+            <p>
+              {PLATFORM_NAME[e.platform]}: {e.delivery.state} · visibility:{" "}
+              {e.delivery.visibility}
+            </p>
+            <p>
+              Thumbnail: {e.delivery.thumbnail.status}
+              {e.delivery.thumbnail.status === "accepted"
+                ? " by upload API; display on Shorts is not verified"
+                : ""}
+            </p>
+            {e.delivery.observedAt && (
+              <p>
+                Last checked {new Date(e.delivery.observedAt).toLocaleString()}
+              </p>
+            )}
+            {e.delivery.nextTryAt && (
+              <p>
+                Next check {fmtSlot(e.delivery.nextTryAt, tz)}
+                {e.delivery.retryClass ? ` (${e.delivery.retryClass})` : ""}
+              </p>
+            )}
+            {e.delivery.visibility === "scheduled" && (
+              <p>
+                YouTube has accepted this schedule. Pausing capy does not cancel
+                it. Manage changes in YouTube Studio.
+              </p>
+            )}
+            {e.delivery.state !== "public" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => act(e, "check-status")}
+              >
+                Check saved delivery status
+              </Button>
+            )}
+          </div>
+        ) : e.platform === "youtube" && e.status === "scheduled" ? (
+          <RemoteScheduleForm
+            key={`schedule-${e.key}`}
+            entry={e}
+            verified={schedulingVerified}
+            onChange={onChange}
+          />
+        ) : null,
+      )}
+      <button
+        type="button"
+        className="text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={() => setOpen(!open)}
+      >
         {open ? "Hide history" : "History"}
       </button>
       {open && (
@@ -223,7 +460,8 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
             .sort((a, b) => a.t - b.t)
             .map((h, i) => (
               <li key={i}>
-                {new Date(h.t).toLocaleString()} · {PLATFORM_NAME[h.p]} · {h.msg}
+                {new Date(h.t).toLocaleString()} · {PLATFORM_NAME[h.p]} ·{" "}
+                {h.msg}
               </li>
             ))}
         </ul>
@@ -235,9 +473,22 @@ function ScheduledRow({ entries, tz, onChange }: { entries: QueueEntry[]; tz: st
 function StatusChip({ e }: { e: QueueEntry }) {
   const name = PLATFORM_NAME[e.platform];
   const base = "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs";
+  if (e.delivery)
+    return (
+      <span
+        className={`${base} ${e.delivery.state === "public" ? "bg-emerald-500/15 text-emerald-700" : "bg-secondary"}`}
+      >
+        {name} · {e.delivery.state}
+      </span>
+    );
   if (e.status === "posted")
     return e.result?.url ? (
-      <a href={e.result.url} target="_blank" rel="noreferrer" className={`${base} bg-emerald-500/15 text-emerald-700 hover:underline`}>
+      <a
+        href={e.result.url}
+        target="_blank"
+        rel="noreferrer"
+        className={`${base} bg-emerald-500/15 text-emerald-700 hover:underline`}
+      >
         <CheckCircle2 className="size-3" /> {name}
       </a>
     ) : (
@@ -267,5 +518,97 @@ function StatusChip({ e }: { e: QueueEntry }) {
     <span className={`${base} bg-secondary text-secondary-foreground`}>
       <Clock className="size-3" /> {name}
     </span>
+  );
+}
+
+function RemoteScheduleForm({
+  entry,
+  verified,
+  onChange,
+}: {
+  entry: QueueEntry;
+  verified: boolean;
+  onChange: (msg?: string) => void;
+}) {
+  const [when, setWhen] = useState("");
+  const [minutes, setMinutes] = useState(60);
+  const [ack, setAck] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <details className="text-xs">
+      <summary>YouTube upload ahead and remote schedule</summary>
+      <div className="space-y-2 py-2">
+        <p>
+          {verified
+            ? "Choose an exact publication time and approve a new package."
+            : "Unavailable until remote scheduling is verified for this exact publishing destination through a separately authorized upload."}
+        </p>
+        {entry.remoteSchedule && (
+          <p>
+            Approved for{" "}
+            {new Date(entry.remoteSchedule.publishAt).toLocaleString()},
+            uploading up to {entry.remoteSchedule.uploadAheadMinutes} minutes
+            ahead.
+          </p>
+        )}
+        <label className="block">
+          Publish at (this computer’s time zone)
+          <Input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            disabled={!verified}
+          />
+        </label>
+        <label className="block">
+          Upload ahead (minutes, 1–1440)
+          <Input
+            type="number"
+            min={1}
+            max={1440}
+            value={minutes}
+            onChange={(e) => setMinutes(Number(e.target.value))}
+            disabled={!verified}
+          />
+        </label>
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            checked={ack}
+            onChange={(e) => setAck(e.target.checked)}
+            disabled={!verified}
+          />
+          I approve uploading early and publication by YouTube at this time.
+          Pausing or closing capy cannot cancel an accepted remote schedule.
+        </label>
+        <Button
+          size="sm"
+          disabled={!verified || !ack || !when || busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await api(
+                `/api/queue/${encodeURIComponent(entry.key)}/schedule`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    publishAt: new Date(when).getTime(),
+                    uploadAheadMinutes: minutes,
+                    acknowledgeRemoteSchedule: ack,
+                  }),
+                },
+              );
+              onChange("Remote schedule explicitly approved");
+            } catch (error) {
+              onChange(error instanceof Error ? error.message : String(error));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Approve new remote schedule
+        </Button>
+      </div>
+    </details>
   );
 }

@@ -7,6 +7,7 @@ import {
 import { runtimeStore } from "./db/runtime";
 import { hashManifest, packageDigest } from "./publication-policy";
 import { fence } from "./worker/context";
+import { getRenderProof } from "./render-attribution";
 /** Synchronous and immutable. Caller keeps this in its fenced delivery-creation transaction. */
 export function capturePublicationAttribution(
   entry: QueueEntry,
@@ -44,8 +45,11 @@ export function capturePublicationAttribution(
           throw Error("Publication attribution integrity failure");
         return parsed.data;
       }
-      // Current jobs/settings and automation links are not exact render-application evidence.
-      // Do not invent historical recipe attribution even when a current recipe happens to match.
+      // Only a successful exact-byte render proof can establish recipe application.
+      const proof =
+        !entry.source && entry.jobId && entry.n
+          ? getRenderProof(entry.jobId, entry.n, pkg.artifact.checksum)
+          : undefined;
       const body = {
         version: 1 as const,
         packageId: pkg.id,
@@ -58,19 +62,35 @@ export function capturePublicationAttribution(
         policyVersion: pkg.policyVersion,
         mediaOptionsHash: pkg.mediaOptionsHash,
         capturedAt: Date.now(),
+        outputDurationUs: proof?.durationUs,
+        renderProofHash: proof?.proofHash,
         source: entry.source
           ? {
               kind: "studio" as const,
               projectId: entry.source.projectId,
               revision: entry.source.revision,
             }
-          : {
-              kind: entry.jobId?.startsWith("story-")
-                ? ("story" as const)
-                : ("unknown" as const),
-              jobId: entry.jobId,
-            },
-        recipe: {
+          : proof
+            ? {
+                kind:
+                  proof.input.recipe.state === "attributed"
+                    ? ("creator-clip" as const)
+                    : ("manual" as const),
+                jobId: proof.input.jobId,
+                clipN: proof.input.clipN,
+                videoId: proof.input.sourceVideoId,
+                creatorId: proof.input.creatorId,
+                startUs: proof.input.sourceStartUs,
+                endUs: proof.input.sourceEndUs,
+              }
+            : {
+                kind: entry.jobId?.startsWith("story-")
+                  ? ("story" as const)
+                  : ("unknown" as const),
+                jobId: entry.jobId,
+                clipN: entry.n,
+              },
+        recipe: proof?.input.recipe ?? {
           state: "unattributed" as const,
           reason:
             "Exact artifact-bound recipe application evidence was not recorded",

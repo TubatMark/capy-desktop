@@ -56,7 +56,9 @@ export const DeliveryRecordSchema = z.strictObject({
   state: DeliveryStateSchema,
   phase: z.enum([
     "not-started",
+    "destination-pinned",
     "session-create-intent",
+    "initialization-rejected",
     "session-known",
     "transfer-intent",
     "media-accepted",

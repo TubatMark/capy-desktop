@@ -70,13 +70,16 @@ Free, with your own developer app on each platform (no posting service in betwee
 **Settings → Posting accounts**; the in-app guide (`/settings/posting-setup`) walks through each one.
 
 1. Every rendered clip lands in **Queue → Waiting for your OK**. Watch it, edit the text per platform, untick platforms, then **Approve** (or Reject).
-2. Approved clips get the next free slot in the audience's time zone: at most 2 a day per platform, 4 hours apart, the same time on every platform. Move, post now or remove any of them.
+2. Approved clips get the next free slot in the audience's time zone: at most 2 a day per platform, 4 hours apart, the same time on every platform. Move, post now or remove them before remote delivery starts.
 3. capy posts at the slot time while it runs. Closing the window with posts scheduled keeps it in the menu bar; slots missed while the computer slept post on wake (up to 2 h late) or move to the next free slot.
 
-What the free tiers allow until you pass each platform's (free) review: YouTube uploads stay **private** (capy links you
-to YouTube Studio to flip them public), TikTok clips go to your **TikTok inbox** (you tap Post), Instagram Reels post
-publicly but need a Business/Creator account linked to a Facebook Page. Tokens live in `<CAPY_DATA_DIR>/accounts.json`
-(mode 0600) and the queue in `queue.json`.
+Delivery is journaled locally before remote mutations. YouTube resumes the same upload session; TikTok retains the same publish ID; an uncertain Instagram publish is queried rather than sent again. Queue distinguishes upload, processing, private/inbox, accepted schedule, confirmed public, and unresolved outcomes. Thumbnail acceptance is tracked separately and does not prove the thumbnail is displayed on every Shorts surface. Once a remote operation starts, local move/retry/remove controls cannot change or repeat it; use **Check saved delivery status** or manage the item on the destination.
+
+YouTube upload-ahead requires a separate explicit approval of the exact publication time, upload window and policy, plus verified scheduling evidence for that destination. Existing approvals remain due-time uploads. A remote schedule accepted by YouTube can publish while capy is closed or paused; change it in YouTube Studio. TikTok stays assisted: finish the clip from your inbox. Fully automatic publication remains locked pending a real 72-hour fault soak and a separately authorized controlled upload. No such live verification is implied by local tests. See [the isolated soak harness](docs/automation-soak.md).
+
+Platform guidance checked **October 10, 2026**: the current [YouTube upload endpoint](https://developers.google.com/youtube/v3/docs/videos/insert) says unverified projects are not universally restricted to private uploads. Privacy is not proof of app audit or scheduling eligibility. The [quota table](https://developers.google.com/youtube/v3/determine_quota_cost) gives video uploads a separate default 100-call/day bucket at one unit per call, alongside 10,000 units for other endpoints; actual project allocation governs and daily quota resets at midnight Pacific. [Scheduled publication](https://developers.google.com/youtube/v3/docs/videos#status.publishAt) requires a private, never-published video. The [thumbnail endpoint](https://developers.google.com/youtube/v3/docs/thumbnails/set) documents 50 MB maximum uploads and 50 quota units; exact destination acceptance is still observed independently. [TikTok direct-post guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines/) impose eligibility and consent requirements beyond an app toggle.
+
+Tokens live in `<CAPY_DATA_DIR>/accounts.json` (mode 0600). Durable queue, delivery, and attribution records live in SQLite; sensitive resumable handles live in a separate private directory and never appear in queue responses. Credential refresh is serialized across local processes and pinned to the selected destination; ambiguous token rotation requires reconnecting rather than blindly rotating again.
 
 ## Automation: watch creators
 
