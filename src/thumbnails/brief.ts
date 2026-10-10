@@ -12,8 +12,11 @@ export function buildThumbnailBrief(
   const headline = input.headline.trim();
   if (!headline || headline.length > 120 || /[\x00-\x1f]/.test(headline))
     throw Error("Headline must contain 1–120 printable characters");
-  const layout = layouts[input.variant];
-  if (!layout) throw Error("Thumbnail variant must be between zero and two");
+  if (!layouts[input.variant])
+    throw Error("Thumbnail variant must be between zero and two");
+  if (input.layout && !layouts.includes(input.layout))
+    throw Error("Unknown thumbnail layout");
+  const layout = input.layout ?? layouts[input.variant]!;
   const treatments = {
     bold: "Use a bold color field and a large framed source subject, with clear space for a short headline.",
     editorial:

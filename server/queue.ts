@@ -17,6 +17,7 @@ import type {
 } from "../lib/types";
 import { postTextFor, type Publish } from "./platforms/text";
 import { canResumeDelivery, type PostOutcome } from "./platforms/types";
+import { queueThumbnailFields } from "./queue-thumbnails";
 
 /**
  * The posting queue: one entry per clip × platform in <CAPY_DATA_DIR>/queue.json.
@@ -688,7 +689,11 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
   const d = e.publishPackage
     ? deliveryForPackage(e.publishPackage.packageHash)
     : undefined;
+  const designed = queueThumbnailFields(e);
   return {
+    ...designed,
+    // show what will be uploaded: the attached design, keeping the raw frame alongside
+    ...(designed.thumbnailDesignUrl ? { frameThumbUrl: e.thumbUrl } : {}),
     key: e.key,
     jobId: e.jobId,
     n: e.n,
@@ -708,7 +713,7 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
     link: e.link,
     videoTitle: e.videoTitle,
     videoUrl: e.videoUrl,
-    thumbUrl: e.thumbUrl,
+    thumbUrl: designed.thumbnailDesignUrl ?? e.thumbUrl,
     thumbAt: e.thumbAt,
     slotAt: e.slotAt,
     nextTryAt: e.nextTryAt,

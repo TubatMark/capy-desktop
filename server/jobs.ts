@@ -539,6 +539,17 @@ class JobManager extends EventEmitter {
           )) {
             const file = renderedFile(job, clip);
             if (!file) continue;
+            // what is said in the clip, so the AI headline stays true to it (original language, no translation call)
+            const transcript = await this.getWords(job)
+              .then((words) =>
+                words
+                  .filter((w) => w.end > clip.start && w.start < clip.end)
+                  .map((w) => w.text)
+                  .join(" ")
+                  .replace(/\s+/g, " ")
+                  .slice(0, 4000),
+              )
+              .catch(() => undefined);
             await generateThumbnails({
               source: {
                 kind: "legacy",
@@ -548,9 +559,14 @@ class JobManager extends EventEmitter {
                 renderChecksum: await mediaChecksum(file),
               },
               aspect: "portrait",
-              headline: clip.hook || clip.title,
+              headline: (clip.hook || clip.title).slice(0, 120),
               style: job.settings.style,
               mode: "automatic",
+              clipContext: {
+                title: (clip.title ?? "").slice(0, 300),
+                hook: (clip.hook ?? "").slice(0, 300),
+                ...(transcript ? { transcript } : {}),
+              },
               allowCloud: false,
               allowLocal: true,
               maxJobUsd: policy.maxJobUsd,

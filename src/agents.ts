@@ -1,4 +1,8 @@
-import { routeAiTask, type RoutedAiResult } from "../server/ai-router";
+import {
+  routeAiTask,
+  type AiImage,
+  type RoutedAiResult,
+} from "../server/ai-router";
 import type { AiTaskContext, AiTaskId } from "../lib/ai-policy";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -12,7 +16,11 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type Options,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   CancelledError,
   currentSignal,
@@ -34,7 +42,7 @@ export class ClaudeAuthError extends Error {}
  * (set CAPY_USE_API_KEY=1 to keep it).
  */
 async function askClaudeRaw(
-  prompt: string,
+  prompt: string | AsyncIterable<SDKUserMessage>,
   options: Options,
   o: {
     timeoutMs?: number;
@@ -531,9 +539,39 @@ export interface AskOpts {
   maxTurns?: number;
   timeoutMs?: number;
   onRetry?: (msg: string) => void;
+  /** Stills for a vision task; only Claude accepts them. */
+  images?: AiImage[];
 }
 
 export interface AskResult extends RoutedAiResult {}
+
+/** One user turn holding the text prompt followed by each labelled image (Messages API content blocks). */
+export function claudeImagePrompt(
+  prompt: string,
+  images: AiImage[],
+): AsyncIterable<SDKUserMessage> {
+  const content = [
+    { type: "text" as const, text: prompt },
+    ...images.flatMap((image) => [
+      ...(image.label ? [{ type: "text" as const, text: image.label }] : []),
+      {
+        type: "image" as const,
+        source: {
+          type: "base64" as const,
+          media_type: image.mediaType,
+          data: image.data,
+        },
+      },
+    ]),
+  ];
+  return (async function* () {
+    yield {
+      type: "user",
+      message: { role: "user", content },
+      parent_tool_use_id: null,
+    } satisfies SDKUserMessage;
+  })();
+}
 
 /** One-shot structured question to the chosen AI. Claude goes through the Agent SDK; the rest run their CLI headless. */
 export async function askAgent(
@@ -579,6 +617,8 @@ async function askAgentRaw(
   prompt: string,
   o: AskOpts,
 ): Promise<AskResult> {
+  if (o.images?.length && agent !== "claude")
+    throw Error(`${agent} cannot look at images; only Claude can`);
   if (agent === "claude") {
     const options: Options = {
       model: o.model,
@@ -591,11 +631,15 @@ async function askAgentRaw(
       systemPrompt: o.system,
       outputFormat: { type: "json_schema", schema: o.schema },
     };
-    const r = await askClaudeRaw(prompt, options, {
-      timeoutMs: o.timeoutMs,
-      onRetry: o.onRetry,
-      retryLimit: o.retryLimit,
-    });
+    const r = await askClaudeRaw(
+      o.images?.length ? claudeImagePrompt(prompt, o.images) : prompt,
+      options,
+      {
+        timeoutMs: o.timeoutMs,
+        onRetry: o.onRetry,
+        retryLimit: o.retryLimit,
+      },
+    );
     const modelUsage = Object.values(r.modelUsage ?? {}) as {
       canonicalModel?: string;
       costBasis?: string;

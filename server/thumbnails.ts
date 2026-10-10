@@ -12,6 +12,7 @@ import { DEFAULT_AI_ROUTING, type AiRoutingSettings } from "../lib/ai-policy";
 import type {
   FrameCandidate,
   ThumbnailDesign,
+  ThumbnailLayout,
   ThumbnailRequest,
   ThumbnailSource,
   ThumbnailSourceRef,
@@ -29,6 +30,8 @@ import { reserveAiBudget, settleAiBudget, recordAiRun } from "./ai-usage";
 import { aiCacheIdentity } from "./ai-router";
 import { extractFrameCandidates } from "../src/thumbnails/frames";
 import { buildThumbnailBrief } from "../src/thumbnails/brief";
+import { creatorPolicy } from "./automation-policy";
+import { pickThumbnail, type VisionAsk } from "./thumbnail-pick";
 import { composeThumbnail } from "../src/thumbnails/compose";
 import {
   configuredImageProvider,
@@ -41,8 +44,24 @@ export interface ThumbnailDependencies {
   queue: WorkQueue;
   settings: AiRoutingSettings;
   provider?: ImageProvider;
-  /** Trusted creator policy, never supplied by a request. Automatic generation is off by default. */
+  /** Trusted creator policy, never supplied by a request. Without it automatic generation is refused. */
   allowAutomatic?: (source: ThumbnailSourceRef) => boolean;
+  /** Vision question for the automatic frame/headline pick; defaults to Claude through the AI router. */
+  ask?: VisionAsk;
+}
+/** Only clips the creator automation made, for a channel whose saved (or default) options say "automatic". */
+export function automaticThumbnailsAllowed(
+  source: ThumbnailSourceRef,
+  store: Store = runtimeStore(),
+) {
+  if (source.kind !== "legacy") return false;
+  const link = store.get<{ channelId: string }>(
+    "automation-jobs",
+    source.jobId,
+  )?.value;
+  return (
+    !!link && creatorPolicy(link.channelId).thumbnailGeneration === "automatic"
+  );
 }
 export function thumbnailDependencies(): ThumbnailDependencies {
   const store = runtimeStore();
@@ -52,6 +71,7 @@ export function thumbnailDependencies(): ThumbnailDependencies {
     queue: new WorkQueue(store),
     settings: loadSettings().aiRouting ?? DEFAULT_AI_ROUTING,
     provider: configuredImageProvider(),
+    allowAutomatic: (source) => automaticThumbnailsAllowed(source, store),
   };
 }
 const terminal = (message: string) =>
@@ -238,6 +258,24 @@ function validateRequest(input: ThumbnailRequest, deps: ThumbnailDependencies) {
       input.variantCount > 3)
   )
     throw terminal("Thumbnail variant count must be 1–3");
+  if (input.clipContext !== undefined) {
+    const c = input.clipContext as Record<string, unknown>;
+    if (
+      !c ||
+      typeof c !== "object" ||
+      Array.isArray(c) ||
+      Object.keys(c).some(
+        (k) => !["title", "hook", "transcript"].includes(k),
+      ) ||
+      Object.entries(c).some(
+        ([k, v]) =>
+          v !== undefined &&
+          (typeof v !== "string" ||
+            v.length > (k === "transcript" ? 4000 : 300)),
+      )
+    )
+      throw terminal("Invalid clip context");
+  }
   for (const limit of [input.maxDayUsd, input.maxJobUsd])
     if (limit !== undefined && (!Number.isFinite(limit) || limit < 0))
       throw terminal("Invalid thumbnail budget override");
@@ -336,6 +374,12 @@ export function listThumbnails(
       (d) => !source || identityHash(d.sourceIdentity) === identityHash(source),
     );
 }
+/** The AI pick and auto-attach serve automatic requests; manual Studio requests keep the user's frame and headline. */
+const aiPicks = (input: ThumbnailRequest) =>
+  input.mode === "automatic" &&
+  input.action !== "frames" &&
+  !input.selectedFrameIds?.length &&
+  input.frameTimeUs === undefined;
 function requestFor(ctx: StageContext, deps: ThumbnailDependencies) {
   const input = ctx.lease.payload.request as ThumbnailRequest;
   validateRequest(input, deps);
@@ -393,6 +437,7 @@ async function imageResults(
   frames: FrameCandidate[],
   ctx: StageContext,
   deps: ThumbnailDependencies,
+  layouts?: ThumbnailLayout[],
 ): Promise<{ results: (ImageResult | undefined)[]; reason?: string }> {
   const { provider, reason } = providerFor(input, deps),
     count = input.variantCount ?? 3;
@@ -446,6 +491,7 @@ async function imageResults(
           aspect: input.aspect,
           style: input.style,
           variant,
+          layout: layouts?.[variant],
           frames,
         });
         try {
@@ -659,6 +705,49 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
       },
     },
     {
+      // Automatic requests only: the AI ranks real frames and writes the headline; falls back locally.
+      name: "thumbnail-pick",
+      timeoutMs: 180_000,
+      run: async (ctx) => {
+        const input = requestFor(ctx, deps);
+        const frames = ctx.data.frames as FrameCandidate[] | undefined;
+        if (!aiPicks(input) || !frames?.length) return;
+        const clip =
+          input.source.kind === "legacy"
+            ? deps.store
+                .get<JobState>("legacy-jobs", input.source.jobId)
+                ?.value.clips.find(
+                  (c) =>
+                    input.source.kind === "legacy" &&
+                    c.n === input.source.clipN,
+                )
+            : undefined;
+        const pick = await pickThumbnail(
+          {
+            frames,
+            title: input.clipContext?.title ?? clip?.title,
+            hook: input.clipContext?.hook ?? clip?.hook,
+            transcript: input.clipContext?.transcript,
+            fallbackHeadline: input.headline,
+            directory: ctx.workspace,
+          },
+          deps.ask,
+        );
+        ctx.assert();
+        return {
+          data: {
+            frames: pick.frames,
+            pick: {
+              headline: pick.headline,
+              layout: pick.layout,
+              by: pick.by,
+              reason: pick.reason,
+            },
+          },
+        };
+      },
+    },
+    {
       name: "thumbnail-designs",
       expensive: true,
       timeoutMs: 600_000,
@@ -669,18 +758,43 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
         const frames = ctx.data.frames as FrameCandidate[];
         if (!frames?.length)
           throw terminal("Select a source frame before generating");
+        const pick = ctx.data.pick as
+          | {
+              headline: string;
+              layout?: ThumbnailLayout;
+              by: "ai" | "heuristic";
+              reason?: string;
+            }
+          | undefined;
+        const headline = pick?.headline || input.headline;
+        // The picked layout leads; the other two stay as alternatives.
+        const layouts = pick?.layout
+          ? [
+              pick.layout,
+              ...(["bold", "editorial", "minimal"] as const).filter(
+                (l) => l !== pick.layout,
+              ),
+            ]
+          : undefined;
         const selected = frames.slice(0, 3);
         for (const frame of selected)
           await trustedPath(frame.path, deps.root, frame.checksum);
-        const generated = await imageResults(input, selected, ctx, deps),
+        const generated = await imageResults(
+            { ...input, headline },
+            selected,
+            ctx,
+            deps,
+            layouts,
+          ),
           designs: ThumbnailDesign[] = [],
           artifacts: { from: string; to: string }[] = [];
         for (let variant = 0; variant < (input.variantCount ?? 3); variant++) {
           const brief = buildThumbnailBrief({
-            headline: input.headline,
+            headline,
             aspect: input.aspect,
             style: input.style,
             variant,
+            layout: layouts?.[variant],
             frames: selected,
           });
           const result = generated.results[variant],
@@ -738,7 +852,7 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
               };
           designs.push({
             id,
-            name: `${brief.layout} — ${input.headline}`,
+            name: `${brief.layout} — ${headline}`,
             sourceIdentity: input.source,
             ...(input.source.kind === "project"
               ? {
@@ -770,6 +884,14 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
             },
             generationState: "ready",
             reviewState: "pending",
+            ...(pick
+              ? {
+                  pick: {
+                    by: pick.by,
+                    ...(pick.reason ? { reason: pick.reason } : {}),
+                  },
+                }
+              : {}),
           });
         }
         ctx.assert();
@@ -811,6 +933,30 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
                 : design.reviewState,
             });
         });
+      },
+    },
+    {
+      // The best design goes onto the clip's YouTube post while it still waits for review. Never fails the work.
+      name: "thumbnail-attach",
+      run: async (ctx) => {
+        const input = requestFor(ctx, deps);
+        const top = (ctx.data.designs as ThumbnailDesign[] | undefined)?.[0];
+        if (!aiPicks(input) || !top) return;
+        const { autoAttachThumbnail } = await import("./thumbnail-studio");
+        try {
+          return {
+            data: {
+              attached: await autoAttachThumbnail(input.source, top.id, deps),
+            },
+          };
+        } catch (error) {
+          return {
+            data: {
+              attachError:
+                error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
       },
     },
   ];
