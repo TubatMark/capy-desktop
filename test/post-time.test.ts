@@ -67,6 +67,21 @@ describe("allocateSlot", () => {
     const d = allocateSlot([], ["instagram"], tz, now)!;
     expect([10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22]).toContain(hourET(d));
   });
+  it("a backlog keeps filling later days, 3 a day, up to 30 days ahead", () => {
+    const taken: { platform: "youtube"; at: number }[] = [];
+    for (let i = 0; i < 60; i++) {
+      const d = allocateSlot(taken, ["youtube"], tz, now);
+      expect(d).not.toBeNull();
+      taken.push({ platform: "youtube", at: d!.getTime() });
+    }
+    const perDay = new Map<string, number>();
+    for (const t of taken) perDay.set(dayET(t.at), (perDay.get(dayET(t.at)) ?? 0) + 1);
+    expect(perDay.size).toBe(20);
+    expect(Math.max(...perDay.values())).toBe(3);
+    const sorted = taken.map((t) => t.at).sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(5 * 3600_000);
+    expect(sorted.at(-1)! - now.getTime()).toBeLessThan(30 * 86400_000);
+  });
   it("returns null when the horizon is full", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
     let d: Date | null;

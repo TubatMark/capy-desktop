@@ -26,6 +26,8 @@ const policy = {
   // capacity math below is written for 2 posts a day and 6 new clips a day
   destinationDailySlots: 2,
   dailyClipCap: 6,
+  targetQueueDays: 3,
+  maxBacklogDays: 7,
 };
 const input = (id: string, priority = 0) => ({
   candidate: {

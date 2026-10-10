@@ -130,7 +130,7 @@ it("optional none omits guessed thumbnails from both approved manifest and actua
   expect((await upload(approved, files)).map((j) => j.thumbFile)).toEqual([
     undefined,
   ]);
-  saveCreatorPolicy("creator", { ...p, dailyClipCap: p.dailyClipCap + 1 });
+  saveCreatorPolicy("creator", { ...p, dailyClipCap: p.dailyClipCap - 1 });
   expect(eligibility(approved).reasons).toContain("Publication policy changed");
 });
 it.each(["none", "source_frame"] as const)(

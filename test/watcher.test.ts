@@ -42,7 +42,7 @@ describe("watcherTick", () => {
     const { d, created } = deps({ uploads: { UC1: [up("new2"), up("new1"), up("old")] } });
     await watcherTick(d);
     expect(created.map((c) => c.videoId)).toEqual(["new1"]);
-    expect(created[0]!.settings).toMatchObject({ count: 1 });
+    expect(created[0]!.settings).toMatchObject({ count: 3 });
     expect(created[0]!.automation).toEqual({ channelId: "UC1", channelName: "ch-UC1" });
     await watcherTick(d); // new1 is still processing: wait
     expect(created).toHaveLength(1);

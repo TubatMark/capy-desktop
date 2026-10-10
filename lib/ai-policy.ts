@@ -54,10 +54,11 @@ export const DEFAULT_AI_ROUTING: AiRoutingSettings = {
   usageLimitMode: "application",
   allowCloud: true,
   allowPremiumImages: false,
-  maxJobUsd: 2.5,
-  maxDayUsd: 5,
-  maxDayRequests: 40,
-  maxDayTokens: 500000,
+  // no AI spending cap (the owner's choice): the highest values the schema allows
+  maxJobUsd: 100,
+  maxDayUsd: 1000,
+  maxDayRequests: 10000,
+  maxDayTokens: 100000000,
   retryLimit: 1,
   // The owner's split: Claude writes (with Codex stepping in if it fails), Codex summarizes numbers. Content review and
   // similar clips ask both on their own. Picking moments keeps the model chosen in Settings, so it has no route here.

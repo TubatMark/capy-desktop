@@ -127,13 +127,42 @@ const PER_DAY = POSTS_PER_DAY;
 /**
  * Earliest good slot (at least 30 min away) where every platform has fewer than 3 posts that
  * audience-local day and none within 5h. `taken` holds scheduled, posting and recently posted entries.
+ * With `source` (the upload a clip came from), days that already post a clip of that upload are skipped so its
+ * clips spread across days; if none is free within the horizon, the plain rule applies.
  */
-export function allocateSlot(taken: { platform: Platform; at: number }[], platforms: Platform[], audienceTz: string, now = new Date(), horizonDays = 14): Date | null {
+export function allocateSlot(
+  taken: { platform: Platform; at: number; source?: string }[],
+  platforms: Platform[],
+  audienceTz: string,
+  now = new Date(),
+  horizonDays = 30,
+  source?: string,
+): Date | null {
+  if (source) {
+    const spread = allocate(taken, platforms, audienceTz, now, horizonDays, source);
+    if (spread) return spread;
+  }
+  return allocate(taken, platforms, audienceTz, now, horizonDays);
+}
+
+function allocate(
+  taken: { platform: Platform; at: number; source?: string }[],
+  platforms: Platform[],
+  audienceTz: string,
+  now: Date,
+  horizonDays: number,
+  source?: string,
+): Date | null {
   const dayKey = (t: number) => {
     const p = partsIn(new Date(t), audienceTz);
     return `${p.y}-${p.m}-${p.d}`;
   };
   const start = partsIn(now, audienceTz);
+  // each taken post's local day, worked out once (a 30-day backlog makes this the hot path)
+  const byPlatform = new Map(
+    platforms.map((pl) => [pl, taken.filter((x) => x.platform === pl).map((x) => ({ at: x.at, day: dayKey(x.at) }))]),
+  );
+  const sourceDays = new Set(source ? taken.filter((x) => x.source === source).map((x) => dayKey(x.at)) : []);
   for (let off = 0; off < horizonDays; off++) {
     const p = partsIn(new Date(Date.UTC(start.y, start.m - 1, start.d + off, 12)), audienceTz);
     const cands = (CANDIDATE_HOURS[p.wd] ?? [17])
@@ -143,9 +172,11 @@ export function allocateSlot(taken: { platform: Platform; at: number }[], platfo
     for (const { at } of cands) {
       const t = at.getTime();
       if (t < now.getTime() + 30 * 60_000) continue;
+      const day = dayKey(t);
+      if (sourceDays.has(day)) continue;
       const free = platforms.every((pl) => {
-        const mine = taken.filter((x) => x.platform === pl);
-        return mine.filter((x) => dayKey(x.at) === dayKey(t)).length < PER_DAY && mine.every((x) => Math.abs(x.at - t) >= GAP_MS);
+        const mine = byPlatform.get(pl)!;
+        return mine.filter((x) => x.day === day).length < PER_DAY && mine.every((x) => Math.abs(x.at - t) >= GAP_MS);
       });
       if (free) return at;
     }

@@ -273,7 +273,7 @@ function StatusBar({
           className="w-auto"
           onChange={(e) => void put({ maxPerDay: Number(e.target.value) })}
         >
-          {[1, 2, 4, 6, 10, 15].map((m) => (
+          {[1, 2, 4, 6, 10, 15, 20, 30].map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
@@ -471,7 +471,7 @@ function ChannelCard({
             value={s.perDay}
             onChange={(e) => setting("perDay", Number(e.target.value))}
           >
-            {[1, 2, 3, 5].map((v) => (
+            {[1, 2, 3, 5, 10].map((v) => (
               <option key={v} value={v}>
                 {v}
               </option>

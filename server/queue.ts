@@ -184,7 +184,7 @@ export function taken(
           e.slotAt !== undefined) ||
         (out(e) && now.getTime() - (e.slotAt ?? e.updatedAt) < 24 * 60 * MIN),
     )
-    .map((e) => ({ platform: e.platform, at: e.slotAt ?? e.updatedAt }));
+    .map((e) => ({ platform: e.platform, at: e.slotAt ?? e.updatedAt, source: e.jobId }));
 }
 
 /** Approve one clip (n) or every clip of a video waiting for review; each clip gets one shared slot. */
@@ -240,11 +240,14 @@ export function approve(
           note({ ...x, status: "rejected" }, "Not chosen at approval", o.now),
         );
     if (!chosen.length) continue;
+    // clips of the same upload go out on different days, so a day's posts come from different uploads
     const slot = allocateSlot(
       taken(out, o.now),
       chosen.map((e) => e.platform),
       o.audienceTz,
       o.now,
+      undefined,
+      chosen[0]?.source ? undefined : chosen[0]?.jobId,
     );
     for (const e of chosen) {
       out = patch(out, e.key, (x) =>
@@ -263,7 +266,7 @@ export function approve(
               `${o.automatic ? "Scheduled automatically (every check passed)" : o.override ? "Explicit human override approved" : "Approved"} for ${fmtIn(slot, o.audienceTz)}`,
               o.now,
             )
-          : note(x, "No free slot in the next 14 days", o.now),
+          : note(x, "No free slot in the next 30 days", o.now),
       );
       if (slot) scheduled.push(out.find((x) => x.key === e.key)!);
     }

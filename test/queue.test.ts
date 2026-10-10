@@ -120,7 +120,7 @@ describe("approve / reject", () => {
     expect(new Set(entries.map((x) => x.slotAt)).size).toBe(1);
     expect(entries.every((x) => x.status === "scheduled")).toBe(true);
   });
-  it("approving a whole video spaces clips 3/day/platform, 5h apart", () => {
+  it("approving a whole video puts each of its clips on a different day, 5h+ apart", () => {
     let e: QueueEntry[] = [];
     for (let n = 1; n <= 6; n++)
       e = upsertForRender(e, clip(n), ["youtube"], now);
@@ -133,7 +133,20 @@ describe("approve / reject", () => {
         new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t)),
       ),
     );
-    expect(days.size).toBe(2);
+    // one upload's clips never share a day
+    expect(days.size).toBe(6);
+  });
+  it("clips of two uploads interleave: each day mixes uploads, still 3 a day", () => {
+    let e: QueueEntry[] = [];
+    for (let n = 1; n <= 3; n++) e = upsertForRender(e, clip(n), ["youtube"], now);
+    for (let n = 1; n <= 3; n++) e = upsertForRender(e, clip(n, { jobId: "K" }), ["youtube"], now);
+    e = approve(e, "J", undefined, { audienceTz: tz, now }).entries;
+    e = approve(e, "K", undefined, { audienceTz: tz, now }).entries;
+    const day = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t));
+    const byDay = new Map<string, string[]>();
+    for (const x of e) byDay.set(day(x.slotAt!), [...(byDay.get(day(x.slotAt!)) ?? []), x.jobId!]);
+    expect(byDay.size).toBe(3);
+    for (const jobs of byDay.values()) expect([...jobs].sort()).toEqual(["J", "K"]);
   });
   it("platforms not chosen at approval are rejected", () => {
     const { entries } = approve(
@@ -350,7 +363,7 @@ describe("taken", () => {
       error: "Clip file missing",
     };
     expect(taken([sent, missing], now)).toEqual([
-      { platform: "tiktok", at: sent.slotAt },
+      { platform: "tiktok", at: sent.slotAt, source: sent.jobId },
     ]);
   });
 });

@@ -51,7 +51,7 @@ export function ReviewCard({
     try {
       const r = await api<{ scheduled: QueueEntry[] }>("/api/queue/approve", { method: "POST", body: JSON.stringify({ ...(first.source ? {group:queueGroup(first)} : {jobId:first.jobId,n:first.n}), platforms: chosen, force: aiReview?.verdict === "block" }) });
       const at = r.scheduled[0]?.slotAt;
-      onDone(at ? `"${first.clipTitle}" scheduled for ${fmtSlot(at, tz)}` : "No free slot in the next 14 days");
+      onDone(at ? `"${first.clipTitle}" scheduled for ${fmtSlot(at, tz)}` : "No free slot in the next 30 days");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

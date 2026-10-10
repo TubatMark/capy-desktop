@@ -95,7 +95,7 @@ describe("AI routing", () => {
   );
   it("creator overrides cannot increase limits or enable premium implicitly", () => {
     const p = resolveAiTask("metadata", {
-      creatorOverride: { maxJobUsd: 100, maxDayUsd: 100 },
+      creatorOverride: { maxJobUsd: 5000, maxDayUsd: 5000 },
     });
     expect(p.maxJobUsd).toBe(DEFAULT_AI_ROUTING.maxJobUsd);
     expect(p.maxDayUsd).toBe(DEFAULT_AI_ROUTING.maxDayUsd);
