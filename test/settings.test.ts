@@ -1,11 +1,48 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { DEFAULT_AI_ROUTING, AiRoutingSchema } from "../lib/ai-policy";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MODELS } from "../lib/types";
-import { applyToEnv, dataDir, effective, loadSettings, redact, resetSettingsCache, saveSettings, settingsFile } from "../server/settings";
+import {
+  applyToEnv,
+  dataDir,
+  effective,
+  loadSettings,
+  redact,
+  resetSettingsCache,
+  saveSettings,
+  settingsFile,
+} from "../server/settings";
 
-const ENV_KEYS = ["CAPY_DATA_DIR", "CAPY_BROWSER", "CAPY_OUTPUT", "CAPY_MODEL", "CAPY_USE_API_KEY", "ANTHROPIC_API_KEY", "CLIPRUN_BROWSER", "CLIPRUN_MODEL", "CLIPRUN_OUTPUT", "CLIPRUN_USE_API_KEY"];
+const ENV_KEYS = [
+  "CAPY_DATA_DIR",
+  "CAPY_BROWSER",
+  "CAPY_OUTPUT",
+  "CAPY_MODEL",
+  "CAPY_USE_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "CLIPRUN_BROWSER",
+  "CLIPRUN_MODEL",
+  "CLIPRUN_OUTPUT",
+  "CLIPRUN_USE_API_KEY",
+];
 const savedEnv: Record<string, string | undefined> = {};
 
 let root: string;
@@ -38,14 +75,21 @@ afterEach(() => {
 describe("settings", () => {
   it("uses CAPY_DATA_DIR and falls back to Application Support", () => {
     expect(dataDir()).toBe(process.env.CAPY_DATA_DIR);
-    expect(settingsFile()).toBe(path.join(process.env.CAPY_DATA_DIR!, "settings.json"));
+    expect(settingsFile()).toBe(
+      path.join(process.env.CAPY_DATA_DIR!, "settings.json"),
+    );
     delete process.env.CAPY_DATA_DIR;
     expect(dataDir()).toMatch(/Library\/Application Support\/capy$/);
   });
 
   it("returns defaults when there is no file", () => {
     expect(existsSync(settingsFile())).toBe(false);
-    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: {},
+      claudeAuth: "subscription",
+    });
     const e = effective();
     expect(e.browser).toBeUndefined();
     expect(e.outputDir).toBeUndefined();
@@ -66,13 +110,22 @@ describe("settings", () => {
     expect(e.claudeAuth).toBe("apiKey");
     expect(e.apiKey).toBe("sk-env-1234");
     // env does not leak into what is stored
-    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: {},
+      claudeAuth: "subscription",
+    });
   });
 
   it("lets settings.json win over the environment", () => {
     process.env.CAPY_BROWSER = "chrome";
     process.env.CAPY_MODEL = "claude-opus-5-5";
-    saveSettings({ browser: "safari", models: { claude: "claude-haiku-4-5-20251001" }, outputDir: "/tmp/x" });
+    saveSettings({
+      browser: "safari",
+      models: { claude: "claude-haiku-4-5-20251001" },
+      outputDir: "/tmp/x",
+    });
     const e = effective();
     expect(e.browser).toBe("safari");
     expect(e.model).toBe("claude-haiku-4-5-20251001");
@@ -84,7 +137,9 @@ describe("settings", () => {
     const file = settingsFile();
     expect(existsSync(file)).toBe(true);
     expect(statSync(file).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ apiKey: "sk-ant-secret-9876" });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      apiKey: "sk-ant-secret-9876",
+    });
     // still 0600 after a second write
     saveSettings({ browser: "arc" });
     expect(statSync(file).mode & 0o777).toBe(0o600);
@@ -92,16 +147,41 @@ describe("settings", () => {
 
   it("merges partial patches and clears keys with an empty string", () => {
     saveSettings({ browser: "chrome", models: { claude: "claude-opus-5-5" } });
-    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "subscription", browser: "chrome" });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: { claude: "claude-opus-5-5" },
+      claudeAuth: "subscription",
+      browser: "chrome",
+    });
     saveSettings({ browser: "" });
-    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "subscription" });
-    saveSettings({ claudeAuth: "apiKey", apiKey: "sk-abc-1234", checkedAt: 42 });
-    expect(loadSettings()).toEqual({ agent: "claude", models: { claude: "claude-opus-5-5" }, claudeAuth: "apiKey", apiKey: "sk-abc-1234", checkedAt: 42 });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: { claude: "claude-opus-5-5" },
+      claudeAuth: "subscription",
+    });
+    saveSettings({
+      claudeAuth: "apiKey",
+      apiKey: "sk-abc-1234",
+      checkedAt: 42,
+    });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: { claude: "claude-opus-5-5" },
+      claudeAuth: "apiKey",
+      apiKey: "sk-abc-1234",
+      checkedAt: 42,
+    });
     // undefined means "leave alone"; per-agent models merge, and "" drops one
     saveSettings({ models: undefined });
     expect(loadSettings().models.claude).toBe("claude-opus-5-5");
     saveSettings({ models: { codex: "gpt-5" } });
-    expect(loadSettings().models).toEqual({ claude: "claude-opus-5-5", codex: "gpt-5" });
+    expect(loadSettings().models).toEqual({
+      claude: "claude-opus-5-5",
+      codex: "gpt-5",
+    });
     saveSettings({ models: { claude: "" } });
     expect(loadSettings().models).toEqual({ codex: "gpt-5" });
     expect(effective().model).toBe(MODELS[0].id);
@@ -112,9 +192,19 @@ describe("settings", () => {
 
   it("redacts the API key", () => {
     const base = { agent: "claude" as const, models: {} };
-    expect(redact({ ...base, claudeAuth: "apiKey", apiKey: "sk-ant-api03-abcdef1234" })).toEqual({ ...base, claudeAuth: "apiKey", apiKey: "••••1234" });
-    expect(redact({ ...base, claudeAuth: "subscription", browser: "chrome" })).toEqual({ ...base, claudeAuth: "subscription", browser: "chrome" });
-    expect(redact({ ...base, claudeAuth: "subscription", apiKey: "" })).not.toHaveProperty("apiKey");
+    expect(
+      redact({
+        ...base,
+        claudeAuth: "apiKey",
+        apiKey: "sk-ant-api03-abcdef1234",
+      }),
+    ).toEqual({ ...base, claudeAuth: "apiKey", apiKey: "••••1234" });
+    expect(
+      redact({ ...base, claudeAuth: "subscription", browser: "chrome" }),
+    ).toEqual({ ...base, claudeAuth: "subscription", browser: "chrome" });
+    expect(
+      redact({ ...base, claudeAuth: "subscription", apiKey: "" }),
+    ).not.toHaveProperty("apiKey");
   });
 
   it("reads the old single `model` key as the Claude model", () => {
@@ -129,12 +219,33 @@ describe("settings", () => {
     saveSettings({ browser: "chrome" });
     // hand-edit the file with unknown keys / wrong types
     const file = settingsFile();
-    writeFileSync(file, JSON.stringify({ browser: 5, model: "", models: { nope: "x", codex: 3 }, agent: "hal", nope: true, claudeAuth: "other", checkedAt: "x" }));
+    writeFileSync(
+      file,
+      JSON.stringify({
+        browser: 5,
+        model: "",
+        models: { nope: "x", codex: 3 },
+        agent: "hal",
+        nope: true,
+        claudeAuth: "other",
+        checkedAt: "x",
+      }),
+    );
     resetSettingsCache();
-    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: {},
+      claudeAuth: "subscription",
+    });
     writeFileSync(file, "not json");
     resetSettingsCache();
-    expect(loadSettings()).toEqual({ agent: "claude", models: {}, claudeAuth: "subscription" });
+    expect(loadSettings()).toEqual({
+      aiRouting: DEFAULT_AI_ROUTING,
+      agent: "claude",
+      models: {},
+      claudeAuth: "subscription",
+    });
   });
 
   it("applyToEnv sets and clears CAPY_USE_API_KEY / ANTHROPIC_API_KEY", () => {
@@ -166,8 +277,41 @@ describe("audience", () => {
 
 describe("posting settings", () => {
   it("defaults to US East, not paused, and saves both", () => {
-    expect(effective()).toMatchObject({ postingAudience: "us-east", postingPaused: false });
+    expect(effective()).toMatchObject({
+      postingAudience: "us-east",
+      postingPaused: false,
+    });
     saveSettings({ postingAudience: "uk", postingPaused: true });
-    expect(effective()).toMatchObject({ postingAudience: "uk", postingPaused: true });
+    expect(effective()).toMatchObject({
+      postingAudience: "uk",
+      postingPaused: true,
+    });
   });
+});
+
+it("validates versioned AI routing settings and rejects nested unknown limits", () => {
+  expect(
+    AiRoutingSchema.safeParse({ ...DEFAULT_AI_ROUTING, maxDayUsd: -1 }).success,
+  ).toBe(false);
+  expect(
+    AiRoutingSchema.safeParse({
+      ...DEFAULT_AI_ROUTING,
+      tasks: {
+        metadata: {
+          agent: "claude",
+          model: "model",
+          premium: false,
+          maxDayUsd: 999,
+        },
+      },
+    }).success,
+  ).toBe(false);
+  expect(
+    AiRoutingSchema.parse({
+      ...DEFAULT_AI_ROUTING,
+      tasks: {
+        review: { agent: "claude", model: "claude-haiku-5-5", premium: false },
+      },
+    }).tasks.review?.model,
+  ).toBe("claude-haiku-5-5");
 });

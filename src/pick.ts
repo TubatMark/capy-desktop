@@ -8,15 +8,45 @@ import { fmtPeaks, type HeatPoint } from "./heatmap";
 const ClipSchema = z.object({
   start: z.number().describe("Clip start in seconds"),
   end: z.number().describe("Clip end in seconds"),
-  reason: z.string().describe("One sentence on why this moment works as a short. Write this first: title and hook must sell exactly this"),
-  title: z.string().describe("Short title for the short, under 60 chars. Names what actually happens (the conflict, reveal or payoff from the reason), not a random line"),
-  hook: z.string().describe("On-screen hook text shown for the first 2-3s, under 40 chars, no emoji. Frames the situation for a cold viewer, naming the people when known; not a transcript quote"),
+  reason: z
+    .string()
+    .describe(
+      "One sentence on why this moment works as a short. Write this first: title and hook must sell exactly this",
+    ),
+  title: z
+    .string()
+    .describe(
+      "Short title for the short, under 60 chars. Names what actually happens (the conflict, reveal or payoff from the reason), not a random line",
+    ),
+  hook: z
+    .string()
+    .describe(
+      "On-screen hook text shown for the first 2-3s, under 40 chars, no emoji. Frames the situation for a cold viewer, naming the people when known; not a transcript quote",
+    ),
   score: z.number().min(1).max(10).describe("Predicted performance, 1-10"),
-  ytTitle: z.string().describe("YouTube Shorts title, max 100 chars: punchy, may include one emoji, ends with 2-3 #hashtags"),
-  description: z.string().describe("YouTube description, 2-4 short lines: what happens, a question or CTA, then a 'Credit:' line naming the original channel, then the hashtags on the last line"),
-  hashtags: z.array(z.string()).min(4).max(8).describe("4-8 hashtags without the # sign: creator names, topic, and always shorts"),
+  ytTitle: z
+    .string()
+    .describe(
+      "YouTube Shorts title, max 100 chars: punchy, may include one emoji, ends with 2-3 #hashtags",
+    ),
+  description: z
+    .string()
+    .describe(
+      "YouTube description, 2-4 short lines: what happens, a question or CTA, then a 'Credit:' line naming the original channel, then the hashtags on the last line",
+    ),
+  hashtags: z
+    .array(z.string())
+    .min(4)
+    .max(8)
+    .describe(
+      "4-8 hashtags without the # sign: creator names, topic, and always shorts",
+    ),
 });
-const PublishSchema = ClipSchema.pick({ ytTitle: true, description: true, hashtags: true });
+const PublishSchema = ClipSchema.pick({
+  ytTitle: true,
+  description: true,
+  hashtags: true,
+});
 const PicksSchema = z.object({ clips: z.array(ClipSchema) });
 
 export interface PickOpts {
@@ -35,35 +65,92 @@ export interface PickOpts {
   /** Who the clips are for; en-us writes all text in US English. */
   audience?: Audience;
   /** Replacing one rejected pick: avoid its problem and every range already taken. */
-  replace?: { start: number; end: number; reason: string; avoid: { start: number; end: number }[] };
+  replace?: {
+    start: number;
+    end: number;
+    reason: string;
+    avoid: { start: number; end: number }[];
+  };
 }
 
 export interface PickResult {
   clips: Clip[];
   raw: unknown;
-  costUsd: number;
+  costUsd?: number;
   durationMs: number;
 }
 
 export { askClaude, ClaudeAuthError } from "./agents";
 
 /** Ask the chosen AI (Claude by default) for the best moments; returns clips snapped to word boundaries. */
-export async function pickClips(words: Word[], meta: { title: string; duration: number; channel?: string }, o: PickOpts): Promise<PickResult> {
+export async function pickClips(
+  words: Word[],
+  meta: { title: string; duration: number; channel?: string },
+  o: PickOpts,
+): Promise<PickResult> {
   const t0 = Date.now();
-  const res = await askAgent(o.agent ?? "claude", buildPrompt(transcriptForPrompt(words), meta, o), {
-    model: o.model,
-    maxTurns: 3,
-    effort: o.effort ?? "medium",
-    system:
-      "You are a senior short-form video editor. You find the moments in long videos that perform best as vertical shorts. You only answer with the requested JSON.",
-    schema: picksJsonSchema(),
-    onRetry: o.onRetry,
-  });
+  if (transcriptForPrompt(words).length > 50000) {
+    const windows: Word[][] = [];
+    let current: Word[] = [];
+    let size = 0;
+    for (const word of words) {
+      size += word.text.length + 24;
+      if (size > 45000 && current.length) {
+        windows.push(current);
+        current = [];
+        size = word.text.length + 24;
+      }
+      current.push(word);
+    }
+    if (current.length) windows.push(current);
+    const results: PickResult[] = [];
+    for (const window of windows)
+      results.push(await pickClips(window, meta, o));
+    const clips = postProcess(
+      results
+        .flatMap((r) => r.clips)
+        .map((clip) => ({
+          ...clip,
+          ytTitle: clip.ytTitle ?? "",
+          description: clip.description ?? "",
+          hashtags: clip.hashtags ?? [],
+        })),
+      words,
+      meta.duration,
+      o,
+    )
+      .sort((a, b) => b.score - a.score)
+      .slice(0, o.count)
+      .sort((a, b) => a.start - b.start);
+    return {
+      clips,
+      raw: results.map((r) => r.raw),
+      costUsd: results.some((r) => r.costUsd === undefined)
+        ? undefined
+        : results.reduce((sum, r) => sum + r.costUsd!, 0),
+      durationMs: Date.now() - t0,
+    };
+  }
+  const res = await askAgent(
+    o.agent ?? "claude",
+    buildPrompt(transcriptForPrompt(words), meta, o),
+    {
+      task: "selection",
+      model: o.model,
+      maxTurns: 3,
+      effort: o.effort ?? "medium",
+      system:
+        "You are a senior short-form video editor. You find the moments in long videos that perform best as vertical shorts. You only answer with the requested JSON.",
+      schema: picksJsonSchema(),
+      onRetry: o.onRetry,
+    },
+  );
 
   const raw = res.data;
   if (!raw) throw new Error("The AI returned no structured output");
   const parsed = PicksSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
+  if (!parsed.success)
+    throw new Error(`AI output failed validation: ${parsed.error.message}`);
 
   return {
     clips: postProcess(parsed.data.clips, words, meta.duration, o),
@@ -75,11 +162,14 @@ export async function pickClips(words: Word[], meta: { title: string; duration: 
 
 /** JSON Schema for the picks, without the $schema tag (Claude Code's validator rejects draft 2020-12 refs). */
 export function picksJsonSchema(): Record<string, unknown> {
-  const { $schema: _drop, ...schema } = z.toJSONSchema(PicksSchema, { target: "draft-7" }) as Record<string, unknown>;
+  const { $schema: _drop, ...schema } = z.toJSONSchema(PicksSchema, {
+    target: "draft-7",
+  }) as Record<string, unknown>;
   return schema;
 }
 
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const mmss = (s: number) =>
+  `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 /** What language the title/hook/upload text is written in. */
 export function languageRule(audience?: Audience): string {
@@ -88,7 +178,11 @@ export function languageRule(audience?: Audience): string {
     : "title and hook in the same language the speakers use.";
 }
 
-export function buildPrompt(transcript: string, meta: { title: string; duration: number; channel?: string }, o: PickOpts): string {
+export function buildPrompt(
+  transcript: string,
+  meta: { title: string; duration: number; channel?: string },
+  o: PickOpts,
+): string {
   const mins = Math.round(meta.duration / 60);
   return `Video: "${meta.title}" (${mins} min)${meta.channel ? ` by ${meta.channel}` : ""}
 
@@ -118,7 +212,13 @@ const TitleHookSchema = ClipSchema.pick({ title: true, hook: true });
 export async function rewriteTitleHook(
   words: Word[],
   meta: { title: string; channel?: string },
-  clip: { start: number; end: number; title: string; hook: string; reason: string },
+  clip: {
+    start: number;
+    end: number;
+    title: string;
+    hook: string;
+    reason: string;
+  },
   model?: string,
   agent: AgentId = "claude",
   audience?: Audience,
@@ -140,14 +240,22 @@ Write a better title and on-screen hook for this vertical short:
 - title: under 60 chars, says what happens (the conflict, reveal, or payoff), specific.
 ${audience === "en-us" ? "Write in natural US English for American viewers." : "Same language as the speakers."}`;
   const { data: raw } = await askAgent(agent, prompt, {
+    task: "metadata",
     model,
     maxTurns: 2,
     effort: "low",
-    system: "You are a senior short-form video editor who writes hooks that stop the scroll without lying about the content. Answer only with the requested JSON.",
-    schema: stripSchema(z.toJSONSchema(TitleHookSchema, { target: "draft-7" }) as Record<string, unknown>),
+    system:
+      "You are a senior short-form video editor who writes hooks that stop the scroll without lying about the content. Answer only with the requested JSON.",
+    schema: stripSchema(
+      z.toJSONSchema(TitleHookSchema, { target: "draft-7" }) as Record<
+        string,
+        unknown
+      >,
+    ),
   });
   const parsed = TitleHookSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
+  if (!parsed.success)
+    throw new Error(`AI output failed validation: ${parsed.error.message}`);
   return parsed.data;
 }
 
@@ -164,7 +272,9 @@ export async function generatePublish(
     .filter((w) => w.start >= clip.start - 0.1 && w.start < clip.end)
     .map((w) => w.text)
     .join(" ");
-  const handle = (meta.channel ?? "creator").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const handle = (meta.channel ?? "creator")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
   const prompt = `Source video: "${meta.title}"${meta.channel ? ` by ${meta.channel}` : ""}
 Clip title: ${clip.title}
 Hook: ${clip.hook}
@@ -177,14 +287,22 @@ Write the YouTube Shorts upload text for this clip:
 - hashtags: 4-8 without the # sign: creator names, topic, and shorts.
 ${audience === "en-us" ? "Write in natural US English for American viewers." : "Same language as the speakers."}`;
   const { data: raw } = await askAgent(agent, prompt, {
+    task: "metadata",
     model,
     maxTurns: 2,
     effort: "low",
-    system: "You write YouTube Shorts titles and descriptions that get clicks without lying about the content. Answer only with the requested JSON.",
-    schema: stripSchema(z.toJSONSchema(PublishSchema, { target: "draft-7" }) as Record<string, unknown>),
+    system:
+      "You write YouTube Shorts titles and descriptions that get clicks without lying about the content. Answer only with the requested JSON.",
+    schema: stripSchema(
+      z.toJSONSchema(PublishSchema, { target: "draft-7" }) as Record<
+        string,
+        unknown
+      >,
+    ),
   });
   const parsed = PublishSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`AI output failed validation: ${parsed.error.message}`);
+  if (!parsed.success)
+    throw new Error(`AI output failed validation: ${parsed.error.message}`);
   return parsed.data;
 }
 

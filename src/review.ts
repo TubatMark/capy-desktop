@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { Clip, Word } from "./types";
 import { askAgent } from "./agents";
-import type { AgentId, Audience, ClipReview, ReviewVerdict } from "../lib/types";
+import type {
+  AgentId,
+  Audience,
+  ClipReview,
+  ReviewVerdict,
+} from "../lib/types";
 
 export interface ReviewItem {
   n: number;
@@ -16,9 +21,22 @@ const ReviewSchema = z.object({
     z.object({
       n: z.number(),
       verdict: z.enum(["pass", "fix_hook", "fail"]),
-      problem: z.string().optional().describe("One short sentence naming what is wrong (required for fix_hook and fail)"),
-      title: z.string().optional().describe("fix_hook only: better title, under 60 chars"),
-      hook: z.string().optional().describe("fix_hook only: better on-screen hook, under 40 chars, no emoji"),
+      problem: z
+        .string()
+        .optional()
+        .describe(
+          "One short sentence naming what is wrong (required for fix_hook and fail)",
+        ),
+      title: z
+        .string()
+        .optional()
+        .describe("fix_hook only: better title, under 60 chars"),
+      hook: z
+        .string()
+        .optional()
+        .describe(
+          "fix_hook only: better on-screen hook, under 40 chars, no emoji",
+        ),
     }),
   ),
 });
@@ -48,36 +66,82 @@ ${o.audience === "en-us" ? "5. Will an American viewer get it (no unexplained lo
 verdict: "pass" if it's good; "fix_hook" if the moment is good but the title/hook is weak or misleading (then write better ones${o.audience === "en-us" ? " in US English" : " in the speakers' language"}); "fail" if the moment itself fails a check. Always give a short "problem" for fix_hook and fail. Be strict but fair: most picks should pass.
 
 ${blocks.join("\n\n")}`;
-  const { $schema: _d, ...schema } = z.toJSONSchema(ReviewSchema, { target: "draft-7" }) as Record<string, unknown>;
+  const { $schema: _d, ...schema } = z.toJSONSchema(ReviewSchema, {
+    target: "draft-7",
+  }) as Record<string, unknown>;
   const res = await askAgent(o.agent, prompt, {
+    task: "review",
     model: o.model,
     maxTurns: 2,
     effort: "medium",
-    system: "You are a strict short-form video editor reviewing someone else's picks. Answer only with the requested JSON.",
+    system:
+      "You are a strict short-form video editor reviewing someone else's picks. Answer only with the requested JSON.",
     schema,
+    validate: (data) => {
+      const parsed = ReviewSchema.safeParse(data);
+      return (
+        parsed.success &&
+        parsed.data.clips.length === clips.length &&
+        clips.every(
+          (clip) =>
+            parsed.data.clips.filter((item) => item.n === clip.n).length === 1,
+        ) &&
+        parsed.data.clips.every(
+          (item) =>
+            item.verdict === "pass" ||
+            (Boolean(item.problem?.trim()) &&
+              (item.verdict !== "fix_hook" ||
+                Boolean(item.title?.trim() && item.hook?.trim()))),
+        )
+      );
+    },
   });
   const parsed = ReviewSchema.safeParse(res.data);
-  if (!parsed.success) throw new Error(`Review output failed validation: ${parsed.error.message}`);
+  if (!parsed.success)
+    throw new Error(`Review output failed validation: ${parsed.error.message}`);
   return parsed.data.clips;
 }
 
 /** Apply verdicts: fix_hook rewrites title/hook, fail unticks; then tick the best passing clips up to `count`. */
-export function applyReview<T extends { n: number; score: number; title: string; hook: string; selected: boolean; review?: ClipReview }>(
-  clips: T[],
-  items: ReviewItem[],
-  count: number,
-): T[] {
+export function applyReview<
+  T extends {
+    n: number;
+    score: number;
+    title: string;
+    hook: string;
+    selected: boolean;
+    review?: ClipReview;
+  },
+>(clips: T[], items: ReviewItem[], count: number): T[] {
   const byN = new Map<number, ReviewItem>();
-  for (const it of items) if (!byN.has(it.n)) byN.set(it.n, it);
+  const duplicates = new Set<number>();
+  for (const it of items) {
+    if (byN.has(it.n)) duplicates.add(it.n);
+    else byN.set(it.n, it);
+  }
   const out = clips.map((c) => {
     const it = byN.get(c.n);
-    const verdict: ReviewVerdict = it?.verdict ?? "pass";
-    const next: T = { ...c, review: { verdict, ...(it?.problem ? { problem: it.problem } : {}) } };
-    if (verdict === "fix_hook" && it?.title?.trim() && it?.hook?.trim()) Object.assign(next, { title: it.title.trim(), hook: it.hook.trim() });
+    const valid =
+      it &&
+      !duplicates.has(c.n) &&
+      (["pass", "fail"].includes(it.verdict) ||
+        (it.verdict === "fix_hook" &&
+          it.title?.trim() &&
+          it.hook?.trim() &&
+          it.problem?.trim()));
+    const verdict: ReviewVerdict = valid ? it.verdict : "needs_review";
+    const next: T = {
+      ...c,
+      review: { verdict, ...(it?.problem ? { problem: it.problem } : {}) },
+    };
+    if (verdict === "fix_hook" && it?.title?.trim() && it?.hook?.trim())
+      Object.assign(next, { title: it.title.trim(), hook: it.hook.trim() });
     return next;
   });
   const ok = out
-    .filter((c) => c.review?.verdict !== "fail")
+    .filter(
+      (c) => c.review?.verdict === "pass" || c.review?.verdict === "fix_hook",
+    )
     .sort((a, b) => b.score - a.score)
     .slice(0, count)
     .map((c) => c.n);

@@ -1,9 +1,26 @@
 import { mkdir, readFile, writeFile, access, rm } from "node:fs/promises";
 import path from "node:path";
-import { fetchAudio, fetchCaptions, fetchMeta, fetchSection, videoIdFromUrl, type YtOpts } from "./youtube";
+import {
+  withAiContext,
+  currentAiContext,
+  aiCacheIdentity,
+} from "../server/ai-router";
+import {
+  fetchAudio,
+  fetchCaptions,
+  fetchMeta,
+  fetchSection,
+  videoIdFromUrl,
+  type YtOpts,
+} from "./youtube";
 import { wordsInRange } from "./captions";
 import { pickClips, type PickOpts } from "./pick";
-import { renderClip, thumbnail, clipThumbnail, type RenderOpts } from "./render";
+import {
+  renderClip,
+  thumbnail,
+  clipThumbnail,
+  type RenderOpts,
+} from "./render";
 import { transcribe } from "./transcribe";
 import { pad2, slug } from "./util";
 import { isCancelled } from "./exec";
@@ -29,7 +46,11 @@ export async function exists(p: string) {
 }
 
 /** Fetch metadata (or reuse a cached meta.json under outRoot for the same video id). */
-export async function stageMeta(url: string, outRoot: string, yt: YtOpts): Promise<{ meta: VideoMeta; jobDir: string; cached: boolean }> {
+export async function stageMeta(
+  url: string,
+  outRoot: string,
+  yt: YtOpts,
+): Promise<{ meta: VideoMeta; jobDir: string; cached: boolean }> {
   const id = videoIdFromUrl(url);
   if (!id) throw new Error(`Not a YouTube URL: ${url}`);
   const { readdir } = await import("node:fs/promises");
@@ -37,7 +58,13 @@ export async function stageMeta(url: string, outRoot: string, yt: YtOpts): Promi
     const hit = (await readdir(outRoot)).find((d) => d.endsWith(`-${id}`));
     if (hit && (await exists(path.join(outRoot, hit, "meta.json")))) {
       const jobDir = path.join(outRoot, hit);
-      return { meta: JSON.parse(await readFile(path.join(jobDir, "meta.json"), "utf8")), jobDir, cached: true };
+      return {
+        meta: JSON.parse(
+          await readFile(path.join(jobDir, "meta.json"), "utf8"),
+        ),
+        jobDir,
+        cached: true,
+      };
     }
   } catch {
     /* no output dir yet */
@@ -45,7 +72,10 @@ export async function stageMeta(url: string, outRoot: string, yt: YtOpts): Promi
   const meta = await fetchMeta(url, yt);
   const jobDir = path.join(outRoot, `${slug(meta.title, 48)}-${meta.id}`);
   await mkdir(path.join(jobDir, "work"), { recursive: true });
-  await writeFile(path.join(jobDir, "meta.json"), JSON.stringify(meta, null, 2));
+  await writeFile(
+    path.join(jobDir, "meta.json"),
+    JSON.stringify(meta, null, 2),
+  );
   return { meta, jobDir, cached: false };
 }
 
@@ -61,7 +91,10 @@ export async function stageWords(
   const workDir = path.join(jobDir, "work");
   await mkdir(workDir, { recursive: true });
   if ((await exists(wordsFile)) && !o.forceWhisper && !o.lang) {
-    return { words: JSON.parse(await readFile(wordsFile, "utf8")), source: "cache" };
+    return {
+      words: JSON.parse(await readFile(wordsFile, "utf8")),
+      source: "cache",
+    };
   }
   let words: Word[] | null = null;
   let source: "captions" | "whisper" = "captions";
@@ -72,7 +105,10 @@ export async function stageWords(
       if (!words) o.log?.("this video has no captions");
     } catch (e) {
       if (isCancelled(e)) throw e;
-      captionErr = (e instanceof Error ? e.message : String(e)).split("\n").filter(Boolean).pop();
+      captionErr = (e instanceof Error ? e.message : String(e))
+        .split("\n")
+        .filter(Boolean)
+        .pop();
       o.log?.(`caption download failed: ${captionErr}`);
     }
   }
@@ -85,25 +121,46 @@ export async function stageWords(
       source = "whisper";
     } catch (e) {
       if (isCancelled(e)) throw e;
-      const hint = captionErr ? `YouTube captions failed (${captionErr}). Try cookies from your browser, or wait a few minutes.\n` : "";
+      const hint = captionErr
+        ? `YouTube captions failed (${captionErr}). Try cookies from your browser, or wait a few minutes.\n`
+        : "";
       throw new Error(hint + (e instanceof Error ? e.message : String(e)));
     }
   }
-  if (words.length < 30) throw new Error("Transcript is too short to clip from.");
+  if (words.length < 30)
+    throw new Error("Transcript is too short to clip from.");
   await writeFile(wordsFile, JSON.stringify(words));
   return { words, source };
 }
 
 export async function stagePick(words: Word[], meta: VideoMeta, o: PickOpts) {
-  return pickClips(words, meta, o);
+  const ambient = currentAiContext();
+  const inputVersion = ambient?.inputVersion ?? aiCacheIdentity(words);
+  return withAiContext(
+    {
+      jobId: ambient?.jobId ?? `pipeline:${meta.id}:${inputVersion}`,
+      inputVersion,
+    },
+    () => pickClips(words, meta, o),
+  );
 }
 
 /** Padded segment bounds for a clip. */
-export function segmentFor(clip: { start: number; end: number }, duration: number): { start: number; end: number } {
-  return { start: Math.max(0, clip.start - SEGMENT_PAD), end: Math.min(duration || clip.end + SEGMENT_PAD, clip.end + SEGMENT_PAD) };
+export function segmentFor(
+  clip: { start: number; end: number },
+  duration: number,
+): { start: number; end: number } {
+  return {
+    start: Math.max(0, clip.start - SEGMENT_PAD),
+    end: Math.min(duration || clip.end + SEGMENT_PAD, clip.end + SEGMENT_PAD),
+  };
 }
 
-export function segmentName(n: number, seg: { start: number; end: number }, maxRes: number) {
+export function segmentName(
+  n: number,
+  seg: { start: number; end: number },
+  maxRes: number,
+) {
   return `${pad2(n)}-${Math.round(seg.start * 10)}-${Math.round(seg.end * 10)}-${maxRes}p.src.mp4`;
 }
 
@@ -126,7 +183,11 @@ export async function stageSegment(
   }
   const thumb = path.join(workDir, `${pad2(n)}.jpg`);
   try {
-    await thumbnail(file, thumb, clip.start - seg.start + Math.min(1, (clip.end - clip.start) / 2));
+    await thumbnail(
+      file,
+      thumb,
+      clip.start - seg.start + Math.min(1, (clip.end - clip.start) / 2),
+    );
   } catch {
     // e.g. the segment is shorter than expected; use the first frame instead
     await thumbnail(file, thumb, 0);
@@ -141,7 +202,10 @@ export async function stageRender(
   clip: Clip,
   seg: Segment,
   words: Word[],
-  o: Pick<RenderOpts, "layout" | "style" | "captions" | "look" | "onProgress"> & { hook: boolean },
+  o: Pick<
+    RenderOpts,
+    "layout" | "style" | "captions" | "look" | "onProgress"
+  > & { hook: boolean },
 ): Promise<string> {
   const out = path.join(jobDir, `${pad2(n)}-${slug(clip.title)}.mp4`);
   await renderClip(
@@ -154,7 +218,10 @@ export async function stageRender(
       encoder: "auto",
       captions: o.captions,
       look: o.look,
-      hook: o.hook && clip.hook ? { text: clip.hook, seconds: Math.min(3, clip.end - clip.start) } : undefined,
+      hook:
+        o.hook && clip.hook
+          ? { text: clip.hook, seconds: Math.min(3, clip.end - clip.start) }
+          : undefined,
       trim: { start: clip.start - seg.start, duration: clip.end - clip.start },
       onProgress: o.onProgress,
     },
@@ -185,7 +252,8 @@ export async function thumbCandidates(
   const last = Math.max(0, len - 0.3);
   // the hook frame first, then the rest spread across the clip
   const ats = [Math.min(HOOK_FRAME_SEC, last)];
-  for (let i = 1; i < THUMB_OPTIONS; i++) ats.push(Math.min(last, (len * (i + 0.5)) / THUMB_OPTIONS));
+  for (let i = 1; i < THUMB_OPTIONS; i++)
+    ats.push(Math.min(last, (len * (i + 0.5)) / THUMB_OPTIONS));
   const out: Array<{ file: string; at: number }> = [];
   for (const [i, at] of ats.entries()) {
     const file = path.join(jobDir, "work", `${pad2(n)}-thumb-${i}.jpg`);
@@ -196,21 +264,39 @@ export async function thumbCandidates(
 }
 
 /** Next to NN-title.mp4, write NN-title.jpg (thumbnail) and NN-title.txt (title/description/hashtags to paste into YouTube). */
-export async function writePublishFiles(renderedMp4: string, clip: Clip): Promise<{ thumb: string; text: string }> {
+export async function writePublishFiles(
+  renderedMp4: string,
+  clip: Clip,
+): Promise<{ thumb: string; text: string }> {
   const base = renderedMp4.replace(/\.mp4$/, "");
   const thumb = `${base}.jpg`;
   const text = `${base}.txt`;
   // the chosen frame, else the hook frame; never past the end of the clip
-  const at = Math.max(0, Math.min(clip.thumbAt ?? HOOK_FRAME_SEC, clip.end - clip.start - 0.2));
+  const at = Math.max(
+    0,
+    Math.min(clip.thumbAt ?? HOOK_FRAME_SEC, clip.end - clip.start - 0.2),
+  );
   try {
     await clipThumbnail(renderedMp4, thumb, at);
   } catch {
     await clipThumbnail(renderedMp4, thumb, 0.2);
   }
-  const tags = (clip.hashtags ?? []).map((h) => `#${h.replace(/^#/, "")}`).join(" ");
+  const tags = (clip.hashtags ?? [])
+    .map((h) => `#${h.replace(/^#/, "")}`)
+    .join(" ");
   await writeFile(
     text,
-    [`TITLE`, clip.ytTitle ?? clip.title, ``, `DESCRIPTION`, clip.description ?? "", ``, `HASHTAGS`, tags, ``].join("\n"),
+    [
+      `TITLE`,
+      clip.ytTitle ?? clip.title,
+      ``,
+      `DESCRIPTION`,
+      clip.description ?? "",
+      ``,
+      `HASHTAGS`,
+      tags,
+      ``,
+    ].join("\n"),
     "utf8",
   );
   return { thumb, text };

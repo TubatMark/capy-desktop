@@ -28,8 +28,22 @@ export interface ContentInput {
 const Schema = z.object({
   verdict: z.enum(["ok", "caution", "block"]),
   summary: z.string().describe("One or two sentences for the editor"),
-  issues: z.array(z.object({ kind: z.string().describe("policy | misleading | translation | reused_content | personal_data | other"), note: z.string() })),
-  title: z.string().optional().describe("A better YouTube title, only if the current one is misleading or weak"),
+  issues: z.array(
+    z.object({
+      kind: z
+        .string()
+        .describe(
+          "policy | misleading | translation | reused_content | personal_data | other",
+        ),
+      note: z.string(),
+    }),
+  ),
+  title: z
+    .string()
+    .optional()
+    .describe(
+      "A better YouTube title, only if the current one is misleading or weak",
+    ),
 });
 
 export function buildContentPrompt(i: ContentInput): string {
@@ -75,17 +89,40 @@ Review it before a human editor does. Check:
 verdict: "ok" if it can go out as is; "caution" if the editor should look at something first; "block" only for a real child-safety or policy problem. Keep notes short and concrete.`;
 }
 
-export function normalizeContentReview(raw: unknown, at: number): ContentReview {
-  const r = (raw ?? {}) as { verdict?: string; summary?: string; issues?: { kind?: string; note?: string }[]; title?: string };
-  const verdict = r.verdict === "ok" || r.verdict === "block" ? r.verdict : "caution";
-  const title = typeof r.title === "string" && r.title.trim() && r.title.trim().length <= 100 ? r.title.trim() : undefined;
+export function normalizeContentReview(
+  raw: unknown,
+  at: number,
+): ContentReview {
+  const r = (raw ?? {}) as {
+    verdict?: string;
+    summary?: string;
+    issues?: { kind?: string; note?: string }[];
+    title?: string;
+  };
+  const parsed = Schema.safeParse(raw);
+  const verdict =
+    parsed.success &&
+    r.summary?.trim() &&
+    (r.verdict !== "ok" || r.issues?.length === 0) &&
+    (r.verdict === "ok" || r.verdict === "block")
+      ? r.verdict
+      : "caution";
+  const title =
+    typeof r.title === "string" &&
+    r.title.trim() &&
+    r.title.trim().length <= 100
+      ? r.title.trim()
+      : undefined;
   return {
     verdict,
     summary: String(r.summary ?? "").slice(0, 400),
     issues: (Array.isArray(r.issues) ? r.issues : [])
       .filter((x) => x && typeof x.note === "string")
       .slice(0, 8)
-      .map((x) => ({ kind: String(x.kind ?? "other").slice(0, 40), note: String(x.note).slice(0, 300) })),
+      .map((x) => ({
+        kind: String(x.kind ?? "other").slice(0, 40),
+        note: String(x.note).slice(0, 300),
+      })),
     ...(title ? { title } : {}),
     at,
   };
@@ -93,23 +130,46 @@ export function normalizeContentReview(raw: unknown, at: number): ContentReview 
 
 /** When the reviewer can't run: the clip still reaches the user, marked for a careful look. */
 export function reviewUnavailable(reason: string, at: number): ContentReview {
-  return { verdict: "caution", summary: `AI review unavailable: ${reason}. Check this clip yourself.`, issues: [], at };
+  return {
+    verdict: "caution",
+    summary: `AI review unavailable: ${reason}. Check this clip yourself.`,
+    issues: [],
+    at,
+  };
 }
 
-export async function reviewContent(i: ContentInput, o: { agent: AgentId; model?: string }): Promise<ContentReview> {
-  const { $schema: _d, ...schema } = z.toJSONSchema(Schema, { target: "draft-7" }) as Record<string, unknown>;
+export async function reviewContent(
+  i: ContentInput,
+  o: { agent: AgentId; model?: string },
+): Promise<ContentReview> {
+  const { $schema: _d, ...schema } = z.toJSONSchema(Schema, {
+    target: "draft-7",
+  }) as Record<string, unknown>;
   try {
     const res = await askAgent(o.agent, buildContentPrompt(i), {
+      task: "review",
       model: o.model,
       maxTurns: 2,
       effort: "low",
       // a hung call must not hold up the render line
       timeoutMs: 120_000,
-      system: "You review short-form video posts for platform policy and honesty before a human editor approves them. Answer only with the requested JSON.",
+      system:
+        "You review short-form video posts for platform policy and honesty before a human editor approves them. Answer only with the requested JSON.",
       schema,
+      validate: (data) => {
+        const parsed = Schema.safeParse(data);
+        return (
+          parsed.success &&
+          Boolean(parsed.data.summary.trim()) &&
+          (parsed.data.verdict !== "ok" || parsed.data.issues.length === 0)
+        );
+      },
     });
     return normalizeContentReview(res.data, Date.now());
   } catch (e) {
-    return reviewUnavailable(e instanceof Error ? e.message.split("\n")[0]!.slice(0, 120) : String(e), Date.now());
+    return reviewUnavailable(
+      e instanceof Error ? e.message.split("\n")[0]!.slice(0, 120) : String(e),
+      Date.now(),
+    );
   }
 }

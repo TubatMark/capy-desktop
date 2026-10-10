@@ -1,4 +1,5 @@
 import type { PublishPackage, PublicationDecision } from "./publication";
+import type { AiRoutingSettings } from "./ai-policy";
 import type { Look } from "./look";
 /** Shared between server and browser. No node imports here. */
 
@@ -446,7 +447,7 @@ export interface ClipState {
   contentReview?: ContentReview;
 }
 
-export type ReviewVerdict = "pass" | "fix_hook" | "fail";
+export type ReviewVerdict = "pass" | "fix_hook" | "fail" | "needs_review";
 export interface ClipReview {
   verdict: ReviewVerdict;
   problem?: string;
@@ -551,13 +552,14 @@ export interface AgentInfo {
 
 /** Picker models offered in Settings. First is the default. */
 export const MODELS = [
-  { id: "claude-sonnet-5", label: "Sonnet 5 — good judgment, moderate usage" },
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 — cheapest" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 — mid-tier candidate, quality unverified" },
+  { id: "claude-haiku-5-5", label: "Haiku 5.5 — compact candidate, quality unverified" },
   { id: "claude-opus-5-5", label: "Opus 5.5 — best picks, most usage" },
 ] as const;
 
 /** App-wide settings stored in <CAPY_DATA_DIR>/settings.json (see server/settings.ts). */
 export interface AppSettings {
+  aiRouting?: AiRoutingSettings;
   /** The AI that picks clips and writes titles, hooks and descriptions. */
   agent: AgentId;
   /** Model per agent; empty means the agent's own default (Claude: the first of MODELS). */

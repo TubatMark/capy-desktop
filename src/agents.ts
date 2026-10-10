@@ -1,9 +1,28 @@
+import { routeAiTask, type RoutedAiResult } from "../server/ai-router";
+import type { AiTaskContext, AiTaskId } from "../lib/ai-policy";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, constants, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  constants,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
-import { CancelledError, currentSignal, isCancelled } from "./exec";
+import {
+  CancelledError,
+  currentSignal,
+  assertExecutionCurrent,
+  currentExecutionTimeout,
+  isCancelled,
+  registerSpawnedProcess,
+  closeSpawnedProcess,
+  terminateProcessGroup,
+} from "./exec";
 import type { AgentId, AgentInfo } from "../lib/types";
 
 export class ClaudeAuthError extends Error {}
@@ -14,18 +33,24 @@ export class ClaudeAuthError extends Error {}
  * ANTHROPIC_API_KEY from the subprocess so usage goes to the Claude plan
  * (set CAPY_USE_API_KEY=1 to keep it).
  */
-export async function askClaude(
+async function askClaudeRaw(
   prompt: string,
   options: Options,
-  o: { timeoutMs?: number; onRetry?: (msg: string) => void } = {},
+  o: {
+    timeoutMs?: number;
+    onRetry?: (msg: string) => void;
+    retryLimit?: number;
+  } = {},
 ): Promise<any> {
+  assertExecutionCurrent();
   const abortController = new AbortController();
   const outer = currentSignal();
   if (outer?.aborted) throw new CancelledError();
   const onOuterAbort = () => abortController.abort();
   outer?.addEventListener("abort", onOuterAbort, { once: true });
   const env: Record<string, string | undefined> = { ...process.env };
-  if (!(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY)) delete env.ANTHROPIC_API_KEY;
+  if (!(process.env.CAPY_USE_API_KEY ?? process.env.CLIPRUN_USE_API_KEY))
+    delete env.ANTHROPIC_API_KEY;
   let timedOut = false;
   const timer = o.timeoutMs
     ? setTimeout(() => {
@@ -35,33 +60,98 @@ export async function askClaude(
     : undefined;
 
   let result: any;
+  const spawned: { pid: number; token: string }[] = [];
+  const kills = new Map<number, Promise<void>>();
+  function stopProcess(pid: number, token: string) {
+    if (!kills.has(pid)) kills.set(pid, terminateProcessGroup(pid, 150, token));
+    return kills.get(pid)!;
+  }
+  const spawnClaudeCodeProcess: NonNullable<
+    Options["spawnClaudeCodeProcess"]
+  > = (input) => {
+    const token = randomUUID();
+    const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
+      // Do not merge process.env: subscription auth intentionally removed its API key.
+      env: {
+        ...input.env,
+        CAPY_PROCESS_TOKEN: token,
+      } as unknown as NodeJS.ProcessEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    const onAbort = () => {
+      if (child.pid) void stopProcess(child.pid, token);
+    };
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    child.on("close", () =>
+      input.signal?.removeEventListener("abort", onAbort),
+    );
+    child.stderr.on("data", () => {});
+    if (child.pid) {
+      spawned.push({ pid: child.pid, token });
+      try {
+        registerSpawnedProcess(child.pid, token);
+      } catch (error) {
+        void stopProcess(child.pid, token);
+        throw error;
+      }
+      child.kill = () => {
+        void stopProcess(child.pid!, token);
+        return true;
+      };
+    }
+    return child;
+  };
   try {
-    for await (const m of query({ prompt, options: { ...options, env, abortController } })) {
+    for await (const m of query({
+      prompt,
+      options: { ...options, env, abortController, spawnClaudeCodeProcess },
+    })) {
       if (m.type === "system" && (m as any).subtype === "api_retry") {
         const r = m as any;
         if (r.error_status === 401 || r.error_status === 403) {
           abortController.abort();
-          throw new ClaudeAuthError("Claude login missing or expired. Run `claude`, log in, then try again.");
+          throw new ClaudeAuthError(
+            "Claude login missing or expired. Run `claude`, log in, then try again.",
+          );
         }
-        o.onRetry?.(`Claude API retry ${r.attempt}/${r.max_retries} (${r.error_status ?? "network error"})`);
+        if (r.attempt > (o.retryLimit ?? 0)) {
+          abortController.abort();
+          throw Error("Claude internal retry ceiling exhausted");
+        }
+        o.onRetry?.(
+          `Claude API retry ${r.attempt}/${r.max_retries} (${r.error_status ?? "network error"})`,
+        );
       }
       if (m.type === "result") result = m;
     }
   } catch (e) {
     if (outer?.aborted) throw new CancelledError();
     if (e instanceof ClaudeAuthError) throw e;
-    if (timedOut) throw new Error(`Claude did not answer within ${Math.round(o.timeoutMs! / 1000)}s`);
+    if (timedOut)
+      throw new Error(
+        `Claude did not answer within ${Math.round(o.timeoutMs! / 1000)}s`,
+      );
     throw e;
   } finally {
     if (timer) clearTimeout(timer);
     outer?.removeEventListener("abort", onOuterAbort);
+    for (const child of spawned) {
+      await stopProcess(child.pid, child.token);
+      closeSpawnedProcess(child.pid);
+    }
   }
   if (outer?.aborted) throw new CancelledError();
 
-  if (!result) throw new Error(timedOut ? "Claude timed out" : "Claude returned no result");
+  if (!result)
+    throw new Error(
+      timedOut ? "Claude timed out" : "Claude returned no result",
+    );
   if (result.is_error) {
     const text = String(result.result ?? result.subtype);
-    if (/log ?in|auth/i.test(text)) throw new ClaudeAuthError(`${text}. Run \`claude\` and log in.`);
+    if (/log ?in|auth/i.test(text))
+      throw new ClaudeAuthError(`${text}. Run \`claude\` and log in.`);
     throw new Error(`Claude returned an error: ${text}`);
   }
   return result;
@@ -84,7 +174,9 @@ interface AgentSpec {
   url: string;
   modelHint: string;
   /** Non-interactive invocation. Claude has none: it runs through the Agent SDK. */
-  argv?: (c: RunCtx) => Promise<{ args: string[]; stdin?: string; outFile?: string }>;
+  argv?: (
+    c: RunCtx,
+  ) => Promise<{ args: string[]; stdin?: string; outFile?: string }>;
 }
 
 export const AGENT_SPECS: AgentSpec[] = [
@@ -107,7 +199,19 @@ export const AGENT_SPECS: AgentSpec[] = [
     modelHint: "gpt-5",
     argv: async ({ prompt, model, dir }) => {
       const outFile = path.join(dir, "answer.txt");
-      const args = ["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "--color", "never", "-C", dir, "-o", outFile];
+      const args = [
+        "exec",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "--color",
+        "never",
+        "-C",
+        dir,
+        "-o",
+        outFile,
+      ];
       if (model) args.push("-m", model);
       args.push("-");
       return { args, stdin: prompt, outFile };
@@ -122,7 +226,16 @@ export const AGENT_SPECS: AgentSpec[] = [
     url: "https://cursor.com/cli",
     modelHint: "sonnet-4.5",
     argv: async ({ prompt, model, dir }) => {
-      const args = ["-p", "--output-format", "json", "--mode", "ask", "--trust", "--workspace", dir];
+      const args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--mode",
+        "ask",
+        "--trust",
+        "--workspace",
+        dir,
+      ];
       if (model) args.push("--model", model);
       args.push(prompt);
       return { args };
@@ -218,7 +331,10 @@ export const AGENT_SPECS: AgentSpec[] = [
 
 export function agentSpec(id: string): AgentSpec {
   const s = AGENT_SPECS.find((a) => a.id === id);
-  if (!s) throw new Error(`Unknown AI "${id}". Known: ${AGENT_SPECS.map((a) => a.id).join(", ")}`);
+  if (!s)
+    throw new Error(
+      `Unknown AI "${id}". Known: ${AGENT_SPECS.map((a) => a.id).join(", ")}`,
+    );
   return s;
 }
 
@@ -242,7 +358,12 @@ function searchDirs(): string[] {
     "/opt/homebrew/bin",
     "/usr/local/bin",
   ];
-  return [...new Set([...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean), ...extra])];
+  return [
+    ...new Set([
+      ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean),
+      ...extra,
+    ]),
+  ];
 }
 
 /** PATH for child processes: node-based CLIs need `node` next to them. */
@@ -272,38 +393,84 @@ interface SpawnResult {
   timedOut: boolean;
 }
 
-function spawnText(bin: string, args: string[], o: { stdin?: string; cwd?: string; timeoutMs: number }): Promise<SpawnResult> {
+function spawnText(
+  bin: string,
+  args: string[],
+  o: { stdin?: string; cwd?: string; timeoutMs: number },
+): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     const signal = currentSignal();
     if (signal?.aborted) return reject(new CancelledError());
-    const p = spawn(bin, args, {
+    try {
+      assertExecutionCurrent();
+    } catch (error) {
+      return reject(error);
+    }
+    const token = randomUUID();
+    const child = spawn(bin, args, {
       cwd: o.cwd,
-      env: { ...process.env, PATH: childPath(), NO_COLOR: "1", CI: "1" },
+      env: {
+        ...process.env,
+        PATH: childPath(),
+        NO_COLOR: "1",
+        CI: "1",
+        CAPY_PROCESS_TOKEN: token,
+      },
       stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      signal,
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      p.kill("SIGTERM");
-      setTimeout(() => p.kill("SIGKILL"), 3000).unref();
-    }, o.timeoutMs);
-    p.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-    p.stderr!.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-32 * 1024)));
-    p.on("error", (e) => {
-      clearTimeout(timer);
-      reject(isCancelled(e) ? new CancelledError() : e);
+    let error: Error | undefined;
+    let killing: Promise<void> | undefined;
+    const stop = () => {
+      if (child.pid && !killing)
+        killing = terminateProcessGroup(child.pid, 150, token);
+    };
+    const abort = () => {
+      error = new CancelledError();
+      stop();
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        stop();
+      },
+      Math.min(o.timeoutMs, currentExecutionTimeout() ?? Infinity),
+    );
+    try {
+      if (child.pid) registerSpawnedProcess(child.pid, token);
+    } catch (e) {
+      error = e as Error;
+      stop();
+    }
+    child.stdout!.on("data", (data: Buffer) => {
+      if (Buffer.byteLength(stdout) + data.length > 16 * 1024 * 1024) {
+        error = new Error("AI subprocess output limit exceeded");
+        stop();
+      } else stdout += data.toString();
     });
-    p.on("close", (code) => {
+    child.stderr!.on("data", (data: Buffer) => {
+      stderr = (stderr + data.toString()).slice(-32 * 1024);
+    });
+    child.on("error", (e) => {
+      error = isCancelled(e) ? new CancelledError() : e;
+    });
+    child.on("close", async (code) => {
       clearTimeout(timer);
-      if (signal?.aborted) return reject(new CancelledError());
+      signal?.removeEventListener("abort", abort);
+      // A retry must wait until descendants from the previous attempt are gone.
+      if (killing) await killing;
+      if (child.pid) closeSpawnedProcess(child.pid);
+      if (error || signal?.aborted)
+        return reject(error ?? new CancelledError());
       resolve({ code, stdout, stderr, timedOut });
     });
     if (o.stdin !== undefined) {
-      p.stdin!.on("error", () => {}); // CLI may exit before reading everything
-      p.stdin!.end(o.stdin);
+      child.stdin!.on("error", () => {});
+      child.stdin!.end(o.stdin);
     }
   });
 }
@@ -318,9 +485,18 @@ export async function detectAgents(fresh = false): Promise<AgentInfo[]> {
       const found = await findBin(s.bins);
       let version: string | undefined;
       if (found) {
-        const r = await spawnText(found, ["--version"], { timeoutMs: 8000 }).catch(() => null);
-        const line = r?.code === 0 ? (r.stdout || r.stderr).trim().split("\n")[0] : undefined;
-        version = line?.replace(/^[^\d]*(?=\d)/, "").split(/\s/)[0]!.slice(0, 40) || undefined;
+        const r = await spawnText(found, ["--version"], {
+          timeoutMs: 8000,
+        }).catch(() => null);
+        const line =
+          r?.code === 0
+            ? (r.stdout || r.stderr).trim().split("\n")[0]
+            : undefined;
+        version =
+          line
+            ?.replace(/^[^\d]*(?=\d)/, "")
+            .split(/\s/)[0]!
+            .slice(0, 40) || undefined;
       }
       return {
         id: s.id,
@@ -342,6 +518,11 @@ export async function detectAgents(fresh = false): Promise<AgentInfo[]> {
 }
 
 export interface AskOpts {
+  task?: AiTaskId;
+  context?: AiTaskContext;
+  validate?: (data: unknown) => boolean;
+  maxBudgetUsd?: number;
+  retryLimit?: number;
   model?: string;
   system: string;
   /** JSON Schema the answer must match. */
@@ -352,17 +533,56 @@ export interface AskOpts {
   onRetry?: (msg: string) => void;
 }
 
-export interface AskResult {
-  /** Parsed JSON answer (not yet validated). */
-  data: unknown;
-  costUsd: number;
-}
+export interface AskResult extends RoutedAiResult {}
 
 /** One-shot structured question to the chosen AI. Claude goes through the Agent SDK; the rest run their CLI headless. */
-export async function askAgent(agent: AgentId, prompt: string, o: AskOpts): Promise<AskResult> {
+export async function askAgent(
+  agent: AgentId,
+  prompt: string,
+  o: AskOpts,
+): Promise<AskResult> {
+  return routeAiTask(
+    { ...o, task: o.task ?? "edit-assistance", agent, prompt },
+    (selected, input, bounded) =>
+      askAgentRaw(selected, input, { ...o, ...bounded }),
+  );
+}
+
+/** Compatibility export for diagnostics; every public call still enters task routing. */
+export async function askClaude(
+  prompt: string,
+  options: Options,
+  o: { timeoutMs?: number; onRetry?: (msg: string) => void } = {},
+): Promise<any> {
+  const result = await askAgent("claude", prompt, {
+    task: "diagnostic",
+    model: options.model,
+    system:
+      typeof options.systemPrompt === "string"
+        ? options.systemPrompt
+        : "Answer the diagnostic as JSON: {ok: true}.",
+    schema: {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+    },
+    ...o,
+  });
+  return {
+    result: JSON.stringify(result.data),
+    structured_output: result.data,
+    total_cost_usd: result.costUsd,
+  };
+}
+async function askAgentRaw(
+  agent: AgentId,
+  prompt: string,
+  o: AskOpts,
+): Promise<AskResult> {
   if (agent === "claude") {
     const options: Options = {
       model: o.model,
+      maxBudgetUsd: o.maxBudgetUsd,
       tools: [],
       settingSources: [],
       persistSession: false,
@@ -371,13 +591,50 @@ export async function askAgent(agent: AgentId, prompt: string, o: AskOpts): Prom
       systemPrompt: o.system,
       outputFormat: { type: "json_schema", schema: o.schema },
     };
-    const r = await askClaude(prompt, options, { timeoutMs: o.timeoutMs, onRetry: o.onRetry });
-    return { data: r.structured_output ?? extractJson(r.result), costUsd: r.total_cost_usd ?? 0 };
+    const r = await askClaudeRaw(prompt, options, {
+      timeoutMs: o.timeoutMs,
+      onRetry: o.onRetry,
+      retryLimit: o.retryLimit,
+    });
+    const modelUsage = Object.values(r.modelUsage ?? {}) as {
+      canonicalModel?: string;
+      costBasis?: string;
+    }[];
+    const knownEstimate =
+      typeof r.total_cost_usd === "number" &&
+      Number.isFinite(r.total_cost_usd) &&
+      r.total_cost_usd >= 0 &&
+      !modelUsage.some((usage) => usage.costBasis === "unknown");
+    return {
+      data: r.structured_output ?? extractJson(r.result),
+      costUsd: knownEstimate ? r.total_cost_usd : undefined,
+      cost: {
+        basis: knownEstimate ? "estimated" : "unknown",
+        ...(knownEstimate ? { value: r.total_cost_usd } : {}),
+      },
+      requests: r.num_turns,
+      actualModel:
+        modelUsage.length === 1 ? modelUsage[0]?.canonicalModel : undefined,
+      ...(r.usage
+        ? {
+            usage: {
+              inputTokens:
+                (r.usage.input_tokens ?? 0) +
+                (r.usage.cache_read_input_tokens ?? 0) +
+                (r.usage.cache_creation_input_tokens ?? 0),
+              outputTokens: r.usage.output_tokens ?? 0,
+            },
+          }
+        : {}),
+    };
   }
 
   const spec = agentSpec(agent);
   const bin = await findBin(spec.bins);
-  if (!bin) throw new Error(`${spec.name} is not installed (no \`${spec.bins[0]}\` found). Install it with: ${spec.install}`);
+  if (!bin)
+    throw new Error(
+      `${spec.name} is not installed (no \`${spec.bins[0]}\` found). Install it with: ${spec.install}`,
+    );
 
   const full = `${o.system}
 
@@ -388,44 +645,80 @@ ${JSON.stringify(o.schema)}`;
 
   const dir = await mkdtemp(path.join(tmpdir(), `capy-${agent}-`));
   try {
-    const { args, stdin, outFile } = await spec.argv!({ prompt: full, model: o.model, dir });
-    const r = await spawnText(bin, args, { stdin, cwd: dir, timeoutMs: o.timeoutMs ?? 10 * 60_000 });
-    if (r.timedOut) throw new Error(`${spec.name} did not answer within ${Math.round((o.timeoutMs ?? 600_000) / 1000)}s`);
+    const { args, stdin, outFile } = await spec.argv!({
+      prompt: full,
+      model: o.model,
+      dir,
+    });
+    const r = await spawnText(bin, args, {
+      stdin,
+      cwd: dir,
+      timeoutMs: o.timeoutMs ?? 10 * 60_000,
+    });
+    if (r.timedOut)
+      throw new Error(
+        `${spec.name} did not answer within ${Math.round((o.timeoutMs ?? 600_000) / 1000)}s`,
+      );
 
     let text = stripAnsi(r.stdout);
-    if (outFile) text = (await readFile(outFile, "utf8").catch(() => "")) || text;
+    if (outFile)
+      text = (await readFile(outFile, "utf8").catch(() => "")) || text;
     const envelope = parseEnvelope(text);
     if (envelope?.error) throw new Error(`${spec.name}: ${envelope.error}`);
-    if (r.code !== 0) throw new Error(`${spec.name} exited with code ${r.code}: ${lastLines(stripAnsi(r.stderr) || text)}`);
+    if (r.code !== 0)
+      throw new Error(
+        `${spec.name} exited with code ${r.code}: ${lastLines(stripAnsi(r.stderr) || text)}`,
+      );
 
     const data = extractJson(envelope?.text ?? text);
-    if (data === undefined) throw new Error(`${spec.name} did not answer with JSON: ${lastLines(envelope?.text ?? text)}`);
-    return { data, costUsd: 0 };
+    if (data === undefined)
+      throw new Error(
+        `${spec.name} did not answer with JSON: ${lastLines(envelope?.text ?? text)}`,
+      );
+    return { data, cost: { basis: "unknown" } };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
 /** Cheap round trip to prove the AI is installed, logged in and answering. */
-export async function testAgent(agent: AgentId, model?: string): Promise<{ ok: boolean; ms: number; error?: string }> {
+export async function testAgent(
+  agent: AgentId,
+  model?: string,
+): Promise<{ ok: boolean; ms: number; error?: string }> {
   const t0 = Date.now();
   try {
     const r = await askAgent(agent, 'Reply with {"ok": true}.', {
       model,
+      task: "diagnostic",
       system: "You are a health check. Answer only with the requested JSON.",
-      schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+      schema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
       effort: "low",
       timeoutMs: 120_000,
     });
     const ok = (r.data as { ok?: unknown } | undefined)?.ok === true;
-    return { ok, ms: Date.now() - t0, error: ok ? undefined : "Answered, but not with the expected JSON" };
+    return {
+      ok,
+      ms: Date.now() - t0,
+      error: ok ? undefined : "Answered, but not with the expected JSON",
+    };
   } catch (e) {
-    return { ok: false, ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) };
+    return {
+      ok: false,
+      ms: Date.now() - t0,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 
 /** Headless CLIs wrap the answer in a JSON result object (cursor, droid, gemini); unwrap it. */
-function parseEnvelope(s: string): { text?: string; error?: string } | undefined {
+function parseEnvelope(
+  s: string,
+): { text?: string; error?: string } | undefined {
   let o: any;
   try {
     o = JSON.parse(s.trim());
@@ -433,9 +726,21 @@ function parseEnvelope(s: string): { text?: string; error?: string } | undefined
     return undefined;
   }
   if (!o || typeof o !== "object" || Array.isArray(o)) return undefined;
-  if (o.is_error) return { error: String(o.result ?? o.error ?? "unknown error") };
-  if (o.error && typeof o.response !== "string") return { error: typeof o.error === "string" ? o.error : (o.error.message ?? JSON.stringify(o.error)) };
-  const text = typeof o.result === "string" ? o.result : typeof o.response === "string" ? o.response : undefined;
+  if (o.is_error)
+    return { error: String(o.result ?? o.error ?? "unknown error") };
+  if (o.error && typeof o.response !== "string")
+    return {
+      error:
+        typeof o.error === "string"
+          ? o.error
+          : (o.error.message ?? JSON.stringify(o.error)),
+    };
+  const text =
+    typeof o.result === "string"
+      ? o.result
+      : typeof o.response === "string"
+        ? o.response
+        : undefined;
   return text === undefined ? undefined : { text };
 }
 

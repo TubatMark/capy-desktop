@@ -1,7 +1,22 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { AiRoutingSchema, DEFAULT_AI_ROUTING } from "../lib/ai-policy";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { AGENT_IDS, DEFAULT_APP_SETTINGS, MODELS, type AgentId, type AppSettings, type Audience } from "../lib/types";
+import {
+  AGENT_IDS,
+  DEFAULT_APP_SETTINGS,
+  MODELS,
+  type AgentId,
+  type AppSettings,
+  type Audience,
+} from "../lib/types";
 
 /**
  * App-wide settings in <CAPY_DATA_DIR>/settings.json. This module is the only reader/writer.
@@ -17,11 +32,21 @@ export function isAgentId(v: unknown): v is AgentId {
 }
 
 /** Browsers yt-dlp can read cookies from (`--cookies-from-browser`). */
-export const BROWSERS = ["chrome", "safari", "firefox", "brave", "edge", "arc"] as const;
+export const BROWSERS = [
+  "chrome",
+  "safari",
+  "firefox",
+  "brave",
+  "edge",
+  "arc",
+] as const;
 
 /** Where the app keeps its own files (settings.json). Electron passes app.getPath("userData"), which is the same folder. */
 export function dataDir(): string {
-  return expandHome(process.env.CAPY_DATA_DIR?.trim() || path.join(homedir(), "Library", "Application Support", "capy"));
+  return expandHome(
+    process.env.CAPY_DATA_DIR?.trim() ||
+      path.join(homedir(), "Library", "Application Support", "capy"),
+  );
 }
 
 export function settingsFile(): string {
@@ -50,7 +75,10 @@ declare global {
   // eslint-disable-next-line no-var
   var __capySettings: State | undefined;
 }
-const state: State = (globalThis.__capySettings ??= { cache: null, originalEnvKey: null });
+const state: State = (globalThis.__capySettings ??= {
+  cache: null,
+  originalEnvKey: null,
+});
 
 /** Drop the in-memory copy so the next read hits the disk (tests, and after CAPY_DATA_DIR changes). */
 export function resetSettingsCache() {
@@ -76,7 +104,8 @@ function raw(): Partial<AppSettings> {
   if (mtime >= 0) {
     try {
       const obj = JSON.parse(readFileSync(file, "utf8"));
-      if (obj && typeof obj === "object" && !Array.isArray(obj)) parsed = clean(obj as Record<string, unknown>);
+      if (obj && typeof obj === "object" && !Array.isArray(obj))
+        parsed = clean(obj as Record<string, unknown>);
     } catch {
       /* unreadable: defaults */
     }
@@ -88,43 +117,64 @@ function raw(): Partial<AppSettings> {
 /** Keep only known keys with sane types. */
 function clean(obj: Record<string, unknown>): Partial<AppSettings> {
   const out: Partial<AppSettings> = {};
+  if (obj.aiRouting !== undefined)
+    out.aiRouting = AiRoutingSchema.parse(obj.aiRouting);
   if (typeof obj.browser === "string" && obj.browser) out.browser = obj.browser;
-  if (typeof obj.outputDir === "string" && obj.outputDir) out.outputDir = obj.outputDir;
+  if (typeof obj.outputDir === "string" && obj.outputDir)
+    out.outputDir = obj.outputDir;
   if (isAgentId(obj.agent)) out.agent = obj.agent;
   const models: AppSettings["models"] = {};
   if (obj.models && typeof obj.models === "object") {
-    for (const [k, v] of Object.entries(obj.models as Record<string, unknown>)) {
-      if (isAgentId(k) && typeof v === "string" && v.trim()) models[k] = v.trim().slice(0, 200);
+    for (const [k, v] of Object.entries(
+      obj.models as Record<string, unknown>,
+    )) {
+      if (isAgentId(k) && typeof v === "string" && v.trim())
+        models[k] = v.trim().slice(0, 200);
     }
   }
   // older files stored a single Claude model
-  if (!models.claude && typeof obj.model === "string" && obj.model) models.claude = obj.model;
+  if (!models.claude && typeof obj.model === "string" && obj.model)
+    models.claude = obj.model;
   if (Object.keys(models).length) out.models = models;
-  if (obj.claudeAuth === "subscription" || obj.claudeAuth === "apiKey") out.claudeAuth = obj.claudeAuth;
+  if (obj.claudeAuth === "subscription" || obj.claudeAuth === "apiKey")
+    out.claudeAuth = obj.claudeAuth;
   if (typeof obj.apiKey === "string" && obj.apiKey) out.apiKey = obj.apiKey;
-  if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt)) out.checkedAt = obj.checkedAt;
-  if (obj.audience === "original" || obj.audience === "en-us") out.audience = obj.audience;
-  if (typeof obj.postingAudience === "string" && obj.postingAudience) out.postingAudience = obj.postingAudience;
-  if (typeof obj.postingPaused === "boolean") out.postingPaused = obj.postingPaused;
+  if (typeof obj.checkedAt === "number" && Number.isFinite(obj.checkedAt))
+    out.checkedAt = obj.checkedAt;
+  if (obj.audience === "original" || obj.audience === "en-us")
+    out.audience = obj.audience;
+  if (typeof obj.postingAudience === "string" && obj.postingAudience)
+    out.postingAudience = obj.postingAudience;
+  if (typeof obj.postingPaused === "boolean")
+    out.postingPaused = obj.postingPaused;
   return out;
 }
 
 /** Settings as stored, with defaults filled in. Sync and cached; a missing file yields the defaults. */
 export function loadSettings(): AppSettings {
   const r = raw();
-  return { ...DEFAULT_SETTINGS, ...r, models: { ...r.models } };
+  return {
+    ...DEFAULT_SETTINGS,
+    ...r,
+    models: { ...r.models },
+    aiRouting: r.aiRouting ?? DEFAULT_AI_ROUTING,
+  };
 }
 
 /** Async aliases for callers that predate the sync API. */
 export async function loadAppSettings(): Promise<AppSettings> {
   return loadSettings();
 }
-export async function saveAppSettings(patch: SettingsPatch): Promise<AppSettings> {
+export async function saveAppSettings(
+  patch: SettingsPatch,
+): Promise<AppSettings> {
   return saveSettings(patch);
 }
 
 /** A partial update; `""` or `null` on any key removes it from the file. */
-export type SettingsPatch = { [K in Exclude<keyof AppSettings, "models">]?: AppSettings[K] | "" | null } & {
+export type SettingsPatch = {
+  [K in Exclude<keyof AppSettings, "models">]?: AppSettings[K] | "" | null;
+} & {
   models?: Partial<Record<AgentId, string | "" | null>>;
 };
 
@@ -138,8 +188,12 @@ export function saveSettings(patch: SettingsPatch): AppSettings {
     if (v === undefined) continue;
     if (k === "models" && v && typeof v === "object") {
       // per-agent merge; an empty string drops that agent's model
-      const merged: Record<string, string> = { ...((next.models as Record<string, string> | undefined) ?? {}) };
-      for (const [id, m] of Object.entries(v as Record<string, string | "" | null | undefined>)) {
+      const merged: Record<string, string> = {
+        ...((next.models as Record<string, string> | undefined) ?? {}),
+      };
+      for (const [id, m] of Object.entries(
+        v as Record<string, string | "" | null | undefined>,
+      )) {
         if (m === undefined) continue;
         if (m === "" || m === null) delete merged[id];
         else merged[id] = m;
@@ -203,8 +257,13 @@ export function effective(): EffectiveSettings {
     models: { ...s.models },
     browser: s.browser ?? env("CAPY_BROWSER", "CLIPRUN_BROWSER"),
     outputDir: outputDir ? expandHome(outputDir) : undefined,
-    model: s.models?.claude ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
-    claudeAuth: s.claudeAuth ?? (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY") ? "apiKey" : "subscription"),
+    model:
+      s.models?.claude ?? env("CAPY_MODEL", "CLIPRUN_MODEL") ?? MODELS[0].id,
+    claudeAuth:
+      s.claudeAuth ??
+      (env("CAPY_USE_API_KEY", "CLIPRUN_USE_API_KEY")
+        ? "apiKey"
+        : "subscription"),
     apiKey: s.apiKey ?? envApiKey(),
     audience: s.audience ?? "en-us",
     postingAudience: s.postingAudience ?? "us-east",
@@ -214,7 +273,11 @@ export function effective(): EffectiveSettings {
 
 /** The key from the environment, not one we put there from settings.json. */
 function envApiKey(): string | undefined {
-  return (state.originalEnvKey === null ? process.env.ANTHROPIC_API_KEY : state.originalEnvKey) || undefined;
+  return (
+    (state.originalEnvKey === null
+      ? process.env.ANTHROPIC_API_KEY
+      : state.originalEnvKey) || undefined
+  );
 }
 
 /**
@@ -223,14 +286,16 @@ function envApiKey(): string | undefined {
  * drops any key and bills the local `claude` login. Call at startup and after every save.
  */
 export function applyToEnv(): void {
-  if (state.originalEnvKey === null) state.originalEnvKey = process.env.ANTHROPIC_API_KEY;
+  if (state.originalEnvKey === null)
+    state.originalEnvKey = process.env.ANTHROPIC_API_KEY;
   const e = effective();
   if (e.claudeAuth === "apiKey" && e.apiKey) {
     process.env.CAPY_USE_API_KEY = "1";
     process.env.ANTHROPIC_API_KEY = e.apiKey;
   } else {
     delete process.env.CAPY_USE_API_KEY;
-    if (state.originalEnvKey) process.env.ANTHROPIC_API_KEY = state.originalEnvKey;
+    if (state.originalEnvKey)
+      process.env.ANTHROPIC_API_KEY = state.originalEnvKey;
     else delete process.env.ANTHROPIC_API_KEY;
   }
 }
