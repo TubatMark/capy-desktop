@@ -9,7 +9,11 @@ export interface StartServerOptions {
   /** Passed to the server as CAPY_DATA_DIR (settings.json lives there). */
   dataDir: string;
   /** Called if the server process exits (before or after readiness). */
-  onExit?: (code: number | null, signal: NodeJS.Signals | null, stderrTail: string[]) => void;
+  onExit?: (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    stderrTail: string[],
+  ) => void;
 }
 
 export interface RunningServer {
@@ -29,11 +33,21 @@ const KILL_GRACE_MS = 3_000;
 
 /** Dirs a Finder-launched app will not have on PATH but the pipeline needs (brew, yt-dlp, ffmpeg-full). */
 export function toolPathDirs(home = os.homedir()): string[] {
-  return ["/opt/homebrew/bin", "/opt/homebrew/opt/ffmpeg-full/bin", "/usr/local/bin", path.join(home, ".local/bin"), "/usr/bin", "/bin"];
+  return [
+    "/opt/homebrew/bin",
+    "/opt/homebrew/opt/ffmpeg-full/bin",
+    "/usr/local/bin",
+    path.join(home, ".local/bin"),
+    "/usr/bin",
+    "/bin",
+  ];
 }
 
 /** Existing PATH plus any of the tool dirs that are missing from it. */
-export function augmentPath(current: string | undefined, home = os.homedir()): string {
+export function augmentPath(
+  current: string | undefined,
+  home = os.homedir(),
+): string {
   const parts = (current ?? "").split(path.delimiter).filter(Boolean);
   const have = new Set(parts);
   for (const dir of toolPathDirs(home)) if (!have.has(dir)) parts.push(dir);
@@ -64,13 +78,17 @@ class RingBuffer {
     }
   }
   tail(): string[] {
-    return this.partial.trim() ? [...this.lines, this.partial].slice(-this.size) : [...this.lines];
+    return this.partial.trim()
+      ? [...this.lines, this.partial].slice(-this.size)
+      : [...this.lines];
   }
 }
 
 async function isReady(url: string): Promise<boolean> {
   try {
-    const res = await fetch(`${url}/api/jobs`, { signal: AbortSignal.timeout(2_000) });
+    const res = await fetch(`${url}/api/jobs`, {
+      signal: AbortSignal.timeout(2_000),
+    });
     return res.status === 200;
   } catch {
     return false;
@@ -81,7 +99,9 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function startServer(opts: StartServerOptions): Promise<RunningServer> {
+export async function startServer(
+  opts: StartServerOptions,
+): Promise<RunningServer> {
   const port = await pickPort();
   const url = `http://127.0.0.1:${port}`;
   const stderr = new RingBuffer(STDERR_LINES);
@@ -94,12 +114,20 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     CAPY_DESKTOP: "1",
     CAPY_DATA_DIR: opts.dataDir,
     PATH: augmentPath(process.env.PATH),
+    NODE_OPTIONS: [
+      process.env.NODE_OPTIONS ?? "",
+      "--experimental-sqlite",
+    ].join(" "),
   };
 
   let child: ChildProcess;
   if (opts.dev) {
     // Plain `next dev` from the project root; it is already a Node process, so no ELECTRON_RUN_AS_NODE.
-    const { ELECTRON_RUN_AS_NODE: _runAsNode, NODE_ENV: _nodeEnv, ...env } = baseEnv;
+    const {
+      ELECTRON_RUN_AS_NODE: _runAsNode,
+      NODE_ENV: _nodeEnv,
+      ...env
+    } = baseEnv;
     child = spawn("pnpm", ["exec", "next", "dev", "-p", String(port)], {
       cwd: process.cwd(),
       env: env as NodeJS.ProcessEnv,
@@ -112,12 +140,18 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     const serverJs = path.join(process.resourcesPath, "server", "server.js");
     child = spawn(process.execPath, [serverJs], {
       cwd: path.dirname(serverJs),
-      env: { ...baseEnv, ELECTRON_RUN_AS_NODE: "1", NODE_ENV: "production" } as NodeJS.ProcessEnv,
+      env: {
+        ...baseEnv,
+        ELECTRON_RUN_AS_NODE: "1",
+        NODE_ENV: "production",
+      } as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
   }
 
-  child.stdout?.on("data", (d: Buffer) => process.stdout.write(`[server] ${d.toString()}`));
+  child.stdout?.on("data", (d: Buffer) =>
+    process.stdout.write(`[server] ${d.toString()}`),
+  );
   child.stderr?.on("data", (d: Buffer) => {
     const s = d.toString();
     stderr.push(s);
@@ -125,7 +159,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   });
 
   let exited = false;
-  let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null =
+    null;
   const exitPromise = new Promise<void>((resolve) => {
     child.once("exit", (code, signal) => {
       exited = true;
@@ -152,8 +187,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (exited) {
-      const info = exitInfo as { code: number | null; signal: NodeJS.Signals | null } | null;
-      throw new ServerError(`The capy server exited before it was ready (code ${info?.code ?? "?"}${info?.signal ? `, signal ${info.signal}` : ""}).`, stderr.tail());
+      const info = exitInfo as {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      } | null;
+      throw new ServerError(
+        `The capy server exited before it was ready (code ${info?.code ?? "?"}${info?.signal ? `, signal ${info.signal}` : ""}).`,
+        stderr.tail(),
+      );
     }
     if (await isReady(url)) {
       return { url, port, stderrTail: () => stderr.tail(), stop };
@@ -161,5 +202,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     await sleep(POLL_MS);
   }
   await stop();
-  throw new ServerError(`The capy server did not answer within ${Math.round(timeoutMs / 1000)} s.`, stderr.tail());
+  throw new ServerError(
+    `The capy server did not answer within ${Math.round(timeoutMs / 1000)} s.`,
+    stderr.tail(),
+  );
 }

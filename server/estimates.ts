@@ -1,3 +1,5 @@
+import { fence } from "./worker/context";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { OUTPUT_ROOT } from "./paths";
@@ -53,8 +55,10 @@ export async function learn(key: keyof Timings, observed: number) {
   t[key] = t[key] * 0.6 + observed * 0.4;
   cache = t;
   try {
-    await mkdir(OUTPUT_ROOT, { recursive: true });
-    await writeFile(FILE, JSON.stringify(t, null, 2));
+    fence(() => {
+      mkdirSync(OUTPUT_ROOT, { recursive: true });
+      writeFileSync(FILE, JSON.stringify(t, null, 2));
+    });
   } catch {
     /* best effort */
   }

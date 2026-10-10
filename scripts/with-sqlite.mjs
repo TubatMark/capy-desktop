@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-const [command, ...args] = process.argv.slice(2);
+const [command, ...rawArgs] = process.argv.slice(2);
+const args = rawArgs.filter((arg) => arg !== "--");
 if (!command) throw Error("Missing command");
 const existing = process.env.NODE_OPTIONS ?? "";
 const child = spawn(command, args, {

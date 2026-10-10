@@ -1,4 +1,12 @@
-import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { fence } from "./worker/context";
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { PLATFORMS, type AccountPublic, type Platform } from "../lib/types";
 import { dataDir } from "./settings";
@@ -26,11 +34,16 @@ export type AccountsFile = Record<Platform, StoredAccount>;
 
 export class AuthError extends Error {}
 
-const NAMES: Record<Platform, string> = { youtube: "YouTube", instagram: "Instagram", tiktok: "TikTok" };
+const NAMES: Record<Platform, string> = {
+  youtube: "YouTube",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+};
 
 declare global {
   // eslint-disable-next-line no-var
-  var __capyAccounts: { file: string; mtime: number; data: AccountsFile } | null | undefined;
+  var __capyAccounts:
+    { file: string; mtime: number; data: AccountsFile } | null | undefined;
 }
 
 export function accountsFile(): string {
@@ -57,7 +70,10 @@ export function loadAccounts(): AccountsFile {
   if (c && c.file === file && c.mtime === mtime) return c.data;
   let data = empty();
   try {
-    data = { ...empty(), ...(JSON.parse(readFileSync(file, "utf8")) as Partial<AccountsFile>) };
+    data = {
+      ...empty(),
+      ...(JSON.parse(readFileSync(file, "utf8")) as Partial<AccountsFile>),
+    };
   } catch {
     /* no file yet */
   }
@@ -66,23 +82,28 @@ export function loadAccounts(): AccountsFile {
 }
 
 /** Merge `patch` into one platform's record. `undefined` values are ignored; `null` deletes the key. */
-export function saveAccount(p: Platform, patch: { [K in keyof StoredAccount]?: StoredAccount[K] | null }): StoredAccount {
-  const all = { ...loadAccounts() };
-  const next: Record<string, unknown> = { ...all[p] };
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === undefined) continue;
-    if (v === null) delete next[k];
-    else next[k] = v;
-  }
-  all[p] = next as StoredAccount;
-  const file = accountsFile();
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, file);
-  globalThis.__capyAccounts = { file, mtime: mtimeOf(file), data: all };
-  return all[p];
+export function saveAccount(
+  p: Platform,
+  patch: { [K in keyof StoredAccount]?: StoredAccount[K] | null },
+): StoredAccount {
+  return fence(() => {
+    const all = { ...loadAccounts() };
+    const next: Record<string, unknown> = { ...all[p] };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue;
+      if (v === null) delete next[k];
+      else next[k] = v;
+    }
+    all[p] = next as StoredAccount;
+    const file = accountsFile();
+    mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, file);
+    globalThis.__capyAccounts = { file, mtime: mtimeOf(file), data: all };
+    return all[p];
+  });
 }
 
 export function publicAccounts(): AccountPublic[] {
@@ -99,7 +120,9 @@ export function publicAccounts(): AccountPublic[] {
       autoPost: a.autoPost ?? true,
       mode: platform === "tiktok" ? (a.mode ?? "inbox") : undefined,
       clientId: a.clientId,
-      clientSecret: a.clientSecret ? `••••${a.clientSecret.slice(-4)}` : undefined,
+      clientSecret: a.clientSecret
+        ? `••••${a.clientSecret.slice(-4)}`
+        : undefined,
       choices: platform === "instagram" ? a.choices : undefined,
       igUserId: platform === "instagram" ? a.igUserId : undefined,
     };
@@ -110,16 +133,30 @@ export function publicAccounts(): AccountPublic[] {
  * How long before expiry a token gets refreshed: Meta's 60-day tokens a week ahead; Google and TikTok 30 minutes,
  * so an upload plus a long processing wait never runs past the token.
  */
-const refreshAhead = (p: Platform) => (p === "instagram" ? 7 * 86_400_000 : 30 * 60_000);
+const refreshAhead = (p: Platform) =>
+  p === "instagram" ? 7 * 86_400_000 : 30 * 60_000;
 
 /** A usable access token, refreshed when it's about to expire. Auth failures flag the account for reconnect. */
-export async function getAccessToken(p: Platform, f: typeof fetch = fetch): Promise<string> {
+export async function getAccessToken(
+  p: Platform,
+  f: typeof fetch = fetch,
+): Promise<string> {
   const a = loadAccounts()[p];
-  if (!a?.tokens?.accessToken || a.needsReconnect) throw new AuthError(`Connect ${NAMES[p]} in Settings → Accounts`);
-  if (a.tokens.expiresAt - Date.now() > refreshAhead(p)) return a.tokens.accessToken;
-  if (!a.clientId || !a.clientSecret) throw new AuthError(`Add your ${NAMES[p]} app's client ID and secret in Settings → Accounts`);
+  if (!a?.tokens?.accessToken || a.needsReconnect)
+    throw new AuthError(`Connect ${NAMES[p]} in Settings → Accounts`);
+  if (a.tokens.expiresAt - Date.now() > refreshAhead(p))
+    return a.tokens.accessToken;
+  if (!a.clientId || !a.clientSecret)
+    throw new AuthError(
+      `Add your ${NAMES[p]} app's client ID and secret in Settings → Accounts`,
+    );
   try {
-    const tokens = await refreshTokens(p, a.tokens, { clientId: a.clientId, clientSecret: a.clientSecret }, f);
+    const tokens = await refreshTokens(
+      p,
+      a.tokens,
+      { clientId: a.clientId, clientSecret: a.clientSecret },
+      f,
+    );
     saveAccount(p, { tokens });
     return tokens.accessToken;
   } catch (e) {
@@ -127,7 +164,9 @@ export async function getAccessToken(p: Platform, f: typeof fetch = fetch): Prom
     if (a.tokens.expiresAt > Date.now() + 60_000) return a.tokens.accessToken;
     if (e instanceof OAuthError && e.isAuth) {
       saveAccount(p, { needsReconnect: true });
-      throw new AuthError(`Reconnect ${NAMES[p]} in Settings → Accounts (${e.message})`);
+      throw new AuthError(
+        `Reconnect ${NAMES[p]} in Settings → Accounts (${e.message})`,
+      );
     }
     throw e;
   }

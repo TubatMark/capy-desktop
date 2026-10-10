@@ -8,9 +8,9 @@
     "capy": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "node scripts/with-sqlite.mjs next dev",
+    "dev": "node scripts/dev.mjs dev",
     "build": "node scripts/with-sqlite.mjs next build",
-    "start": "node scripts/with-sqlite.mjs next start",
+    "start": "node scripts/dev.mjs start",
     "clip": "tsx src/cli.ts",
     "check": "tsx src/cli.ts check",
     "typecheck": "tsc --noEmit",
@@ -18,7 +18,9 @@
     "desktop:bundle": "node scripts/desktop-bundle.mjs",
     "desktop:dev": "pnpm desktop:bundle && electron .",
     "desktop:build": "node scripts/with-sqlite.mjs node scripts/desktop-build.mjs",
-    "desktop:pack": "node scripts/with-sqlite.mjs node scripts/desktop-build.mjs --dir"
+    "desktop:pack": "node scripts/with-sqlite.mjs node scripts/desktop-build.mjs --dir",
+    "worker": "node scripts/worker.mjs",
+    "worker:service": "node scripts/worker-service.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -42,6 +44,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",

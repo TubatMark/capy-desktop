@@ -1,3 +1,5 @@
+import { fence, currentWork } from "./worker/context";
+import { enqueueWork, workQueue } from "./worker/api";
 import path from "node:path";
 import type { JobSettings, JobState } from "../lib/types";
 import type { Upload } from "../src/youtube";
@@ -17,48 +19,91 @@ export interface WatcherDeps {
   /** One watcher per data folder (the packaged app and `pnpm dev` share it). */
   lock(): "acquired" | "held" | "busy";
   list(channelUrl: string): Promise<Upload[]>;
-  createJob(videoId: string, settings: Partial<JobSettings>, automation: NonNullable<JobState["automation"]>): Promise<void>;
+  createJob(
+    videoId: string,
+    settings: Partial<JobSettings>,
+    automation: NonNullable<JobState["automation"]>,
+  ): Promise<void>;
 }
 
 declare global {
   // eslint-disable-next-line no-var
-  var __capyWatcher: { timer?: NodeJS.Timeout; running?: boolean; checking?: boolean } | undefined;
+  var __capyWatcher:
+    | { timer?: NodeJS.Timeout; running?: boolean; checking?: boolean }
+    | undefined;
 }
 const state = () => (globalThis.__capyWatcher ??= {});
 
 /** True while a check of the channels is running (the Automation page shows it). */
-export const isChecking = () => !!state().checking;
+export const isChecking = () =>
+  workQueue()
+    .list()
+    .some((x) => x.kind === "watcher" && x.status === "running");
 
 function defaultDeps(): WatcherDeps {
-  const yt = () => ({ cookiesFromBrowser: effective().browser, proxy: process.env.YT_PROXY });
+  const yt = () => ({
+    cookiesFromBrowser: effective().browser,
+    proxy: process.env.YT_PROXY,
+  });
   return {
     now: () => new Date(),
-    lock: () => takePosterLock(path.join(dataDir(), "watcher.lock"), Date.now()),
-    list: async (url) => (await import("../src/youtube")).listUploads(url, 12, yt()),
+    lock: () => (currentWork() ? "held" : "busy"),
+    list: async (url) =>
+      (await import("../src/youtube")).listUploads(url, 12, yt()),
     createJob: async (videoId, settings, automation) => {
       const { jobs } = await import("./jobs");
-      await jobs().create(`https://www.youtube.com/watch?v=${videoId}`, settings, { automation });
+      await jobs().create(
+        `https://www.youtube.com/watch?v=${videoId}`,
+        settings,
+        { automation },
+      );
     },
   };
 }
 
 /** One pass: list channels if a check is due (or forced), then start the next video if none is in flight. */
-export async function watcherTick(d: WatcherDeps = defaultDeps(), o: { force?: boolean } = {}): Promise<void> {
-  if (d.lock() === "busy") return;
-  const now = d.now();
+export async function watcherTick(
+  d?: WatcherDeps,
+  o: { force?: boolean } = {},
+): Promise<void> {
+  if (!d && !currentWork()) {
+    await enqueueWork({
+      kind: "watcher",
+      workKey: "watcher:forced",
+      inputRevision: Math.floor(Date.now() / 30_000),
+      payload: { force: !!o.force },
+    });
+    return;
+  }
+  const deps = d ?? defaultDeps();
+  if (deps.lock() === "busy") return;
+  const now = deps.now();
   const file = watch().get();
 
-  const due = o.force || !file.lastCheckAt || now.getTime() - file.lastCheckAt >= file.intervalMin * 60_000;
+  const due =
+    o.force ||
+    !file.lastCheckAt ||
+    now.getTime() - file.lastCheckAt >= file.intervalMin * 60_000;
   if (due && file.channels.some((c) => c.enabled)) {
     state().checking = true;
     try {
-      watch().mutate((f) => ({ ...f, lastCheckAt: now.getTime() }));
+      mutateWatch((f) => ({ ...f, lastCheckAt: now.getTime() }));
       for (const ch of file.channels.filter((c) => c.enabled)) {
         try {
-          const uploads = await d.list(ch.url);
-          watch().mutate((f) => applyCheck(f, ch.id, uploads, d.now()));
+          const uploads = await deps.list(ch.url);
+          mutateWatch((f) => applyCheck(f, ch.id, uploads, deps.now()));
         } catch (e) {
-          watch().mutate((f) => checkFailed(f, ch.id, (e instanceof Error ? e.message : String(e)).split("\n").pop()!.slice(0, 200), d.now()));
+          mutateWatch((f) =>
+            checkFailed(
+              f,
+              ch.id,
+              (e instanceof Error ? e.message : String(e))
+                .split("\n")
+                .pop()!
+                .slice(0, 200),
+              deps.now(),
+            ),
+          );
         }
       }
     } finally {
@@ -67,11 +112,19 @@ export async function watcherTick(d: WatcherDeps = defaultDeps(), o: { force?: b
   }
 
   // a video that never finished (capy closed mid-way, a hang) stops blocking the line after a while
-  watch().mutate((f) => ({
+  mutateWatch((f) => ({
     ...f,
     channels: f.channels.map((c) => ({
       ...c,
-      history: c.history.map((h) => (h.status === "processing" && now.getTime() - h.at > STUCK_MS ? { ...h, status: "error" as const, error: "Took too long; open it to check" } : h)),
+      history: c.history.map((h) =>
+        h.status === "processing" && now.getTime() - h.at > STUCK_MS
+          ? {
+              ...h,
+              status: "error" as const,
+              error: "Took too long; open it to check",
+            }
+          : h,
+      ),
     })),
   }));
   const inFlight = watch()
@@ -80,7 +133,7 @@ export async function watcherTick(d: WatcherDeps = defaultDeps(), o: { force?: b
   if (inFlight) return;
 
   let next: ReturnType<typeof takeDue>["due"];
-  watch().mutate((f) => {
+  mutateWatch((f) => {
     const r = takeDue(f, now);
     next = r.due;
     return r.file;
@@ -90,44 +143,33 @@ export async function watcherTick(d: WatcherDeps = defaultDeps(), o: { force?: b
     .get()
     .channels.find((c) => c.id === next!.channelId)!;
   try {
-    await d.createJob(next.videoId, { count: ch.settings.clips, ...(ch.settings.audience ? { audience: ch.settings.audience } : {}) }, { channelId: ch.id, channelName: ch.name });
+    await deps.createJob(
+      next.videoId,
+      {
+        count: ch.settings.clips,
+        ...(ch.settings.audience ? { audience: ch.settings.audience } : {}),
+      },
+      { channelId: ch.id, channelName: ch.name },
+    );
   } catch (e) {
-    watch().mutate((f) => markHistory(f, next!.videoId, "error", e instanceof Error ? e.message.split("\n")[0]! : String(e)));
+    mutateWatch((f) =>
+      markHistory(
+        f,
+        next!.videoId,
+        "error",
+        e instanceof Error ? e.message.split("\n")[0]! : String(e),
+      ),
+    );
   }
 }
 
-/** Run a normal pass soon (after adding a channel with "clip the latest upload"). */
+/** Request handlers enqueue checks; the worker owns execution. */
 export function kickWatcher() {
-  const s = state();
-  if (s.running) return;
-  s.running = true;
-  void watcherTick()
-    .catch((e) => console.error("[watcher]", e))
-    .finally(() => (s.running = false));
+  void watcherTick().catch((e) => console.error("[watcher enqueue]", e));
 }
-
-/** Run a check right away (the "Check now" button). */
-export async function checkNow(): Promise<void> {
-  await watcherTick(defaultDeps(), { force: true });
+export async function checkNow() {
+  await watcherTick(undefined, { force: true });
 }
-
-/** Start the once-a-minute loop (first pass after 2 minutes). Never during `next build`. */
-export function startWatcher() {
-  const s = state();
-  if (s.timer || process.env.NEXT_PHASE === "phase-production-build") return;
-  const run = async () => {
-    if (s.running) return;
-    s.running = true;
-    try {
-      await watcherTick();
-    } catch (e) {
-      console.error("[watcher]", e);
-    } finally {
-      s.running = false;
-    }
-  };
-  setTimeout(() => void run(), 120_000).unref();
-  s.timer = setInterval(() => void run(), 60_000);
-  s.timer.unref();
-}
-
+export function startWatcher() {}
+const mutateWatch: ReturnType<typeof watch>["mutate"] = (fn) =>
+  fence(() => watch().mutate(fn));

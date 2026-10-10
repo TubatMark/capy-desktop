@@ -103,7 +103,7 @@ const clip = z
     seo: seo.optional(),
     review: z
       .object({
-        verdict: z.enum(["pass", "fix_hook", "fail"]),
+        verdict: z.enum(["pass", "fix_hook", "fail", "needs_review"]),
         problem: string.optional(),
       })
       .optional(),

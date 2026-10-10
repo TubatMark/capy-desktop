@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { startPoster } from "@/server/poster";
 import { allocateSlot, audienceTz } from "@/lib/post-time";
 import { publicAccounts } from "@/server/accounts";
 import { queue, summary, taken } from "@/server/queue";
@@ -7,16 +6,22 @@ import { effective } from "@/server/settings";
 
 export const dynamic = "force-dynamic";
 
-// the header badge and the menu-bar icon call these on every page and every minute: make sure posting runs
-startPoster();
-
 /** GET = every queue entry, the summary, and the next free slot for the connected platforms. */
 export async function GET() {
   const entries = queue().list();
   const now = new Date();
-  const platforms = publicAccounts().filter((a) => a.connected).map((a) => a.platform);
+  const platforms = publicAccounts()
+    .filter((a) => a.connected)
+    .map((a) => a.platform);
   const tz = audienceTz(effective().postingAudience);
   // the same busy-times an approval uses, so the preview matches the slot it gets
-  const nextFree = platforms.length ? allocateSlot(taken(entries, now), platforms, tz, now)?.getTime() : undefined;
-  return NextResponse.json({ entries, summary: summary(entries, now), nextFree, audienceTz: tz });
+  const nextFree = platforms.length
+    ? allocateSlot(taken(entries, now), platforms, tz, now)?.getTime()
+    : undefined;
+  return NextResponse.json({
+    entries,
+    summary: summary(entries, now),
+    nextFree,
+    audienceTz: tz,
+  });
 }

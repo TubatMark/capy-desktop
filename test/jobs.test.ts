@@ -1,4 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeEach,
+  beforeAll,
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,14 +24,31 @@ const env = vi.hoisted(() => {
 });
 
 // no test may reach a real AI
-vi.mock("../src/agents", async (orig) => ({ ...(await orig<typeof import("../src/agents")>()), askAgent: async () => { throw new Error("askAgent called in a test"); } }));
+vi.mock("../src/agents", async (orig) => ({
+  ...(await orig<typeof import("../src/agents")>()),
+  askAgent: async () => {
+    throw new Error("askAgent called in a test");
+  },
+}));
 const pickClips = vi.fn();
-vi.mock("../src/pick", async (orig) => ({ ...(await orig<typeof import("../src/pick")>()), pickClips: (...a: unknown[]) => pickClips(...a) }));
-vi.mock("../src/review", async (orig) => ({ ...(await orig<typeof import("../src/review")>()), reviewPicks: async () => [] }));
+vi.mock("../src/pick", async (orig) => ({
+  ...(await orig<typeof import("../src/pick")>()),
+  pickClips: (...a: unknown[]) => pickClips(...a),
+}));
+vi.mock("../src/review", async (orig) => ({
+  ...(await orig<typeof import("../src/review")>()),
+  reviewPicks: async () => [],
+}));
 const translatePhrases = vi.fn();
-vi.mock("../src/translate", async (orig) => ({ ...(await orig<typeof import("../src/translate")>()), translatePhrases: (...a: unknown[]) => translatePhrases(...a) }));
+vi.mock("../src/translate", async (orig) => ({
+  ...(await orig<typeof import("../src/translate")>()),
+  translatePhrases: (...a: unknown[]) => translatePhrases(...a),
+}));
 const reviewContent = vi.fn();
-vi.mock("../src/content-review", async (orig) => ({ ...(await orig<typeof import("../src/content-review")>()), reviewContent: (...a: unknown[]) => reviewContent(...a) }));
+vi.mock("../src/content-review", async (orig) => ({
+  ...(await orig<typeof import("../src/content-review")>()),
+  reviewContent: (...a: unknown[]) => reviewContent(...a),
+}));
 vi.mock("../src/pipeline", async (orig) => ({
   ...(await orig<typeof import("../src/pipeline")>()),
   stageRender: async (jobDir: string, n: number) => {
@@ -34,10 +60,49 @@ vi.mock("../src/pipeline", async (orig) => ({
   stageMeta: async () => {
     throw new Error("offline in tests");
   },
-  stageSegment: async (_u: string, jobDir: string, n: number, c: { start: number; end: number }) => ({ start: c.start - 15, end: c.end + 15, file: path.join(jobDir, `seg${n}.mp4`), thumb: path.join(jobDir, `seg${n}.jpg`) }),
+  stageSegment: async (
+    _u: string,
+    jobDir: string,
+    n: number,
+    c: { start: number; end: number },
+  ) => ({
+    start: c.start - 15,
+    end: c.end + 15,
+    file: path.join(jobDir, `seg${n}.mp4`),
+    thumb: path.join(jobDir, `seg${n}.jpg`),
+  }),
 }));
 
 import { jobs } from "../server/jobs";
+import { registerMediaWorkers } from "../server/worker/media";
+import { workQueue } from "../server/worker/api";
+import { stagesFor } from "../server/worker/registry";
+import { runJob } from "../server/worker/runner";
+let workerTimer: NodeJS.Timeout;
+let draining = false;
+beforeAll(() => {
+  registerMediaWorkers();
+  workerTimer = setInterval(async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      const q = workQueue();
+      const lease = await q.claim("test-worker");
+      if (lease)
+        await runJob(lease, new AbortController().signal, {
+          queue: q,
+          stages: stagesFor(lease),
+          artifactRoot: process.env.CAPY_OUTPUT!,
+        });
+    } finally {
+      draining = false;
+    }
+  }, 10);
+});
+afterAll(() => clearInterval(workerTimer));
+afterEach(async () => {
+  await vi.waitFor(() => expect(draining).toBe(false), { timeout: 5000 });
+});
 import { watch } from "../server/watch";
 import type { ClipState, JobState } from "../lib/types";
 
@@ -48,21 +113,79 @@ const words = Array.from({ length: 80 }, (_, k) => [
   { text: `isso${k}.`, start: k * 5 + 0.5, end: k * 5 + 1 },
 ]).flat();
 
-function clip(n: number, start: number, end: number, extra: Partial<ClipState> = {}): ClipState {
-  return { n, start, end, title: `t${n}`, hook: "h", reason: "r", score: 5, selected: true, render: { status: "none" }, segment: { start: start - 15, end: end + 15, url: `/api/media/x/seg${n}.mp4`, status: "done" }, ...extra };
+function clip(
+  n: number,
+  start: number,
+  end: number,
+  extra: Partial<ClipState> = {},
+): ClipState {
+  return {
+    n,
+    start,
+    end,
+    title: `t${n}`,
+    hook: "h",
+    reason: "r",
+    score: 5,
+    selected: true,
+    render: { status: "none" },
+    segment: {
+      start: start - 15,
+      end: end + 15,
+      url: `/api/media/x/seg${n}.mp4`,
+      status: "done",
+    },
+    ...extra,
+  };
 }
 
 let seq = 0;
-async function seedJob(clips: ClipState[], extra: Partial<JobState> = {}): Promise<JobState> {
+async function seedJob(
+  clips: ClipState[],
+  extra: Partial<JobState> = {},
+): Promise<JobState> {
   const id = `vid${++seq}xxxxx`.slice(0, 11);
   const dir = `t-${id}`;
   mkdirSync(path.join(OUT, dir), { recursive: true });
   writeFileSync(path.join(OUT, dir, "words.json"), JSON.stringify(words));
-  writeFileSync(path.join(OUT, dir, "meta.json"), JSON.stringify({ id, title: "T", duration: 400, url: "u", subtitles: [], autoCaptions: [] }));
+  writeFileSync(
+    path.join(OUT, dir, "meta.json"),
+    JSON.stringify({
+      id,
+      title: "T",
+      duration: 400,
+      url: "u",
+      subtitles: [],
+      autoCaptions: [],
+    }),
+  );
   const job: JobState = {
-    id, videoId: id, url: `https://www.youtube.com/watch?v=${id}`, title: "T", duration: 400, status: "ready", stage: "done", stageStartedAt: 0, createdAt: 0,
-    settings: { count: 3, minSec: 20, maxSec: 60, layout: "center", style: "bold", captions: true, hook: true, maxRes: 1080, audience: "en-us" },
-    estimate: { stageRemaining: 0, totalRemaining: 0, progress: 1 }, clips, log: [], dir, sourceLang: "pt-BR", ...extra,
+    id,
+    videoId: id,
+    url: `https://www.youtube.com/watch?v=${id}`,
+    title: "T",
+    duration: 400,
+    status: "ready",
+    stage: "done",
+    stageStartedAt: 0,
+    createdAt: 0,
+    settings: {
+      count: 3,
+      minSec: 20,
+      maxSec: 60,
+      layout: "center",
+      style: "bold",
+      captions: true,
+      hook: true,
+      maxRes: 1080,
+      audience: "en-us",
+    },
+    estimate: { stageRemaining: 0, totalRemaining: 0, progress: 1 },
+    clips,
+    log: [],
+    dir,
+    sourceLang: "pt-BR",
+    ...extra,
   };
   writeFileSync(path.join(OUT, dir, "job.json"), JSON.stringify(job));
   const m = jobs();
@@ -71,20 +194,29 @@ async function seedJob(clips: ClipState[], extra: Partial<JobState> = {}): Promi
   return job;
 }
 
-const enFor = (phrases: { i: number; start: number; end: number }[]) => phrases.map((p) => ({ text: `EN${p.i}`, start: p.start, end: p.end }));
+const enFor = (phrases: { i: number; start: number; end: number }[]) =>
+  phrases.map((p) => ({ text: `EN${p.i}`, start: p.start, end: p.end }));
 
 beforeEach(() => {
   reviewContent.mockReset();
-  reviewContent.mockResolvedValue({ verdict: "ok", summary: "Fine", issues: [], at: 1 });
+  reviewContent.mockResolvedValue({
+    verdict: "ok",
+    summary: "Fine",
+    issues: [],
+    at: 1,
+  });
   pickClips.mockReset();
   translatePhrases.mockReset();
-  translatePhrases.mockImplementation(async (ph: { i: number; start: number; end: number }[]) => enFor(ph));
+  translatePhrases.mockImplementation(
+    async (ph: { i: number; start: number; end: number }[]) => enFor(ph),
+  );
 });
 
 describe("poster start-up", () => {
-  it("loading the jobs starts the background poster (no instrumentation hook, which traced the whole project)", async () => {
+  it("loading jobs never starts request-process posting or watcher timers", async () => {
     await jobs().init();
-    expect(globalThis.__capyPoster?.timer).toBeDefined();
+    expect(globalThis.__capyPoster?.timer).toBeUndefined();
+    expect(globalThis.__capyWatcher?.timer).toBeUndefined();
   });
 });
 
@@ -92,7 +224,9 @@ describe("replaceClip", () => {
   it("refuses clips that are queued or stale (they have, or are about to have, a render)", async () => {
     for (const status of ["queued", "stale"] as const) {
       const job = await seedJob([clip(1, 100, 140, { render: { status } })]);
-      await expect(jobs().replaceClip(job.id, 1, "x")).rejects.toMatchObject({ status: 409 });
+      await expect(jobs().replaceClip(job.id, 1, "x")).rejects.toMatchObject({
+        status: 409,
+      });
       expect(pickClips).not.toHaveBeenCalled();
     }
   });
@@ -102,17 +236,41 @@ describe("replaceClip", () => {
     pickClips.mockReturnValue(new Promise((r) => (answer = r)));
     const p = jobs().replaceClip(job.id, 1, "boring");
     await vi.waitFor(() => expect(pickClips).toHaveBeenCalled());
-    job.clips[0]!.render = { status: "queued" };
-    answer({ clips: [{ start: 300, end: 340, title: "new", hook: "h", reason: "r", score: 8 }], raw: {}, costUsd: 0, durationMs: 1 });
+    await jobs().render(job.id, [1]);
+    answer({
+      clips: [
+        {
+          start: 300,
+          end: 340,
+          title: "new",
+          hook: "h",
+          reason: "r",
+          score: 8,
+        },
+      ],
+      raw: {},
+      costUsd: 0,
+      durationMs: 1,
+    });
     await expect(p).rejects.toMatchObject({ status: 409 });
-    expect(job.clips[0]!.start).toBe(100);
+    expect(jobs().get(job.id)!.clips[0]!.start).toBe(100);
   });
 });
 
 describe("caption words for render", () => {
   it("translates the part of a trimmed clip that isn't translated yet before rendering", async () => {
-    const job = await seedJob([clip(1, 150, 175, { captionsTranslated: true })], { translated: [{ start: 100, end: 160 }] });
-    writeFileSync(path.join(OUT, job.dir, "words.en.json"), JSON.stringify(words.filter((w) => w.start >= 100 && w.start < 160).map((w) => ({ ...w, text: "OLD" }))));
+    const job = await seedJob(
+      [clip(1, 150, 175, { captionsTranslated: true })],
+      { translated: [{ start: 100, end: 160 }] },
+    );
+    writeFileSync(
+      path.join(OUT, job.dir, "words.en.json"),
+      JSON.stringify(
+        words
+          .filter((w) => w.start >= 100 && w.start < 160)
+          .map((w) => ({ ...w, text: "OLD" })),
+      ),
+    );
     const got = await jobs().captionWordsFor(job, job.clips[0]!);
     expect(translatePhrases).toHaveBeenCalledTimes(1);
     const inClip = got.filter((w) => w.start >= 150 && w.start < 175);
@@ -123,10 +281,26 @@ describe("caption words for render", () => {
     const job = await seedJob([clip(1, 50, 80)]);
     const got = await jobs().captionWordsFor(job, job.clips[0]!);
     expect(translatePhrases).toHaveBeenCalledTimes(1);
-    expect(got.filter((w) => w.start >= 50 && w.start < 80).every((w) => w.text.startsWith("EN"))).toBe(true);
+    expect(
+      got
+        .filter((w) => w.start >= 50 && w.start < 80)
+        .every((w) => w.text.startsWith("EN")),
+    ).toBe(true);
   });
   it("uses the original words when the audience is original", async () => {
-    const job = await seedJob([clip(1, 50, 80)], { settings: { count: 3, minSec: 20, maxSec: 60, layout: "center", style: "bold", captions: true, hook: true, maxRes: 1080, audience: "original" } });
+    const job = await seedJob([clip(1, 50, 80)], {
+      settings: {
+        count: 3,
+        minSec: 20,
+        maxSec: 60,
+        layout: "center",
+        style: "bold",
+        captions: true,
+        hook: true,
+        maxRes: 1080,
+        audience: "original",
+      },
+    });
     const got = await jobs().captionWordsFor(job, job.clips[0]!);
     expect(translatePhrases).not.toHaveBeenCalled();
     expect(got.some((w) => w.text === "Olha")).toBe(true);
@@ -136,8 +310,13 @@ describe("caption words for render", () => {
 describe("parallel translations", () => {
   it("keeps both clips' English words when two translate at once with nothing cached", async () => {
     const job = await seedJob([clip(1, 30, 60), clip(2, 300, 330)]);
-    await Promise.all([jobs().translateClip(job.id, 1), jobs().translateClip(job.id, 2)]);
-    const saved: { start: number }[] = JSON.parse(readFileSync(path.join(OUT, job.dir, "words.en.json"), "utf8"));
+    await Promise.all([
+      jobs().translateClip(job.id, 1),
+      jobs().translateClip(job.id, 2),
+    ]);
+    const saved: { start: number }[] = JSON.parse(
+      readFileSync(path.join(OUT, job.dir, "words.en.json"), "utf8"),
+    );
     expect(saved.some((w) => w.start >= 30 && w.start < 60)).toBe(true);
     expect(saved.some((w) => w.start >= 300 && w.start < 330)).toBe(true);
   });
@@ -148,52 +327,124 @@ void mkdtempSync;
 void tmpdir;
 
 describe("automation jobs", () => {
-  const original = { count: 3, minSec: 20, maxSec: 60, layout: "center" as const, style: "bold" as const, captions: true, hook: true, maxRes: 1080, audience: "original" as const };
+  const original = {
+    count: 3,
+    minSec: 20,
+    maxSec: 60,
+    layout: "center" as const,
+    style: "bold" as const,
+    captions: true,
+    hook: true,
+    maxRes: 1080,
+    audience: "original" as const,
+  };
+  const auto = { channelId: "UC1", channelName: "Creator" };
   const watching = (jobId: string) =>
     watch().mutate((f) => ({
       ...f,
       channels: [
         {
-          id: "UC1", name: "Creator", url: "u", enabled: true, addedAt: 0, seen: [], pending: [],
-          history: [{ videoId: jobId, title: "v", at: Date.now(), jobId, status: "processing" as const }],
+          id: "UC1",
+          name: "Creator",
+          url: "u",
+          enabled: true,
+          addedAt: 0,
+          seen: [],
+          pending: [],
+          history: [
+            {
+              videoId: jobId,
+              title: "v",
+              at: Date.now(),
+              jobId,
+              status: "processing" as const,
+            },
+          ],
           settings: { clips: 3, minVideoSec: 240, perDay: 2 },
         },
       ],
     }));
 
   it("render their selected picks once ready, get an AI content review, and mark the watch history rendered", async () => {
-    const job = await seedJob([clip(1, 100, 140), clip(2, 200, 240, { selected: false })], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    const job = await seedJob(
+      [clip(1, 100, 140), clip(2, 200, 240, { selected: false })],
+      {
+        automation: { channelId: "UC1", channelName: "Creator" },
+        settings: original,
+      },
+    );
     watching(job.id);
     await jobs().onReady(job);
-    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
-    expect(job.clips[1]!.render.status).toBe("none");
-    await vi.waitFor(() => expect(watch().get().channels[0]!.history[0]!.status).toBe("rendered"), { timeout: 5000 });
+    await vi.waitFor(
+      () => expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("done"),
+      { timeout: 5000 },
+    );
+    expect(jobs().get(job.id)!.clips[1]!.render.status).toBe("none");
+    await vi.waitFor(
+      () =>
+        expect(watch().get().channels[0]!.history[0]!.status).toBe("rendered"),
+      { timeout: 5000 },
+    );
     expect(reviewContent).toHaveBeenCalledTimes(1);
-    expect(reviewContent.mock.calls[0]![0]).toMatchObject({ clipTitle: "t1", transcript: expect.stringContaining("Olha") });
-    expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "ok" });
+    expect(reviewContent.mock.calls[0]![0]).toMatchObject({
+      clipTitle: "t1",
+      transcript: expect.stringContaining("Olha"),
+    });
+    expect(jobs().get(job.id)!.clips[0]!.contentReview).toMatchObject({
+      verdict: "ok",
+    });
   });
-  it("a new video created by automation carries the marker (and a failed analyze is recorded)", async () => {
+  it("a new automation video is durable before metadata and remains recoverable after a failure", async () => {
     watching("newvideo001");
-    const job = await jobs().create("https://www.youtube.com/watch?v=newvideo001", {}, { automation: { channelId: "UC1", channelName: "Creator" } });
-    expect(job.automation).toEqual({ channelId: "UC1", channelName: "Creator" });
-    await vi.waitFor(() => expect(watch().get().channels[0]!.history[0]).toMatchObject({ status: "error", error: "offline in tests" }), { timeout: 5000 });
+    const job = await jobs().create(
+      "https://www.youtube.com/watch?v=newvideo001",
+      {},
+      { automation: auto },
+    );
+    expect(job.automation).toEqual(auto);
+    await vi.waitFor(() =>
+      expect(
+        workQueue()
+          .list()
+          .find((x) => x.payload.jobId === job.id)?.status,
+      ).toBe("retryable"),
+    );
+    expect(jobs().get(job.id)?.automation).toEqual(auto);
   });
+
   it("an automation job whose picks all failed review is recorded as an error, nothing rendered", async () => {
-    const job = await seedJob([clip(1, 100, 140, { selected: false })], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    const job = await seedJob([clip(1, 100, 140, { selected: false })], {
+      automation: { channelId: "UC1", channelName: "Creator" },
+      settings: original,
+    });
     watching(job.id);
     await jobs().onReady(job);
-    expect(job.clips[0]!.render.status).toBe("none");
-    expect(watch().get().channels[0]!.history[0]).toMatchObject({ status: "error", error: expect.stringMatching(/no clip/i) });
+    expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("none");
+    expect(watch().get().channels[0]!.history[0]).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/no clip/i),
+    });
   });
   it("the reviewer reads the captions viewers see (no >> speaker marks or [tags])", async () => {
-    const job = await seedJob([clip(1, 100, 140)], { automation: { channelId: "UC1", channelName: "Creator" }, settings: original });
+    const job = await seedJob([clip(1, 100, 140)], {
+      automation: { channelId: "UC1", channelName: "Creator" },
+      settings: original,
+    });
     const dir = path.join(OUT, job.dir);
-    const marked = words.map((w, k) => (k === 41 ? { ...w, text: ">>" } : k === 43 ? { ...w, text: "[risadas]" } : w));
+    const marked = words.map((w, k) =>
+      k === 41
+        ? { ...w, text: ">>" }
+        : k === 43
+          ? { ...w, text: "[risadas]" }
+          : w,
+    );
     writeFileSync(path.join(dir, "words.json"), JSON.stringify(marked));
     jobs().words.delete(job.id);
     watching(job.id);
     await jobs().onReady(job);
-    await vi.waitFor(() => expect(reviewContent).toHaveBeenCalled(), { timeout: 5000 });
+    await vi.waitFor(() => expect(reviewContent).toHaveBeenCalled(), {
+      timeout: 5000,
+    });
     const t = reviewContent.mock.calls[0]![0].transcript as string;
     expect(t).toContain("Olha");
     expect(t).not.toContain(">>");
@@ -202,74 +453,172 @@ describe("automation jobs", () => {
   it("a manual render with no posting account connected skips the content review", async () => {
     const job = await seedJob([clip(1, 100, 140)], { settings: original });
     await jobs().render(job.id, [1]);
-    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    await vi.waitFor(
+      () => expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("done"),
+      { timeout: 5000 },
+    );
     expect(reviewContent).not.toHaveBeenCalled();
   });
 });
 
 describe("automation fixes", () => {
-  const original = { count: 3, minSec: 20, maxSec: 60, layout: "center" as const, style: "bold" as const, captions: true, hook: true, maxRes: 1080, audience: "original" as const };
+  const original = {
+    count: 3,
+    minSec: 20,
+    maxSec: 60,
+    layout: "center" as const,
+    style: "bold" as const,
+    captions: true,
+    hook: true,
+    maxRes: 1080,
+    audience: "original" as const,
+  };
   const auto = { channelId: "UC1", channelName: "Creator" };
   const watching = (jobId: string) =>
     watch().mutate((f) => ({
       ...f,
-      channels: [{ id: "UC1", name: "Creator", url: "u", enabled: true, addedAt: 0, seen: [], pending: [], history: [{ videoId: jobId, title: "v", at: Date.now(), jobId, status: "processing" as const }], settings: { clips: 3, minVideoSec: 240, perDay: 2 } }],
+      channels: [
+        {
+          id: "UC1",
+          name: "Creator",
+          url: "u",
+          enabled: true,
+          addedAt: 0,
+          seen: [],
+          pending: [],
+          history: [
+            {
+              videoId: jobId,
+              title: "v",
+              at: Date.now(),
+              jobId,
+              status: "processing" as const,
+            },
+          ],
+          settings: { clips: 3, minVideoSec: 240, perDay: 2 },
+        },
+      ],
     }));
   const history = () => watch().get().channels[0]!.history[0]!;
 
   it("after its renders finish, the job is no longer an automation job (a later re-pick by the user doesn't auto-render)", async () => {
-    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    const job = await seedJob([clip(1, 100, 140)], {
+      automation: auto,
+      settings: original,
+    });
     watching(job.id);
     await jobs().onReady(job);
-    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
-    expect(job.automation).toBeUndefined();
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), {
+      timeout: 5000,
+    });
+    expect(jobs().get(job.id)!.automation).toBeUndefined();
   });
   it("with no posting account connected, the history says the clips are not in Queue", async () => {
-    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    const job = await seedJob([clip(1, 100, 140)], {
+      automation: auto,
+      settings: original,
+    });
     watching(job.id);
     await jobs().onReady(job);
-    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), {
+      timeout: 5000,
+    });
     expect(history().note).toMatch(/no posting account/i);
   });
   it("automation reaching a video the user already clipped keeps its settings and only renders what isn't rendered", async () => {
-    const job = await seedJob([clip(1, 100, 140, { render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" } }), clip(2, 200, 240)], { settings: { ...original, count: 6 } });
+    const job = await seedJob(
+      [
+        clip(1, 100, 140, {
+          render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" },
+        }),
+        clip(2, 200, 240),
+      ],
+      { settings: { ...original, count: 6 } },
+    );
     watching(job.id);
-    await jobs().create(job.url, { count: 3, audience: "en-us" }, { automation: auto });
-    await vi.waitFor(() => expect(job.clips[1]!.render.status).toBe("done"), { timeout: 5000 });
-    expect(job.settings).toMatchObject({ count: 6, audience: "original" });
-    expect(job.clips[0]!.render.file).toBe("/x.mp4"); // the approved render is untouched
+    await jobs().create(
+      job.url,
+      { count: 3, audience: "en-us" },
+      { automation: auto },
+    );
+    await vi.waitFor(
+      () => expect(jobs().get(job.id)!.clips[1]!.render.status).toBe("done"),
+      { timeout: 5000 },
+    );
+    expect(jobs().get(job.id)!.settings).toMatchObject({
+      count: 6,
+      audience: "original",
+    });
+    expect(jobs().get(job.id)!.clips[0]!.render.file).toBe("/x.mp4"); // the approved render is untouched
     expect(reviewContent).toHaveBeenCalledTimes(1);
   });
   it("...and when everything is already rendered it just records that", async () => {
-    const job = await seedJob([clip(1, 100, 140, { render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" } })], { settings: original });
+    const job = await seedJob(
+      [
+        clip(1, 100, 140, {
+          render: { status: "done", file: "/x.mp4", url: "/api/media/x.mp4" },
+        }),
+      ],
+      { settings: original },
+    );
     watching(job.id);
     await jobs().create(job.url, {}, { automation: auto });
-    await vi.waitFor(() => expect(history().status).toBe("rendered"), { timeout: 5000 });
+    await vi.waitFor(() => expect(history().status).toBe("rendered"), {
+      timeout: 5000,
+    });
     expect(reviewContent).not.toHaveBeenCalled();
   });
   it("picks without footage are reported as such, not as failed review", async () => {
-    const job = await seedJob([clip(1, 100, 140, { segment: undefined })], { automation: auto, settings: original });
+    const job = await seedJob([clip(1, 100, 140, { segment: undefined })], {
+      automation: auto,
+      settings: original,
+    });
     watching(job.id);
     await jobs().onReady(job);
-    expect(history()).toMatchObject({ status: "error", error: expect.stringMatching(/footage/i) });
+    expect(history()).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/footage/i),
+    });
   });
   it("after a restart, an automation video that was mid-way is resumed (or recorded) instead of blocking the line", async () => {
-    const ready = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    const ready = await seedJob([clip(1, 100, 140)], {
+      automation: auto,
+      settings: original,
+    });
     watching(ready.id);
     await jobs().resumeAutomation();
-    await vi.waitFor(() => expect(ready.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
-    const broken = await seedJob([], { automation: auto, settings: original, status: "error", error: "Interrupted. Run it again." });
+    await vi.waitFor(
+      () => expect(jobs().get(ready.id)!.clips[0]!.render.status).toBe("done"),
+      { timeout: 5000 },
+    );
+    const broken = await seedJob([], {
+      automation: auto,
+      settings: original,
+      status: "error",
+      error: "Interrupted. Run it again.",
+    });
     watching(broken.id);
     await jobs().resumeAutomation();
-    expect(history()).toMatchObject({ status: "error", error: expect.stringMatching(/interrupted/i) });
+    expect(history()).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/interrupted/i),
+    });
   });
   it("a content review that throws doesn't fail the render", async () => {
     reviewContent.mockRejectedValue(new Error("boom"));
-    const job = await seedJob([clip(1, 100, 140)], { automation: auto, settings: original });
+    const job = await seedJob([clip(1, 100, 140)], {
+      automation: auto,
+      settings: original,
+    });
     watching(job.id);
     await jobs().onReady(job);
-    await vi.waitFor(() => expect(job.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
-    expect(job.clips[0]!.contentReview).toMatchObject({ verdict: "caution" });
+    await vi.waitFor(
+      () => expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("done"),
+      { timeout: 5000 },
+    );
+    expect(jobs().get(job.id)!.clips[0]!.contentReview).toMatchObject({
+      verdict: "caution",
+    });
   });
 });
 
@@ -280,14 +629,19 @@ describe("authoritative load corruption", () => {
     const id = "invalid-durable";
     const previous = globalThis.__capyJobs;
     mkdirSync(path.join(OUT, "invalid"), { recursive: true });
-    writeFileSync(path.join(OUT, "invalid", "meta.json"), JSON.stringify({ id, title: "Older CLI state" }));
+    writeFileSync(
+      path.join(OUT, "invalid", "meta.json"),
+      JSON.stringify({ id, title: "Older CLI state" }),
+    );
     store.put("legacy-jobs", id, { id, dir: "invalid", clips: [{ n: 1 }] });
     globalThis.__capyJobs = undefined;
     try {
       await expect(jobs().init()).rejects.toThrow();
-      expect(jobs().get(id)).toBeUndefined();
+      expect(() => jobs().get(id)).toThrow();
     } finally {
-      store.db.prepare("DELETE FROM documents WHERE kind=? AND id=?").run("legacy-jobs", id);
+      store.db
+        .prepare("DELETE FROM documents WHERE kind=? AND id=?")
+        .run("legacy-jobs", id);
       globalThis.__capyJobs = previous;
     }
   });

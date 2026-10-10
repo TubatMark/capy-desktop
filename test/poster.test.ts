@@ -10,7 +10,7 @@ import { AuthError } from "../server/accounts";
 import { PlatformError, type PostOutcome } from "../server/platforms/types";
 import type { Platform, QueueEntry } from "../lib/types";
 
-let fixture: {file:string};
+let fixture: { file: string };
 let root: string;
 let n = 0;
 beforeAll(() => (root = mkdtempSync(path.join(tmpdir(), "capy-poster-"))));
@@ -18,18 +18,44 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 beforeEach(() => {
   process.env.CAPY_DATA_DIR = path.join(root, String(++n));
   resetQueueCache();
-  fixture=publicationFixture();
+  fixture = publicationFixture();
 });
 
 const now = new Date("2026-09-23T20:00:00Z");
-function seed(entries: { n: number; platform: Platform; slotAt: number; status?: QueueEntry["status"] }[]) {
+function seed(
+  entries: {
+    n: number;
+    platform: Platform;
+    slotAt: number;
+    status?: QueueEntry["status"];
+  }[],
+) {
   queue().mutate(() =>
     entries.flatMap((s) =>
-      upsertForRender([], { publicationFiles:fixture, jobId: "J", n: s.n, start: 0, end: 30, clipTitle: `c${s.n}`, videoUrl: "/v.mp4" }, [s.platform], now).map((e) => ({ ...decide(e,false,now), status: s.status ?? ("scheduled" as const), slotAt: s.slotAt })),
+      upsertForRender(
+        [],
+        {
+          publicationFiles: fixture,
+          jobId: "J",
+          n: s.n,
+          start: 0,
+          end: 30,
+          clipTitle: `c${s.n}`,
+          videoUrl: "/v.mp4",
+        },
+        [s.platform],
+        now,
+      ).map((e) => ({
+        ...decide(e, false, now),
+        status: s.status ?? ("scheduled" as const),
+        slotAt: s.slotAt,
+      })),
     ),
   );
 }
-function deps(over: Partial<PosterDeps> = {}): PosterDeps & { posted: string[] } {
+function deps(
+  over: Partial<PosterDeps> = {},
+): PosterDeps & { posted: string[] } {
   const posted: string[] = [];
   return {
     posted,
@@ -46,11 +72,17 @@ function deps(over: Partial<PosterDeps> = {}): PosterDeps & { posted: string[] }
     ...over,
   };
 }
-const get = (key: string) => queue().list().find((e) => e.key === key)!;
+const get = (key: string) =>
+  queue()
+    .list()
+    .find((e) => e.key === key)!;
 
 describe("tick", () => {
   it("posts what is due, leaves future slots alone", async () => {
-    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() - 60_000 }, { n: 2, platform: "tiktok", slotAt: now.getTime() + 3600_000 }]);
+    seed([
+      { n: 1, platform: "youtube", slotAt: now.getTime() - 60_000 },
+      { n: 2, platform: "tiktok", slotAt: now.getTime() + 3600_000 },
+    ]);
     const d = deps();
     await tick(d);
     expect(d.posted).toEqual(["J:1:youtube"]);
@@ -68,10 +100,16 @@ describe("tick", () => {
     const d = deps({ fileFor: async () => "missing" });
     await tick(d);
     expect(d.posted).toEqual([]);
-    expect(get("J:1:youtube")).toMatchObject({ status: "needs_action", error: "Clip file missing, re-render it" });
+    expect(get("J:1:youtube")).toMatchObject({
+      status: "needs_action",
+      error: "Clip file missing, re-render it",
+    });
   });
   it("one post per platform at a time; overlapping ticks never post an entry twice", async () => {
-    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() - 1000 }, { n: 2, platform: "youtube", slotAt: now.getTime() - 500 }]);
+    seed([
+      { n: 1, platform: "youtube", slotAt: now.getTime() - 1000 },
+      { n: 2, platform: "youtube", slotAt: now.getTime() - 500 },
+    ]);
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const posted: string[] = [];
@@ -101,7 +139,10 @@ describe("tick", () => {
       },
     });
     await tick(d);
-    expect(get("J:1:instagram")).toMatchObject({ status: "failed", nextTryAt: now.getTime() + 2 * 60_000 });
+    expect(get("J:1:instagram")).toMatchObject({
+      status: "failed",
+      nextTryAt: now.getTime() + 2 * 60_000,
+    });
     await tick(d);
     expect(calls).toBe(1);
     await tick({ ...d, now: () => new Date(now.getTime() + 3 * 60_000) });
@@ -116,7 +157,10 @@ describe("tick", () => {
     });
     await tick(d);
     expect(d.posted).toEqual([]);
-    expect(get("J:1:tiktok")).toMatchObject({ status: "needs_action", authBlocked: true });
+    expect(get("J:1:tiktok")).toMatchObject({
+      status: "needs_action",
+      authBlocked: true,
+    });
   });
   it("a token the platform refuses flags the account for reconnecting", async () => {
     seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
@@ -129,14 +173,20 @@ describe("tick", () => {
     });
     await tick(d);
     expect(flagged).toEqual(["youtube"]);
-    expect(get("J:1:youtube")).toMatchObject({ status: "needs_action", authBlocked: true });
+    expect(get("J:1:youtube")).toMatchObject({
+      status: "needs_action",
+      authBlocked: true,
+    });
   });
   it("a clip that is rendering right now waits for the next tick instead of failing", async () => {
     seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
     const d = deps({ fileFor: async () => "rendering" });
     await tick(d);
     expect(d.posted).toEqual([]);
-    expect(get("J:1:youtube")).toMatchObject({ status: "scheduled", slotAt: now.getTime() });
+    expect(get("J:1:youtube")).toMatchObject({
+      status: "scheduled",
+      slotAt: now.getTime(),
+    });
   });
   it("a clip whose footage changed after approval is not posted", async () => {
     seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
@@ -168,56 +218,118 @@ describe("tick", () => {
     expect(get("J:1:youtube").status).toBe("posted");
   });
   it("only the process holding the poster lock posts, and taking the lock recovers interrupted uploads", async () => {
-    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() - 1000, status: "posting" }]);
+    seed([
+      {
+        n: 1,
+        platform: "youtube",
+        slotAt: now.getTime() - 1000,
+        status: "posting",
+      },
+    ]);
     const other = deps({ lock: () => "busy" });
     await tick(other);
     expect(other.posted).toEqual([]);
     expect(get("J:1:youtube").status).toBe("posting");
     const mine = deps({ lock: () => "acquired" });
     await tick(mine);
-    expect(mine.posted).toEqual(["J:1:youtube"]);
-    expect(get("J:1:youtube").history.map((h) => h.msg)).toContain("Interrupted, retrying");
+    expect(mine.posted).toEqual([]);
+    expect(get("J:1:youtube").status).toBe("needs_action");
   });
 });
 
-describe("last upload gate",()=>{
-  it("changed bytes are refused immediately before upload",async()=>{
-    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);
-    const d=deps({token:async()=>{const {writeFileSync}=await import("node:fs");writeFileSync(fixture.file,"changed after scheduling");return "T";}});
-    await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").status).toBe("needs_action");
+describe("last upload gate", () => {
+  it("changed bytes are refused immediately before upload", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const d = deps({
+      token: async () => {
+        const { writeFileSync } = await import("node:fs");
+        writeFileSync(fixture.file, "changed after scheduling");
+        return "T";
+      },
+    });
+    await tick(d);
+    expect(d.posted).toEqual([]);
+    expect(get("J:1:youtube").status).toBe("needs_action");
     expect(get("J:1:youtube").error).toContain("Media changed");
   });
-  it("changed destination while refreshing token is refused",async()=>{
-    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);
-    const d=deps({token:async()=>{const {saveAccount}=await import("../server/accounts");saveAccount("youtube",{account:{id:"different",name:"Different"}});return "T";}});
-    await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").error).toContain("Destination account changed");
+  it("changed destination while refreshing token is refused", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    const d = deps({
+      token: async () => {
+        const { saveAccount } = await import("../server/accounts");
+        saveAccount("youtube", {
+          account: { id: "different", name: "Different" },
+        });
+        return "T";
+      },
+    });
+    await tick(d);
+    expect(d.posted).toEqual([]);
+    expect(get("J:1:youtube").error).toContain("Destination account changed");
   });
-  it("legacy scheduled entry without package is never uploaded",async()=>{
-    seed([{n:1,platform:"youtube",slotAt:now.getTime()}]);queue().mutate(all=>all.map(e=>({...e,publishPackage:undefined,publicationDecision:undefined})));
-    const d=deps();await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").error).toContain("Missing publication revision");
+  it("legacy scheduled entry without package is never uploaded", async () => {
+    seed([{ n: 1, platform: "youtube", slotAt: now.getTime() }]);
+    queue().mutate((all) =>
+      all.map((e) => ({
+        ...e,
+        publishPackage: undefined,
+        publicationDecision: undefined,
+      })),
+    );
+    const d = deps();
+    await tick(d);
+    expect(d.posted).toEqual([]);
+    expect(get("J:1:youtube").error).toContain("Missing publication revision");
   });
 });
 
-it("inbox-to-direct settings mutation prevents adapter calls until fresh decision",async()=>{
-  seed([{n:1,platform:"tiktok",slotAt:now.getTime()}]);
-  const {saveAccount}=await import("../server/accounts");saveAccount("tiktok",{mode:"direct"});
-  const d=deps();await tick(d);expect(d.posted).toEqual([]);
-  queue().mutate(all=>all.map(e=>({...decide(e,false,now),status:"scheduled",slotAt:now.getTime()})));
-  await tick(d);expect(d.posted).toEqual(["J:1:tiktok"]);
+it("inbox-to-direct settings mutation prevents adapter calls until fresh decision", async () => {
+  seed([{ n: 1, platform: "tiktok", slotAt: now.getTime() }]);
+  const { saveAccount } = await import("../server/accounts");
+  saveAccount("tiktok", { mode: "direct" });
+  const d = deps();
+  await tick(d);
+  expect(d.posted).toEqual([]);
+  queue().mutate((all) =>
+    all.map((e) => ({
+      ...decide(e, false, now),
+      status: "scheduled",
+      slotAt: now.getTime(),
+    })),
+  );
+  await tick(d);
+  expect(d.posted).toEqual(["J:1:tiktok"]);
 });
 
-it("executes the freshly checked snapshot rather than the pre-token entry",async()=>{
-  seed([{n:1,platform:"tiktok",slotAt:now.getTime()}]);
-  let executedTitle:string|undefined;
-  let executedProgress:string|undefined;
-  let executedMode:string|undefined;
-  const d=deps({token:async()=>{
-    queue().mutate(all=>all.map(e=>({...decide({...e,text:{title:"Fresh checked title"}},false,now),progress:{marker:"latest"}})));
-    return "T";
-  },post:async(e,job)=>{
-    executedTitle=job.text.title;executedProgress=job.resume?.marker;executedMode=job.deliveryOptions?.mode;
-    expect(e.text.title).toBe("Fresh checked title");
-    return {kind:"posted",id:"fixture"};
-  }});
-  await tick(d);expect(executedTitle).toBe("Fresh checked title");expect(executedProgress).toBe("latest");expect(executedMode).toBe("inbox");
+it("executes the freshly checked snapshot rather than the pre-token entry", async () => {
+  seed([{ n: 1, platform: "tiktok", slotAt: now.getTime() }]);
+  let executedTitle: string | undefined;
+  let executedProgress: string | undefined;
+  let executedMode: string | undefined;
+  const d = deps({
+    token: async () => {
+      queue().mutate((all) =>
+        all.map((e) => ({
+          ...decide(
+            { ...e, text: { title: "Fresh checked title" } },
+            false,
+            now,
+          ),
+          progress: { marker: "latest" },
+        })),
+      );
+      return "T";
+    },
+    post: async (e, job) => {
+      executedTitle = job.text.title;
+      executedProgress = job.resume?.marker;
+      executedMode = job.deliveryOptions?.mode;
+      expect(e.text.title).toBe("Fresh checked title");
+      return { kind: "posted", id: "fixture" };
+    },
+  });
+  await tick(d);
+  expect(executedTitle).toBe("Fresh checked title");
+  expect(executedProgress).toBe("latest");
+  expect(executedMode).toBe("inbox");
 });

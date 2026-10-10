@@ -111,15 +111,27 @@ export interface JobRecord {
   id: string;
   kind: string;
   workKey: string;
-  inputRevision: string;
+  inputRevision: number;
+  payload: Record<string, unknown>;
   stage: string;
   status:
-    "pending" | "running" | "waiting" | "complete" | "failed" | "cancelled";
+    | "queued"
+    | "running"
+    | "complete"
+    | "retryable"
+    | "needs_action"
+    | "blocked"
+    | "cancelled";
   checkpoint: Record<string, unknown>;
-  lease?: { owner: string; generation: number; expiresAt: number };
+  owner?: string;
+  generation: number;
+  expiresAt: number;
   attempts: number;
   retryAt?: number;
   cancelRequested: boolean;
   error?: string;
+  createdAt: number;
+  groups: { pid: number; token: string; identity: string }[];
 }
+
 export type { AiTaskPolicy, AiRunRecord } from "../ai-policy";
