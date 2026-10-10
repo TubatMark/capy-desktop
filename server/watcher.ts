@@ -1,4 +1,3 @@
-import { DEFAULT_CREATOR_POLICY } from "../lib/creator-policy";
 import {
   admissionReasons,
   existingAutomationIntakeReason,
@@ -11,6 +10,7 @@ import {
   saveCreatorPolicy,
   saveWorkDecision,
   recipeSettings,
+  unsavedCreatorPolicy,
 } from "./automation-policy";
 import { loadSettings } from "./settings";
 import { loadReadingAccount, publicAccounts } from "./accounts";
@@ -332,17 +332,12 @@ export async function watcherTick(
       .flatMap((c) =>
         c.pending.map((v) => {
           const configured = settings.creatorPolicies?.[c.id];
-          const policy = configured ?? {
-            ...DEFAULT_CREATOR_POLICY,
-            mode: "automatic_drafts",
-            clips: c.settings.clips,
-            minDurationSec: c.settings.minVideoSec,
-            destinationAccountIds: [
-              "local-drafts",
-              ...accounts.map((a) => a.account!.id),
-            ],
-            requireModelReview: true,
-          };
+          const policy =
+            configured ??
+            unsavedCreatorPolicy(
+              c,
+              accounts.map((a) => a.account!.id),
+            );
           const destination =
             configured && policy.destinationAccountIds.length
               ? accounts.find((a) =>

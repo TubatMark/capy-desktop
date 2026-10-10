@@ -79,7 +79,7 @@ export const DEFAULT_CREATOR_POLICY: CreatorPolicy = {
   allowShortSources: true,
   maxBlackRatio: 0.9,
   maxFrozenRatio: 1,
-  maxJobUsd: 1,
+  maxJobUsd: 2.5,
   maxDayUsd: 5,
   language: "",
   destinationAccountIds: [],

@@ -11,10 +11,10 @@ import {
   type CreatorRecipe,
   type MediaQualityReport,
 } from "../lib/creator-policy";
-import type { JobSettings, QueueEntry, JobState } from "../lib/types";
+import type { JobSettings, QueueEntry, JobState, WatchedChannel } from "../lib/types";
 import { loadSettings, saveSettings } from "./settings";
 import { runtimeStore } from "./db/runtime";
-import { loadReadingAccount } from "./accounts";
+import { loadReadingAccount, publicAccounts } from "./accounts";
 import { watch } from "./watch";
 import type {
   ThumbnailDesign,
@@ -311,8 +311,34 @@ export function saveCreatorPolicy(
   });
   return saved;
 }
+/** Connected publishing accounts a channel without saved options posts to. */
+export function connectedDestinationIds(): string[] {
+  return publicAccounts()
+    .filter((a) => a.connected && !a.needsReconnect && a.account?.id)
+    .map((a) => a.account!.id);
+}
+/** What a channel runs with until its options are saved: the same policy the watcher clips it with, so the
+ *  clips it makes can also be posted. */
+export function unsavedCreatorPolicy(
+  c: Pick<WatchedChannel, "settings">,
+  destinationIds = connectedDestinationIds(),
+): CreatorPolicy {
+  return {
+    ...DEFAULT_CREATOR_POLICY,
+    mode: "automatic_drafts",
+    clips: c.settings.clips,
+    minDurationSec: c.settings.minVideoSec,
+    destinationAccountIds: ["local-drafts", ...destinationIds],
+    requireModelReview: true,
+  };
+}
 export function creatorPolicy(channelId: string): CreatorPolicy {
-  return loadSettings().creatorPolicies?.[channelId] ?? DEFAULT_CREATOR_POLICY;
+  const saved = loadSettings().creatorPolicies?.[channelId];
+  if (saved) return saved;
+  const channel = watch()
+    .get()
+    .channels.find((c) => c.id === channelId);
+  return channel ? unsavedCreatorPolicy(channel) : DEFAULT_CREATOR_POLICY;
 }
 export function recipeSettings(recipe: CreatorRecipe): Partial<JobSettings> {
   return {
@@ -538,9 +564,16 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
     reasons.push("Current media quality report is missing or stale");
   else if (!report.passed)
     reasons.push(...report.checks.filter((c) => !c.pass).map((c) => c.reason));
-  if (p.requireModelReview && (!pkg.review || pkg.review.verdict !== "ok"))
+  // Your approval of this exact package is the human check when the AI asked for one or couldn't run;
+  // an AI "block" still needs the explicit override, which evaluatePublication enforces.
+  const approved = e.publicationDecision?.packageHash === pkg.packageHash;
+  if (
+    p.requireModelReview &&
+    (!pkg.review || pkg.review.verdict !== "ok") &&
+    !approved
+  )
     reasons.push(
-      "Content review is blocked or unavailable; human attention required",
+      "The AI review flagged this clip or couldn't run; read it, then approve",
     );
   const channel = watch()
     .get()
@@ -654,6 +687,8 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
       "Configured source-frame fallback has not been attached with exact provenance",
     );
   if (!p.destinationAccountIds.includes(pkg.accountId))
-    reasons.push("Destination is outside the current creator policy");
+    reasons.push(
+      "This channel's options don't allow posting to this account (Monitor → More options → Post to)",
+    );
   return { required: true, reasons };
 }

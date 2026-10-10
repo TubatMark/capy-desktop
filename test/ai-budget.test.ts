@@ -54,6 +54,20 @@ describe("AI budgets", () => {
       s.close();
     }
   });
+  it("says which limit ran out", async () => {
+    const s = open();
+    try {
+      await reserveAiBudget({ ...request, maxDayUsd: 5 }, s);
+      await expect(
+        reserveAiBudget({ ...request, key: "two", maxDayUsd: 5 }, s),
+      ).rejects.toThrow(/this video reached its \$1\.00 AI limit/);
+      await expect(
+        reserveAiBudget({ ...request, key: "three", jobId: "other" }, s),
+      ).rejects.toThrow(/today's \$1\.00 AI limit is used up/);
+    } finally {
+      s.close();
+    }
+  });
   it("idempotency cannot reuse a completed reservation", async () => {
     const s = open();
     try {

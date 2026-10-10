@@ -1,7 +1,6 @@
 import { statfsSync } from "node:fs";
 import {
   DEFAULT_CONTROLS,
-  DEFAULT_CREATOR_POLICY,
   type AutomationHealth,
 } from "../../lib/creator-policy";
 import { runtimeStore } from "../db/runtime";
@@ -10,6 +9,7 @@ import { loadSettings } from "../settings";
 import { publicAccounts } from "../accounts";
 import { getAiUsage } from "../ai-usage";
 import { watch } from "../watch";
+import { unsavedCreatorPolicy } from "../automation-policy";
 import { queue } from "../queue";
 import { OUTPUT_ROOT } from "../paths";
 export async function automationHealth(): Promise<AutomationHealth> {
@@ -111,10 +111,8 @@ export async function automationHealth(): Promise<AutomationHealth> {
       w.channels.map((c) => [
         c.id,
         settings.creatorPolicies?.[c.id] ?? {
-          ...DEFAULT_CREATOR_POLICY,
+          ...unsavedCreatorPolicy(c),
           mode: c.enabled ? "automatic_drafts" : (c.mode ?? "manual"),
-          clips: c.settings.clips,
-          minDurationSec: c.settings.minVideoSec,
         },
       ]),
     ),

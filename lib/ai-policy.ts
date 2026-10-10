@@ -54,7 +54,7 @@ export const DEFAULT_AI_ROUTING: AiRoutingSettings = {
   usageLimitMode: "application",
   allowCloud: true,
   allowPremiumImages: false,
-  maxJobUsd: 1,
+  maxJobUsd: 2.5,
   maxDayUsd: 5,
   maxDayRequests: 40,
   maxDayTokens: 500000,

@@ -55,14 +55,19 @@ export async function reserveAiBudget(
     const day = new Date().toISOString().slice(0, 10);
     const d = store.get<Counter>("ai-budget-day", day)?.value ?? zero();
     const j = store.get<Counter>("ai-budget-job", input.jobId)?.value ?? zero();
-    if (
-      d.usd + input.ceilingUsd > input.maxDayUsd + 1e-9 ||
-      j.usd + input.ceilingUsd > input.maxJobUsd + 1e-9 ||
-      d.requests + input.requests > input.maxDayRequests ||
-      d.tokens + input.tokens > input.maxDayTokens
-    )
+    const over =
+      j.usd + input.ceilingUsd > input.maxJobUsd + 1e-9
+        ? `this video reached its $${input.maxJobUsd.toFixed(2)} AI limit`
+        : d.usd + input.ceilingUsd > input.maxDayUsd + 1e-9
+          ? `today's $${input.maxDayUsd.toFixed(2)} AI limit is used up`
+          : d.requests + input.requests > input.maxDayRequests
+            ? `today's ${input.maxDayRequests} AI requests are used up`
+            : d.tokens + input.tokens > input.maxDayTokens
+              ? "today's AI token allowance is used up"
+              : undefined;
+    if (over)
       throw new AiBudgetError(
-        "AI budget exhausted: task needs reserved day/job cost and subscription request/token allowance",
+        `AI budget exhausted: ${over} (raise it in Settings under AI limits)`,
       );
     const r: AiBudgetReservation = {
       ...input,
@@ -203,7 +208,9 @@ export function assertAiBudgetAvailable(
     (job && job.usd >= limits.maxJobUsd)
   )
     throw new AiBudgetError(
-      "AI budget exhausted; waiting for allowance or a settings change",
+      job && job.usd >= limits.maxJobUsd
+        ? `AI budget exhausted: this video reached its $${limits.maxJobUsd.toFixed(2)} AI limit`
+        : "AI budget exhausted: today's AI limit is used up; it resets tomorrow",
     );
 }
 export const newAiRunId = randomUUID;

@@ -12,6 +12,7 @@ import {
   admissionReasons,
   saveCreatorPolicy,
   creatorRecipe,
+  creatorPolicy,
 } from "../server/automation-policy";
 import { resetSettingsCache, saveSettings } from "../server/settings";
 import { runtimeStore } from "../server/db/runtime";
@@ -333,9 +334,28 @@ it("auto_mode_requires_passing_current_package: source, quality, review, recipe 
     ...e,
     publishPackage: { ...e.publishPackage, review: undefined },
   };
+  const reviewReason =
+    "The AI review flagged this clip or couldn't run; read it, then approve";
   expect(getAutomationPublicationChecks(withoutReview).reasons).toContain(
-    "Content review is blocked or unavailable; human attention required",
+    reviewReason,
   );
+  // approving this exact package is the human check; approving an older one is not
+  expect(
+    getAutomationPublicationChecks({
+      ...withoutReview,
+      publicationDecision: {
+        kind: "human",
+        packageHash: withoutReview.publishPackage.packageHash,
+        at: 3000,
+      },
+    }).reasons,
+  ).not.toContain(reviewReason);
+  expect(
+    getAutomationPublicationChecks({
+      ...withoutReview,
+      publicationDecision: { kind: "human", packageHash: "b".repeat(64), at: 3000 },
+    }).reasons,
+  ).toContain(reviewReason);
   saveCreatorPolicy("creator", { ...p, requireAudio: true });
   expect(getAutomationPublicationChecks(e).reasons).toContain(
     "Current media quality report is missing or stale",
@@ -539,4 +559,39 @@ it("downloadable local drafts consume backlog across days without a publishing a
       },
     }).kind,
   ).toBe("defer");
+});
+
+it("a channel without saved options may post to the connected accounts it is clipped for", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "capy-unsaved-policy-"));
+  roots.push(root);
+  process.env.CAPY_DATA_DIR = root;
+  resetSettingsCache();
+  watch().mutate((f) =>
+    addChannel(
+      f,
+      { id: "fresh", name: "Fresh", url: "https://youtube.com/channel/fresh/videos" },
+      [],
+      { now: new Date(1000) },
+    ),
+  );
+  expect(creatorPolicy("fresh").destinationAccountIds).toEqual(["local-drafts"]);
+  saveAccount("youtube", {
+    account: { id: "dest", name: "Fixture" },
+    tokens: { accessToken: "fixture", expiresAt: Date.now() + 3600000 },
+    autoPost: false,
+  });
+  const p = creatorPolicy("fresh");
+  expect(p).toMatchObject({
+    mode: "automatic_drafts",
+    requireModelReview: true,
+    destinationAccountIds: ["local-drafts", "dest"],
+  });
+  expect(p.recipeId).toBeUndefined();
+  expect((await automationHealth()).policies.fresh?.destinationAccountIds).toEqual([
+    "local-drafts",
+    "dest",
+  ]);
+  // saved options still win
+  saveCreatorPolicy("fresh", { ...policy, destinationAccountIds: [] });
+  expect(creatorPolicy("fresh").destinationAccountIds).toEqual([]);
 });

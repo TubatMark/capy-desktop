@@ -114,7 +114,7 @@ export function AiRoutingSettings({
       <div className="grid gap-3 sm:grid-cols-2">
         {(
           [
-            ["maxJobUsd", "Per-job reserved USD"],
+            ["maxJobUsd", "Most AI spend per video (USD)"],
             ["maxDayUsd", "Daily reserved USD"],
             ["maxDayRequests", "Daily application admission units"],
             ["maxDayTokens", "Daily token allowance (reserved or reported)"],

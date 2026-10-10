@@ -1,5 +1,5 @@
 import type { AutomationHealth } from "../lib/creator-policy";
-import { Menu, nativeImage, Notification, Tray } from "electron";
+import { Menu, nativeImage, Notification, powerSaveBlocker, Tray } from "electron";
 import { newReviewNotice, trayMenuModel, type TraySummary } from "./tray-model";
 
 /** build/trayTemplate@2x.png (the capy silhouette), inlined so the packaged app needs no extra file. */
@@ -140,7 +140,20 @@ export function createTray(o: {
     } catch {
       health = undefined;
     }
+    keepAwake(summary.activeCount > 0);
     render();
+  }
+
+  // Posts upload at their slot time, so an idle-sleeping Mac would miss them. While any are scheduled or
+  // uploading, hold off idle sleep (the screen may still turn off; a closed lid on battery still sleeps).
+  let blocker: number | undefined;
+  function keepAwake(on: boolean) {
+    if (on && blocker === undefined)
+      blocker = powerSaveBlocker.start("prevent-app-suspension");
+    else if (!on && blocker !== undefined) {
+      powerSaveBlocker.stop(blocker);
+      blocker = undefined;
+    }
   }
 
   render();
@@ -152,6 +165,7 @@ export function createTray(o: {
     hasActive: () => summary.activeCount > 0,
     destroy() {
       clearInterval(timer);
+      keepAwake(false);
       tray.destroy();
     },
   };
