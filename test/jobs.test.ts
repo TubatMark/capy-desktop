@@ -74,6 +74,7 @@ vi.mock("../src/pipeline", async (orig) => ({
 }));
 
 import { jobs } from "../server/jobs";
+import { runtimeStore } from "../server/db/runtime";
 import { registerMediaWorkers } from "../server/worker/media";
 import { workQueue } from "../server/worker/api";
 import { stagesFor } from "../server/worker/registry";
@@ -525,7 +526,7 @@ describe("automation fixes", () => {
     });
     expect(history().note).toMatch(/no posting account/i);
   });
-  it("automation reaching a video the user already clipped keeps its settings and only renders what isn't rendered", async () => {
+  it("automation reaching an existing manual video defers without rendering or changing its settings", async () => {
     const job = await seedJob(
       [
         clip(1, 100, 140, {
@@ -536,23 +537,23 @@ describe("automation fixes", () => {
       { settings: { ...original, count: 6 } },
     );
     watching(job.id);
-    await jobs().create(
-      job.url,
-      { count: 3, audience: "en-us" },
-      { automation: auto },
-    );
-    await vi.waitFor(
-      () => expect(jobs().get(job.id)!.clips[1]!.render.status).toBe("done"),
-      { timeout: 5000 },
-    );
+    const before = structuredClone(job);
+    await expect(
+      jobs().create(
+        job.url,
+        { count: 3, audience: "en-us" },
+        { automation: auto },
+      ),
+    ).rejects.toThrow(/manual.*preserve/i);
+    expect(jobs().get(job.id)).toEqual(before);
     expect(jobs().get(job.id)!.settings).toMatchObject({
       count: 6,
       audience: "original",
     });
     expect(jobs().get(job.id)!.clips[0]!.render.file).toBe("/x.mp4"); // the approved render is untouched
-    expect(reviewContent).toHaveBeenCalledTimes(1);
+    expect(reviewContent).not.toHaveBeenCalled();
   });
-  it("...and when everything is already rendered it just records that", async () => {
+  it("finished manual work is not implicitly adopted by automated intake", async () => {
     const job = await seedJob(
       [
         clip(1, 100, 140, {
@@ -562,10 +563,17 @@ describe("automation fixes", () => {
       { settings: original },
     );
     watching(job.id);
-    await jobs().create(job.url, {}, { automation: auto });
-    await vi.waitFor(() => expect(history().status).toBe("rendered"), {
-      timeout: 5000,
-    });
+    const before = structuredClone(job);
+    await expect(
+      jobs().create(job.url, {}, { automation: auto }),
+    ).rejects.toThrow(/manual.*preserve/i);
+    expect(jobs().get(job.id)).toEqual(before);
+    expect(runtimeStore().get("automation-jobs", job.id)).toBeUndefined();
+    expect(
+      runtimeStore()
+        .list<{ kind: string; reason: string }>("automation-decisions")
+        .some(r => r.value.kind === "defer" && /manual/i.test(r.value.reason)),
+    ).toBe(true);
     expect(reviewContent).not.toHaveBeenCalled();
   });
   it("picks without footage are reported as such, not as failed review", async () => {

@@ -1,5 +1,10 @@
 import {
   creatorPolicy,
+  existingAutomationIntakeReason,
+  AutomationIntakeDeferredError,
+  recordCreatorJobAdmission,
+  saveWorkDecision,
+  type CreatorJobAdmission,
   creatorRecipe,
   recipeSettings,
 } from "./automation-policy";
@@ -692,12 +697,31 @@ class JobManager extends EventEmitter {
   async create(
     url: string,
     settingsIn: Partial<JobSettings> = {},
-    extra: { automation?: JobState["automation"] } = {},
+    extra: {
+      automation?: JobState["automation"];
+      automationAdmission?: CreatorJobAdmission;
+    } = {},
   ): Promise<JobState> {
     await this.init();
     const videoId = videoIdFromUrl(url.trim());
     if (!videoId) throw new Error("That doesn't look like a YouTube link.");
-    const existing = [...this.jobs.values()].find((j) => j.videoId === videoId);
+    const existing =
+      runtimeStore()
+        .list<JobState>("legacy-jobs")
+        .find((row) => row.value.videoId === videoId)?.value ??
+      [...this.jobs.values()].find((j) => j.videoId === videoId);
+    if (extra.automation) {
+      const reason = existingAutomationIntakeReason(existing, extra.automation);
+      if (reason) {
+        saveWorkDecision(extra.automation.channelId, {
+          candidateId: videoId,
+          kind: "defer",
+          reason,
+          budget: { clips: 0 },
+        });
+        throw new AutomationIntakeDeferredError(reason);
+      }
+    }
     const settings: JobSettings = {
       ...DEFAULT_SETTINGS,
       ...(existing?.settings ?? {}),
@@ -712,8 +736,8 @@ class JobManager extends EventEmitter {
     }
     if (existing) {
       if (extra.automation) {
-        // automation reached a video that is already here: keep the user's settings and picks, render only what isn't
-        existing.automation = extra.automation;
+        // Only the original active immutable admission may resume this job.
+        this.jobs.set(existing.id, existing);
         if (existing.status === "analyzing" || existing.status === "preparing")
           return existing; // onReady runs when it's done
         if (existing.clips.length) {
@@ -721,6 +745,8 @@ class JobManager extends EventEmitter {
           await this.onReady(existing);
           return existing;
         }
+        await this.enqueue(existing, "analyze", [true]);
+        return existing;
       }
       if (existing.status === "analyzing" || existing.status === "preparing")
         return existing;
@@ -745,6 +771,33 @@ class JobManager extends EventEmitter {
       dir: videoId, // replaced with the slug folder once we know the title
       ...(extra.automation ? { automation: extra.automation } : {}),
     };
+    if (extra.automationAdmission)
+      fence(() =>
+        runtimeStore().transaction(() => {
+          if (
+            extra.automationAdmission!.channelId !==
+              extra.automation?.channelId ||
+            extra.automationAdmission!.recipeId !== extra.automation.recipeId
+          )
+            throw new AutomationIntakeDeferredError(
+              "Creator job does not match its immutable admission; automatic intake is deferred",
+            );
+          const concurrent = runtimeStore()
+            .list<JobState>("legacy-jobs")
+            .find((row) => row.value.videoId === videoId)?.value;
+          const reason = existingAutomationIntakeReason(
+            concurrent,
+            extra.automation!,
+          );
+          if (reason || concurrent)
+            throw new AutomationIntakeDeferredError(
+              reason ??
+                "Source was created concurrently; automatic intake is deferred",
+            );
+          recordCreatorJobAdmission(job.id, extra.automationAdmission!);
+          this.save(job);
+        }),
+      );
     this.jobs.set(job.id, job);
     await this.enqueue(job, "analyze", [false]);
     return job;
@@ -1840,6 +1893,18 @@ class JobManager extends EventEmitter {
   /** The picks are ready: automation jobs render the ones the reviewer passed (the selected ones) not yet rendered. */
   async onReady(job: JobState) {
     if (!job.automation) return;
+    if (runtimeStore().get("automation-jobs", job.id)) {
+      const reason = existingAutomationIntakeReason(job, job.automation);
+      if (reason) {
+        saveWorkDecision(job.automation.channelId, {
+          candidateId: job.id,
+          kind: "defer",
+          reason,
+          budget: { clips: 0 },
+        });
+        return;
+      }
+    }
     const picked = job.clips.filter((c) => c.selected);
     if (!picked.length) {
       this.log(

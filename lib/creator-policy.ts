@@ -117,6 +117,7 @@ export interface CreatorCandidate {
   isArchive?: boolean;
 }
 export interface CreatorWorkInput {
+  existingJobConflict?: string;
   candidate: CreatorCandidate;
   policy: CreatorPolicy;
   now: number;

@@ -45,6 +45,8 @@ export function planCreatorWork(input: CreatorWorkInput): WorkDecision {
       "proceed",
       "Manual import requested; automated intake capacity does not apply",
     );
+  if (input.existingJobConflict)
+    return result("defer", input.existingJobConflict);
   if (p.mode === "disabled")
     return result("skip", "Creator automation is disabled");
   if (p.mode === "manual")
@@ -170,6 +172,103 @@ function recipeFor(p: CreatorPolicy): CreatorRecipe {
     id: createHash("sha256").update(JSON.stringify(data)).digest("hex"),
     createdAt: Date.now(),
   };
+}
+export const recipeIdForPolicy = (p: CreatorPolicy) => recipeFor(p).id;
+export interface CreatorJobAdmission {
+  channelId: string;
+  recipeId: string;
+  clips: number;
+  at: number;
+  destination?: string;
+  sourceAccountId?: string;
+  sourceMethod?: "uploads-playlist" | "videos-tab";
+}
+export class AutomationIntakeDeferredError extends Error {}
+/** Existing jobs are never implicitly adopted; only the same active immutable admission may resume. */
+export function existingAutomationIntakeReason(
+  existing: JobState | undefined,
+  incoming: { channelId: string; recipeId?: string },
+): string | undefined {
+  if (!existing) return;
+  const store = runtimeStore();
+  const link = store.get<{ channelId: string; recipeId: string }>(
+    "automation-jobs",
+    existing.id,
+  )?.value;
+  const admission = store.get<{ channelId: string; clips: number }>(
+    "automation-admissions",
+    existing.id,
+  )?.value;
+  if (!existing.automation || !link || !admission)
+    return "Existing manual or completed job owns this source; automatic intake is deferred to preserve its settings, selected clips and approvals";
+  if (
+    link.channelId !== incoming.channelId ||
+    link.recipeId !== incoming.recipeId ||
+    existing.automation.channelId !== link.channelId ||
+    existing.automation.recipeId !== link.recipeId ||
+    admission.channelId !== link.channelId
+  )
+    return "Existing automated job has a different immutable recipe or admission; preserve its saved work and review it manually";
+  const recipe = creatorRecipe(link.recipeId);
+  if (
+    !recipe ||
+    admission.clips !== recipe.clips ||
+    existing.clips.filter((c) => c.selected).length > recipe.clips
+  )
+    return "Existing automated selections exceed or disagree with their immutable clip admission; automatic work is deferred";
+  const expected = recipeSettings(recipe);
+  if (
+    Object.entries(expected).some(
+      ([key, value]) => existing.settings[key as keyof JobSettings] !== value,
+    ) ||
+    (existing.settings.lang ?? "") !== recipe.language
+  )
+    return "Existing automated job settings were edited after admission; automatic work is deferred to preserve those edits";
+}
+export function recordCreatorJobAdmission(
+  jobId: string,
+  admission: CreatorJobAdmission,
+) {
+  const store = runtimeStore();
+  const recipe = creatorRecipe(admission.recipeId);
+  if (!recipe || admission.clips !== recipe.clips)
+    throw new AutomationIntakeDeferredError(
+      "Creator admission does not match its immutable recipe; automatic intake is deferred",
+    );
+  const prior = store.get<{ channelId: string; recipeId: string }>(
+    "automation-jobs",
+    jobId,
+  )?.value;
+  const receipt = store.get<{ channelId: string; clips: number }>(
+    "automation-admissions",
+    jobId,
+  )?.value;
+  if (prior || receipt) {
+    if (
+      !prior ||
+      !receipt ||
+      prior.channelId !== admission.channelId ||
+      prior.recipeId !== admission.recipeId ||
+      receipt.channelId !== admission.channelId ||
+      receipt.clips !== admission.clips
+    )
+      throw new AutomationIntakeDeferredError(
+        "Existing immutable automation admission changed; automatic intake is deferred",
+      );
+    return;
+  }
+  store.put("automation-jobs", jobId, {
+    channelId: admission.channelId,
+    recipeId: admission.recipeId,
+    sourceAccountId: admission.sourceAccountId,
+    sourceMethod: admission.sourceMethod,
+  });
+  store.put("automation-admissions", jobId, {
+    channelId: admission.channelId,
+    clips: admission.clips,
+    at: admission.at,
+    destination: admission.destination,
+  });
 }
 export function creatorRecipe(id: string) {
   return runtimeStore().get<CreatorRecipe>("creator-recipes", id)?.value;

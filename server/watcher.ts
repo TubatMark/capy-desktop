@@ -1,6 +1,11 @@
 import { DEFAULT_CREATOR_POLICY } from "../lib/creator-policy";
 import {
   admissionReasons,
+  existingAutomationIntakeReason,
+  recipeIdForPolicy,
+  recordCreatorJobAdmission,
+  AutomationIntakeDeferredError,
+  type CreatorJobAdmission,
   unpublishedAutomatedClips,
   rankCreatorWork,
   saveCreatorPolicy,
@@ -64,6 +69,13 @@ export interface WatcherDeps {
     settings: Partial<JobSettings>,
     automation: NonNullable<JobState["automation"]>,
   ): Promise<void>;
+  /** The real worker commits immutable admission and new job before enqueue. Legacy injected seams stay three-argument. */
+  createAdmittedJob?(
+    videoId: string,
+    settings: Partial<JobSettings>,
+    automation: NonNullable<JobState["automation"]>,
+    admission: CreatorJobAdmission,
+  ): Promise<void>;
 }
 
 declare global {
@@ -113,12 +125,20 @@ function defaultDeps(): WatcherDeps {
           return parseUploads(JSON.parse(result.stdout));
         },
       }),
-    createJob: async (videoId, settings, automation) => {
+    createJob: async () => {
+      throw Error(
+        "Production automatic intake requires an immutable creator admission",
+      );
+    },
+    createAdmittedJob: async (videoId, settings, automation, admission) => {
       const { jobs } = await import("./jobs");
       await jobs().create(
         `https://www.youtube.com/watch?v=${videoId}`,
         settings,
-        { automation },
+        {
+          automation: { ...automation, recipeId: admission.recipeId },
+          automationAdmission: admission,
+        },
       );
     },
   };
@@ -301,6 +321,11 @@ export async function watcherTick(
       0,
     ),
   );
+  const existingJobs = new Map(
+    runtimeStore()
+      .list<JobState>("legacy-jobs")
+      .map((row) => [row.value.videoId, row.value]),
+  );
   const decisions = rankCreatorWork(
     current.channels
       .filter((c) => c.enabled)
@@ -325,6 +350,10 @@ export async function watcherTick(
                 )?.account?.id
               : "local-drafts";
           return {
+            existingJobConflict: existingAutomationIntakeReason(
+              existingJobs.get(v.id),
+              { channelId: c.id, recipeId: recipeIdForPolicy(policy) },
+            ),
             candidate: {
               id: v.id,
               channelId: c.id,
@@ -424,38 +453,92 @@ export async function watcherTick(
     const recipe = admitted.recipe!;
     if (configured && !configured.recipeId)
       saveCreatorPolicy(ch.id, configured);
+    const admission: CreatorJobAdmission = {
+      channelId: ch.id,
+      recipeId: recipe.id,
+      clips: recipe.clips,
+      at: now.getTime(),
+      destination: admitted.destination,
+      sourceAccountId: ch.sourceAccountId,
+      sourceMethod:
+        ch.discoveryStatus?.method ??
+        (ch.sourceAccountId ? "uploads-playlist" : "videos-tab"),
+    };
     fence(() => {
       if (!runtimeStore().get("creator-recipes", recipe.id))
         runtimeStore().put("creator-recipes", recipe.id, recipe);
-      runtimeStore().put("automation-jobs", next!.videoId, {
-        channelId: ch.id,
-        recipeId: recipe.id,
-        sourceAccountId: ch.sourceAccountId,
-        sourceMethod:
-          ch.discoveryStatus?.method ??
-          (ch.sourceAccountId ? "uploads-playlist" : "videos-tab"),
-      });
-      runtimeStore().put("automation-admissions", next!.videoId, {
-        channelId: ch.id,
-        clips: recipe.clips,
-        at: now.getTime(),
-        destination: admitted.destination,
-      });
     });
-    await deps.createJob(
-      next.videoId,
-      {
-        ...recipeSettings(recipe),
-        count: recipe.clips,
-        ...(ch.settings.audience ? { audience: ch.settings.audience } : {}),
-      },
-      {
-        channelId: ch.id,
-        channelName: ch.name,
-        ...(configured ? { recipeId: recipe.id } : {}),
-      },
+    const jobSettings = {
+      ...recipeSettings(recipe),
+      count: recipe.clips,
+      ...(ch.settings.audience ? { audience: ch.settings.audience } : {}),
+    };
+    const automation = {
+      channelId: ch.id,
+      channelName: ch.name,
+      ...(configured ? { recipeId: recipe.id } : {}),
+    };
+    if (deps.createAdmittedJob)
+      await deps.createAdmittedJob(
+        next.videoId,
+        jobSettings,
+        automation,
+        admission,
+      );
+    else await deps.createJob(next.videoId, jobSettings, automation);
+    // Injected create seams have no queue owner; real Jobs.create records this atomically before enqueue.
+    fence(() =>
+      runtimeStore().transaction(() => {
+        const created = runtimeStore()
+          .list<JobState>("legacy-jobs")
+          .find((row) => row.value.videoId === next!.videoId)?.value;
+        if (created && !runtimeStore().get("automation-jobs", created.id)) {
+          if (
+            created.automation?.channelId !== ch.id ||
+            created.automation.recipeId !== recipe.id
+          )
+            throw new AutomationIntakeDeferredError(
+              "Existing manual job owns this source; automatic intake is deferred to preserve it",
+            );
+        }
+        recordCreatorJobAdmission(next!.videoId, admission);
+      }),
     );
   } catch (e) {
+    if (e instanceof AutomationIntakeDeferredError) {
+      saveWorkDecision(ch.id, {
+        candidateId: next!.videoId,
+        kind: "defer",
+        reason: e.message,
+        budget: { clips: 0 },
+      });
+      const source = current.channels
+        .find((c) => c.id === ch.id)
+        ?.pending.find((v) => v.id === next!.videoId);
+      mutateWatch((f) => ({
+        ...f,
+        channels: f.channels.map((c) =>
+          c.id !== ch.id
+            ? c
+            : {
+                ...c,
+                history: c.history.filter(
+                  (h) =>
+                    !(
+                      h.jobId === next!.videoId &&
+                      h.status === "processing" &&
+                      h.at === now.getTime()
+                    ),
+                ),
+                pending:
+                  source && !c.pending.some((v) => v.id === source.id)
+                    ? [...c.pending, source]
+                    : c.pending,
+              },
+        ),
+      }));
+      return;
+    }
     mutateWatch((f) =>
       markHistory(
         f,
