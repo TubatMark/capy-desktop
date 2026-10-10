@@ -75,6 +75,11 @@ export function ThumbnailChoices({
                 <Check className="size-3" />
               </span>
             )}
+            {o.aiChoice && (
+              <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-white">
+                AI pick
+              </span>
+            )}
             {o.pickedBy === "ai" && !o.attached && (
               <Sparkles className="absolute right-1 top-1 size-3.5 text-white drop-shadow" aria-hidden />
             )}
@@ -86,6 +91,15 @@ export function ThumbnailChoices({
           </button>
         ))}
       </div>
+      {(() => {
+        const best = yt.thumbnailOptions!.find((o) => o.aiChoice);
+        return best ? (
+          <p className="text-xs">
+            <span className="font-medium">AI reviewer picked {LAYOUT[best.layout]}</span>
+            {best.aiReason ? <span className="text-muted-foreground">: {best.aiReason}</span> : null}
+          </p>
+        ) : null;
+      })()}
       {yt.thumbnailOptions!.some((o) => o.pickedBy === "ai") && (
         <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <Sparkles className="size-3" /> Frame and headline picked by AI from this clip.

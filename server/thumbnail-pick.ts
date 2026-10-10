@@ -39,7 +39,7 @@ const LAYOUTS: ThumbnailLayout[] = ["bold", "editorial", "minimal"];
 const LABELS = "ABCDEFGH".split("");
 const MAX_HEADLINE_WORDS = 6;
 
-const askClaude: VisionAsk = async (prompt, o) => {
+export const askClaude: VisionAsk = async (prompt, o) => {
   const { askAgent } = await import("../src/agents");
   return askAgent("claude", prompt, {
     task: "vision",

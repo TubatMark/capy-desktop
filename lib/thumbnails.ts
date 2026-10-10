@@ -161,6 +161,8 @@ export interface ThumbnailDesign extends Omit<
   };
   /** Automatic designs: whether the AI chose the frame/headline or the local ranking did. */
   pick?: { by: "ai" | "heuristic"; reason?: string };
+  /** The thumbnail reviewer's verdict across this clip's designs: 1 = the one it judged most effective. */
+  judged?: { by: "ai" | "default"; rank: number; reason?: string; at: number };
 }
 export interface ThumbnailRequest {
   source: ThumbnailSourceRef;

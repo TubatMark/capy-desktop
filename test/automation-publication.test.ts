@@ -263,7 +263,17 @@ it("source-frame fallback blocks filename-only thumbnails through the shared gat
 });
 it("auto-scheduling: a clip with an OK review is scheduled without a human decision, only while the owner's switch is on", async () => {
   const { e } = fixture("none");
-  const review = { verdict: "ok" as const, summary: "Fine", issues: [], at: 1 };
+  // a two-AI review, as the content review now produces (each opinion travels inside the approved package)
+  const review = {
+    verdict: "ok" as const,
+    summary: "Fine",
+    issues: [],
+    at: 1,
+    opinions: [
+      { by: "claude" as const, verdict: "ok" as const, summary: "Fine", issues: [], at: 1 },
+      { by: "codex" as const, verdict: "caution" as const, summary: "Check", issues: [], at: 1, unavailable: false },
+    ],
+  };
   const waiting = { ...e, aiReview: review };
   const { entries, scheduled } = approve([waiting], "", undefined, {
     group: queueGroup(waiting),

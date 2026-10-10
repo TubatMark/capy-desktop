@@ -78,6 +78,9 @@ export function queueThumbnailFields(
                   layout: d.layout,
                   headline: d.layers.find((l) => l.kind === "text")?.text,
                   ...(d.pick ? { pickedBy: d.pick.by } : {}),
+                  ...(d.judged?.by === "ai" && d.judged.rank === 1
+                    ? { aiChoice: true, ...(d.judged.reason ? { aiReason: d.judged.reason } : {}) }
+                    : {}),
                   attached: d.id === designId,
                 },
               ]

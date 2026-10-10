@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ContentReviewSchema } from "./publication";
 export const AutomationControlsSchema = z.strictObject({
   monitorPaused: z.boolean(),
   renderPaused: z.boolean(),
@@ -227,15 +228,7 @@ export const MediaQualityReportSchema = z
       ]),
       reason: z.string().min(1),
     }),
-    supplementaryReview: z
-      .strictObject({
-        verdict: z.enum(["ok", "caution", "block"]),
-        summary: z.string(),
-        issues: z.array(z.strictObject({ kind: z.string(), note: z.string() })),
-        title: z.string().optional(),
-        at: z.number().finite(),
-      })
-      .optional(),
+    supplementaryReview: ContentReviewSchema.optional(),
   })
   .refine(
     (r) =>

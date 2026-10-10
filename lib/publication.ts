@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ContentReview, Platform, PostText } from "./types";
+import { AGENT_IDS, type ContentReview, type Platform, type PostText } from "./types";
 
 /** Serializable publication snapshots; hashing and filesystem access live on the server. */
 export type PublicationDeliveryOptions =
@@ -87,6 +87,22 @@ export interface PublicationContext {
   packageHash: string;
 }
 /** Persisted snapshots are untrusted input; legacy/malformed records never authorize a side effect. */
+const reviewFields = {
+  verdict: z.enum(["ok", "caution", "block"]),
+  summary: z.string(),
+  issues: z.array(z.strictObject({ kind: z.string(), note: z.string() })),
+  title: z.string().optional(),
+  at: z.number().finite(),
+  unavailable: z.boolean().optional(),
+};
+/** The AI content review as packaged: the combined result, plus each AI's own when more than one looked. */
+export const ContentReviewSchema = z.strictObject({
+  ...reviewFields,
+  opinions: z
+    .array(z.strictObject({ by: z.enum(AGENT_IDS), ...reviewFields }))
+    .max(4)
+    .optional(),
+});
 export const PublicationDecisionSchema = z.strictObject({
   kind: z.enum(["human", "human_override"]),
   packageHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -180,15 +196,7 @@ export const PublishPackageSchema = z.strictObject({
     .optional(),
   platform: z.enum(["youtube", "instagram", "tiktok"]),
   accountId: z.string().min(1),
-  review: z
-    .strictObject({
-      verdict: z.enum(["ok", "caution", "block"]),
-      summary: z.string(),
-      issues: z.array(z.strictObject({ kind: z.string(), note: z.string() })),
-      title: z.string().optional(),
-      at: z.number().finite(),
-    })
-    .optional(),
+  review: ContentReviewSchema.optional(),
   policyVersion: z.string().min(1),
   mediaOptionsHash: z.string().regex(/^[a-f0-9]{64}$/),
   packageHash: z.string().regex(/^[a-f0-9]{64}$/),

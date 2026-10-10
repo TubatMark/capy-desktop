@@ -36,6 +36,9 @@ export interface QueueThumbnailOption {
   headline?: string;
   /** "ai" when the AI chose its frame and headline. */
   pickedBy?: "ai" | "heuristic";
+  /** The thumbnail reviewer judged this design the most effective; reason says why. */
+  aiChoice?: boolean;
+  aiReason?: string;
   attached: boolean;
 }
 

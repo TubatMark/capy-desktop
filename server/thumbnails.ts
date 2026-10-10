@@ -32,6 +32,7 @@ import { aiCacheIdentity } from "./ai-router";
 import { extractFrameCandidates } from "../src/thumbnails/frames";
 import { buildThumbnailBrief } from "../src/thumbnails/brief";
 import { creatorPolicy } from "./automation-policy";
+import { judgeThumbnails } from "./thumbnail-judge";
 import { pickThumbnail, type VisionAsk } from "./thumbnail-pick";
 import {
   composeOriginalThumbnail,
@@ -1087,6 +1088,54 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
                 : design.reviewState,
             });
         });
+      },
+    },
+    {
+      // Automatic requests: the thumbnail reviewer compares the finished designs at feed size and picks the most
+      // effective one; its verdict is saved on every design. Falls back to the current order, never fails.
+      name: "thumbnail-judge",
+      timeoutMs: 180_000,
+      run: async (ctx) => {
+        const input = requestFor(ctx, deps);
+        const designs = ctx.data.designs as ThumbnailDesign[] | undefined;
+        if (!aiPicks(input) || !designs?.length) return;
+        const clip =
+          input.source.kind === "legacy"
+            ? deps.store
+                .get<JobState>("legacy-jobs", input.source.jobId)
+                ?.value.clips.find(
+                  (c) => input.source.kind === "legacy" && c.n === input.source.clipN,
+                )
+            : undefined;
+        const verdict = await judgeThumbnails(
+          {
+            designs,
+            title: input.clipContext?.title ?? clip?.title,
+            hook: input.clipContext?.hook ?? clip?.hook,
+            directory: ctx.workspace,
+          },
+          deps.ask,
+        );
+        ctx.assert();
+        const at = Date.now();
+        const judged = verdict.order
+          .map((id) => designs.find((d) => d.id === id)!)
+          .map((d, i) => ({
+            ...d,
+            judged: {
+              by: verdict.by,
+              rank: i + 1,
+              ...(i === 0 && verdict.reason ? { reason: verdict.reason } : {}),
+              at,
+            },
+          }));
+        ctx.fenced(() => {
+          for (const d of judged) {
+            const stored = deps.store.get<ThumbnailDesign>("thumbnails", d.id)?.value;
+            if (stored) deps.store.put("thumbnails", d.id, { ...stored, judged: d.judged });
+          }
+        });
+        return { data: { designs: judged } };
       },
     },
     {
