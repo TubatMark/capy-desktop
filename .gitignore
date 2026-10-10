@@ -13,3 +13,5 @@ shots/
 dist/
 dist-electron/
 .superpowers/
+test-results/
+playwright-report/

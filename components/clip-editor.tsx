@@ -41,6 +41,8 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
   const [lookDirty, setLookDirty] = useState(false);
   const [lookSaving, setLookSaving] = useState(false);
   const [lookError, setLookError] = useState<string | null>(null);
+  const [studioError, setStudioError] = useState<string | null>(null);
+  const [openingStudio, setOpeningStudio] = useState(false);
   // while the pointer/focus is in the Look panel the preview shows sample captions so edits show immediately
   const [lookActive, setLookActive] = useState(false);
   // the right column shows either the clip's details or the video's look, never both: no scrolling to reach the look
@@ -156,6 +158,32 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
     setDraft((d) => (d ? { ...d, ...p } : d));
     setDirty(true);
   }
+  async function openStudio() {
+    if (!clip || openingStudio) return;
+    setOpeningStudio(true);
+    setStudioError(null);
+    try {
+      const project = await api<{ id: string }>("/api/studio/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: draft?.title ?? clip.title,
+          sources: [
+            {
+              jobId: id,
+              clipN: n,
+              startUs: Math.round((draft?.start ?? clip.start) * 1_000_000),
+              endUs: Math.round((draft?.end ?? clip.end) * 1_000_000),
+            },
+          ],
+        }),
+      });
+      router.push(`/studio/${project.id}`);
+    } catch (error) {
+      setStudioError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningStudio(false);
+    }
+  }
   async function save() {
     if (!draft) return;
     setSaving(true);
@@ -239,6 +267,12 @@ export function ClipEditor({ id, n }: { id: string; n: number }) {
       <Link href={`/v/${id}`} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" /> {job.title}
       </Link>
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={openStudio} disabled={!clip || openingStudio}>
+          {openingStudio ? "Opening Studio…" : "Open in Studio"}
+        </Button>
+        {studioError && <p role="alert" className="ml-3 text-xs text-destructive">{studioError}</p>}
+      </div>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" disabled={!prev} onClick={() => prev && router.push(`/v/${id}/clip/${prev.n}`)} aria-label="Previous clip">
           <ChevronLeft />

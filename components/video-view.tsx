@@ -16,6 +16,7 @@ export function VideoView({ id }: { id: string }) {
   const { job, error, setJob } = useJob(id);
   const [seek, setSeek] = useState<number | undefined>(undefined);
   const [revealErr, setRevealErr] = useState<string | null>(null);
+  const [openingStudio, setOpeningStudio] = useState(false);
 
   const selected = useMemo(() => job?.clips.filter((c) => c.selected) ?? [], [job]);
   const rendering = job?.clips.filter((c) => c.render.status === "rendering" || c.render.status === "queued") ?? [];
@@ -31,6 +32,25 @@ export function VideoView({ id }: { id: string }) {
   async function toggle(c: ClipState, v: boolean) {
     setJob({ ...job!, clips: job!.clips.map((x) => (x.n === c.n ? { ...x, selected: v } : x)) });
     await api(`/api/jobs/${id}/clips/${c.n}`, { method: "PATCH", body: JSON.stringify({ selected: v }) });
+  }
+  async function openStudio() {
+    if (openingStudio) return;
+    setOpeningStudio(true);
+    setRevealErr(null);
+    try {
+      const project = await api<{ id: string }>("/api/studio/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `${job?.title ?? "Video"} edit`,
+          sources: selected.map((clip) => ({ jobId: id, clipN: clip.n })),
+        }),
+      });
+      window.location.href = `/studio/${project.id}`;
+    } catch (error) {
+      setRevealErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningStudio(false);
+    }
   }
   async function renderSelected() {
     await api(`/api/jobs/${id}/render`, { method: "POST", body: JSON.stringify({}) });
@@ -99,6 +119,9 @@ export function VideoView({ id }: { id: string }) {
                     <Wand2 /> Render {selected.length} selected
                   </Button>
                 </AccessGate>
+                <Button variant="outline" onClick={openStudio} disabled={!selected.length || openingStudio}>
+                  {openingStudio ? "Opening Studio…" : "Open selected in Studio"}
+                </Button>
                 <Button variant="outline" onClick={repick}>
                   <RefreshCw /> Ask AI again
                 </Button>
