@@ -48,7 +48,8 @@ export interface RoutedAiResult {
   cost: AiCost;
   usage?: { inputTokens: number; outputTokens: number };
   cached?: boolean;
-  requests?: number;
+  /** SDK tool-use turns; never a count of provider API requests. */
+  turns?: number;
   actualModel?: string;
 }
 export type AiAdapter = (
@@ -161,7 +162,7 @@ export async function routeAiTask(
   );
   if (policy.escalation) routes.push(policy.escalation);
   const maxTurns = Math.min(request.maxTurns ?? 1, 3);
-  // SDK turns are potential provider requests too, even when application retries are bounded.
+  // Application admission units are conservative run/turn allowances, not provider requests.
   const turnAllowance = Math.max(maxTurns, 1);
   const reservation = await reserveAiBudget(
     {
@@ -188,7 +189,8 @@ export async function routeAiTask(
   let unknown = false;
   let tokens = 0;
   let attempts = 0;
-  let actualRequests = 0;
+  let admissionUnits = 0;
+  let tokensReported = true;
   let lastError: unknown;
   const deadline =
     Date.now() +
@@ -214,13 +216,13 @@ export async function routeAiTask(
             retryLimit: 0,
           },
         );
-        actualRequests += result.requests ?? turnAllowance;
+        admissionUnits += turnAllowance;
+        if (!result.usage) tokensReported = false;
         if (result.cost.basis === "unknown" || result.cost.value === undefined)
           unknown = true;
         else totalCost += result.cost.value;
-        tokens += result.usage
-          ? result.usage.inputTokens + result.usage.outputTokens
-          : inputBytes + Buffer.byteLength(JSON.stringify(result.data) ?? "");
+        if (result.usage)
+          tokens += result.usage.inputTokens + result.usage.outputTokens;
         if (
           Buffer.byteLength(JSON.stringify(result.data) ?? "") >
             policy.outputLimit * 4 ||
@@ -270,7 +272,8 @@ export async function routeAiTask(
         // A failed transport may have spent money; preserve its full unknown allowance.
         if (!result) {
           unknown = true;
-          actualRequests += turnAllowance;
+          admissionUnits += turnAllowance;
+          tokensReported = false;
         }
         lastError = error;
         await recordAiRun(
@@ -285,6 +288,7 @@ export async function routeAiTask(
             attempt: attempts,
             latencyMs: Date.now() - start,
             cost: result?.cost ?? { basis: "unknown" },
+            usage: result?.usage,
             outcome: "failed",
             cacheIdentity,
             reservationId: reservation.id,
@@ -309,8 +313,8 @@ export async function routeAiTask(
         basis: unknown ? "unknown" : "estimated",
         ...(unknown ? {} : { value: totalCost }),
       },
-      actualRequests,
-      tokens,
+      admissionUnits,
+      tokensReported ? tokens : undefined,
       store,
     );
   }

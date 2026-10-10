@@ -88,7 +88,7 @@ export async function settleAiBudget(
   id: string,
   cost: AiCost,
   requests: number,
-  tokens: number,
+  tokens: number | undefined,
   store: Store = runtimeStore(),
 ): Promise<void> {
   store.transaction(() => {
@@ -101,12 +101,12 @@ export async function settleAiBudget(
         cost.value < 0)
     )
       throw Error("Invalid AI cost receipt");
-    check(requests, Number.MAX_SAFE_INTEGER, "actual requests");
-    check(tokens, Number.MAX_SAFE_INTEGER, "actual tokens");
+    check(requests, Number.MAX_SAFE_INTEGER, "application admission units");
+    if (tokens !== undefined)
+      check(tokens, Number.MAX_SAFE_INTEGER, "reported tokens");
     const usd = cost.basis === "unknown" ? r.ceilingUsd : cost.value!;
-    // Unknown token receipts retain the reserved token ceiling. Usage limits apply in subscription mode too.
-    const chargedTokens =
-      cost.basis === "unknown" ? Math.max(r.tokens, tokens) : tokens;
+    // Absent token receipts retain the allowance; dollar basis never supplies token evidence.
+    const chargedTokens = tokens === undefined ? r.tokens : tokens;
     for (const [kind, key] of [
       ["ai-budget-day", r.day],
       ["ai-budget-job", r.jobId],
@@ -172,6 +172,16 @@ export function getAiUsage(store: Store = runtimeStore()) {
     day,
     ...(store.get<Counter>("ai-budget-day", day)?.value ?? zero()),
     tasks,
+    accounting: "application-admission" as const,
+    providerRequests: null,
+    reportedTokens: runs.reduce(
+      (sum, run) =>
+        sum + (run.usage ? run.usage.inputTokens + run.usage.outputTokens : 0),
+      0,
+    ),
+    unknownUsageRuns: runs.filter(
+      (run) => run.outcome !== "cache" && !run.usage,
+    ).length,
     pending: store
       .list<AiBudgetReservation>("ai-reservation")
       .filter((r) => r.value.state !== "settled").length,

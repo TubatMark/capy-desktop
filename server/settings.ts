@@ -1,4 +1,8 @@
-import { AiRoutingSchema, DEFAULT_AI_ROUTING } from "../lib/ai-policy";
+import {
+  AiRoutingSchema,
+  DEFAULT_AI_ROUTING,
+  DISABLED_AI_ROUTING,
+} from "../lib/ai-policy";
 import {
   chmodSync,
   mkdirSync,
@@ -105,9 +109,14 @@ function raw(): Partial<AppSettings> {
     try {
       const obj = JSON.parse(readFileSync(file, "utf8"));
       if (obj && typeof obj === "object" && !Array.isArray(obj))
-        parsed = clean(obj as Record<string, unknown>);
+        parsed = clean(obj as Record<string, unknown>, false);
+      else throw new Error("Settings must be an object");
     } catch {
-      /* unreadable: defaults */
+      parsed = {
+        aiRouting: DISABLED_AI_ROUTING,
+        aiRoutingError:
+          "Settings file is unreadable. AI calls are disabled until valid routing is saved.",
+      };
     }
   }
   state.cache = { file, mtime, raw: parsed };
@@ -115,10 +124,21 @@ function raw(): Partial<AppSettings> {
 }
 
 /** Keep only known keys with sane types. */
-function clean(obj: Record<string, unknown>): Partial<AppSettings> {
+function clean(
+  obj: Record<string, unknown>,
+  strictRouting = true,
+): Partial<AppSettings> {
   const out: Partial<AppSettings> = {};
-  if (obj.aiRouting !== undefined)
-    out.aiRouting = AiRoutingSchema.parse(obj.aiRouting);
+  if (Object.hasOwn(obj, "aiRouting")) {
+    const routing = AiRoutingSchema.safeParse(obj.aiRouting);
+    if (routing.success) out.aiRouting = routing.data;
+    else if (strictRouting) throw routing.error;
+    else {
+      out.aiRouting = DISABLED_AI_ROUTING;
+      const issue = routing.error.issues[0];
+      out.aiRoutingError = `Invalid saved AI routing (${issue?.path.join(".") ?? "policy"}). AI calls are disabled; save a valid policy to repair it.`;
+    }
+  }
   if (typeof obj.browser === "string" && obj.browser) out.browser = obj.browser;
   if (typeof obj.outputDir === "string" && obj.outputDir)
     out.outputDir = obj.outputDir;

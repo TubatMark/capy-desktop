@@ -22,7 +22,14 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
         total_cost_usd: 0.01,
         num_turns: 1,
         modelUsage: {
-          test: { costBasis: fake.costBasis, canonicalModel: options.model },
+          test: {
+            costBasis: fake.costBasis,
+            canonicalModel: options.model,
+            inputTokens: 10,
+            outputTokens: 20,
+            cacheReadInputTokens: 30,
+            cacheCreationInputTokens: 40,
+          },
         },
         usage: { input_tokens: 5, output_tokens: 5 },
       };
@@ -67,6 +74,7 @@ it("actual shared adapter routes simple tasks compact, accounts estimates and pr
   expect(fake.env.ANTHROPIC_API_KEY).toBeUndefined();
   expect(result.cost).toEqual({ basis: "estimated", value: 0.01 });
   expect(result.actualModel).toBe("claude-haiku-5-5");
+  expect(result.usage).toEqual({ inputTokens: 80, outputTokens: 20 });
   expect((await askAgent("claude", "fixture-only", options)).cached).toBe(true);
   expect(fake.calls).toBe(1);
 });

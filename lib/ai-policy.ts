@@ -32,11 +32,13 @@ export const AdapterRouteSchema = z.strictObject({
   model: z.string().trim().min(1).max(200),
 });
 export const AiRouteSchema = AdapterRouteSchema.extend({
+  model: AdapterRouteSchema.shape.model.optional(),
   premium: z.boolean().default(false),
   escalation: AdapterRouteSchema.optional(),
 });
 export const AiRoutingSchema = z.strictObject({
   version: z.literal(1),
+  usageLimitMode: z.enum(["application", "provider"]).default("application"),
   allowCloud: z.boolean(),
   allowPremiumImages: z.boolean(),
   maxJobUsd: z.number().finite().min(0).max(100),
@@ -49,6 +51,7 @@ export const AiRoutingSchema = z.strictObject({
 export type AiRoutingSettings = z.infer<typeof AiRoutingSchema>;
 export const DEFAULT_AI_ROUTING: AiRoutingSettings = {
   version: 1,
+  usageLimitMode: "application",
   allowCloud: true,
   allowPremiumImages: false,
   maxJobUsd: 1,
@@ -66,6 +69,7 @@ export const AI_ADAPTER_CAPABILITIES: Record<
     local: boolean;
     modelSelection: boolean;
     tokenReporting: boolean;
+    providerQuotaBound: boolean;
   }
 > = {
   claude: {
@@ -73,54 +77,63 @@ export const AI_ADAPTER_CAPABILITIES: Record<
     local: false,
     modelSelection: true,
     tokenReporting: true,
+    providerQuotaBound: false,
   },
   codex: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   gemini: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   qwen: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   cursor: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   opencode: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   droid: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   copilot: {
     modalities: ["text"],
     local: false,
     modelSelection: true,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
   amp: {
     modalities: ["text"],
     local: false,
     modelSelection: false,
     tokenReporting: false,
+    providerQuotaBound: false,
   },
 };
 export interface AiTaskContext {
@@ -154,6 +167,7 @@ export interface AiTaskPolicy {
   maxDayTokens: number;
   attemptCeilingUsd: number;
   policyVersion: number;
+  usageLimitMode: AiRoutingSettings["usageLimitMode"];
   reason: string;
 }
 export function assertAiCapability(
@@ -191,6 +205,7 @@ export function resolveAiTask(
     task,
     ...limits,
     policyVersion: settings.version,
+    usageLimitMode: settings.usageLimitMode,
     contextLimit: task === "selection" ? 80000 : 16000,
     outputLimit: task === "selection" ? 8000 : 4000,
     timeoutMs: task === "selection" ? 180000 : 120000,
@@ -218,15 +233,10 @@ export function resolveAiTask(
   const route = settings.tasks[task as AiTaskId];
   const agent = route?.agent ?? context.agent ?? "claude";
   const selection = task === "selection";
-  const defaults: Partial<Record<AgentId, string>> = {
-    claude: selection ? "claude-sonnet-5-5" : "claude-haiku-5-5",
-    codex: selection ? "gpt-6-sol" : "gpt-6-luna",
-    gemini: "gemini-3.5-flash-lite",
-  };
   const model =
     route?.model ??
     (selection || task === "diagnostic" ? context.model : undefined) ??
-    defaults[agent];
+    defaultAiModel(task, agent);
   const modality =
     context.requiredModality ??
     (task === "vision"
@@ -244,6 +254,13 @@ export function resolveAiTask(
     );
   assertAiCapability(agent, modality, model, route?.premium ?? false);
   if (
+    settings.usageLimitMode === "provider" &&
+    !AI_ADAPTER_CAPABILITIES[agent].providerQuotaBound
+  )
+    throw Error(
+      `${agent} cannot enforce strict provider request/token quotas; select application admission mode or a verified bounded adapter`,
+    );
+  if (
     task === "thumbnail-generation" &&
     route?.premium &&
     !settings.allowPremiumImages
@@ -251,6 +268,12 @@ export function resolveAiTask(
     throw Error("Premium image quality is disabled");
   const escalation =
     (context.escalationCount ?? 0) < 1 ? route?.escalation : undefined;
+  if (
+    escalation &&
+    settings.usageLimitMode === "provider" &&
+    !AI_ADAPTER_CAPABILITIES[escalation.agent].providerQuotaBound
+  )
+    throw Error("Escalation adapter cannot enforce strict provider quotas");
   if (escalation)
     assertAiCapability(
       escalation.agent,
@@ -295,3 +318,30 @@ export interface AiRunRecord {
   error?: string;
   usage?: { inputTokens: number; outputTokens: number };
 }
+
+/** Candidates shared by runtime and Settings; never imply account access or evaluated quality. */
+export function defaultAiModel(
+  task: AiTaskId | DeterministicTask,
+  agent: AgentId,
+): string | undefined {
+  const selection = task === "selection";
+  return (
+    {
+      claude: selection ? "claude-sonnet-5-5" : "claude-haiku-5-5",
+      codex: selection ? "gpt-6-sol" : "gpt-6-luna",
+      gemini: "gemini-3.5-flash-lite",
+    } as Partial<Record<AgentId, string>>
+  )[agent];
+}
+export const DISABLED_AI_ROUTING: AiRoutingSettings = {
+  ...DEFAULT_AI_ROUTING,
+  usageLimitMode: "provider",
+  allowCloud: false,
+  allowPremiumImages: false,
+  maxJobUsd: 0,
+  maxDayUsd: 0,
+  maxDayRequests: 0,
+  maxDayTokens: 0,
+  retryLimit: 0,
+  tasks: {},
+};

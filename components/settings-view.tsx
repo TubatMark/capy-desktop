@@ -206,6 +206,7 @@ export function SettingsView({
             body: JSON.stringify(patch),
           });
           setSettings(result.settings);
+          return result.settings;
         }}
       />
 

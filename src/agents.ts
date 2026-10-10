@@ -599,12 +599,31 @@ async function askAgentRaw(
     const modelUsage = Object.values(r.modelUsage ?? {}) as {
       canonicalModel?: string;
       costBasis?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadInputTokens?: number;
+      cacheCreationInputTokens?: number;
     }[];
     const knownEstimate =
       typeof r.total_cost_usd === "number" &&
       Number.isFinite(r.total_cost_usd) &&
       r.total_cost_usd >= 0 &&
       !modelUsage.some((usage) => usage.costBasis === "unknown");
+    // SDK result.usage covers only the main loop; modelUsage is cumulative
+    // across the query pipeline. Neither receipt proves provider invoice totals.
+    const hasTokenReceipt =
+      modelUsage.length > 0 &&
+      modelUsage.every((usage) =>
+        [
+          usage.inputTokens,
+          usage.outputTokens,
+          usage.cacheReadInputTokens,
+          usage.cacheCreationInputTokens,
+        ].every(
+          (value) =>
+            typeof value === "number" && Number.isFinite(value) && value >= 0,
+        ),
+      );
     return {
       data: r.structured_output ?? extractJson(r.result),
       costUsd: knownEstimate ? r.total_cost_usd : undefined,
@@ -612,17 +631,24 @@ async function askAgentRaw(
         basis: knownEstimate ? "estimated" : "unknown",
         ...(knownEstimate ? { value: r.total_cost_usd } : {}),
       },
-      requests: r.num_turns,
+      turns: r.num_turns,
       actualModel:
         modelUsage.length === 1 ? modelUsage[0]?.canonicalModel : undefined,
-      ...(r.usage
+      ...(hasTokenReceipt
         ? {
             usage: {
-              inputTokens:
-                (r.usage.input_tokens ?? 0) +
-                (r.usage.cache_read_input_tokens ?? 0) +
-                (r.usage.cache_creation_input_tokens ?? 0),
-              outputTokens: r.usage.output_tokens ?? 0,
+              inputTokens: modelUsage.reduce(
+                (sum, usage) =>
+                  sum +
+                  usage.inputTokens! +
+                  usage.cacheReadInputTokens! +
+                  usage.cacheCreationInputTokens!,
+                0,
+              ),
+              outputTokens: modelUsage.reduce(
+                (sum, usage) => sum + usage.outputTokens!,
+                0,
+              ),
             },
           }
         : {}),

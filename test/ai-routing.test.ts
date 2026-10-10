@@ -265,3 +265,58 @@ describe("routed execution", () => {
     }
   });
 });
+
+it("strict provider quota mode rejects all unverified adapters before reservation or provider work", async () => {
+  const f = fixture();
+  let calls = 0;
+  const adapter: AiAdapter = async () => {
+    calls++;
+    throw Error("must not run");
+  };
+  try {
+    for (const agent of ["claude", "codex", "gemini"] as const) {
+      const settings = {
+        ...DEFAULT_AI_ROUTING,
+        usageLimitMode: "provider" as const,
+        tasks: {},
+      };
+      await expect(
+        routeAiTask(
+          {
+            ...f.request,
+            agent,
+            context: {
+              settings,
+              creatorOverride: { usageLimitMode: "application" } as any,
+            },
+          },
+          adapter,
+          f.store,
+        ),
+      ).rejects.toThrow(/strict provider/);
+    }
+    expect(calls).toBe(0);
+    expect(f.store.list("ai-reservation")).toHaveLength(0);
+  } finally {
+    f.close();
+  }
+});
+it("application mode separates unknown provider usage from finite admission allowance", async () => {
+  const f = fixture();
+  try {
+    await routeAiTask(
+      { ...f.request, agent: "codex" },
+      async () => ({ data: { title: "Title" }, cost: { basis: "unknown" } }),
+      f.store,
+    );
+    const usage = getAiUsage(f.store);
+    expect(usage.accounting).toBe("application-admission");
+    expect(usage.providerRequests).toBeNull();
+    expect(usage.reportedTokens).toBe(0);
+    expect(usage.unknownUsageRuns).toBe(1);
+    expect(usage.tokens).toBeGreaterThan(0);
+    expect(usage.requests).toBe(1);
+  } finally {
+    f.close();
+  }
+});

@@ -1,4 +1,8 @@
-import { DEFAULT_AI_ROUTING, AiRoutingSchema } from "../lib/ai-policy";
+import {
+  DEFAULT_AI_ROUTING,
+  DISABLED_AI_ROUTING,
+  AiRoutingSchema,
+} from "../lib/ai-policy";
 import {
   afterAll,
   afterEach,
@@ -240,12 +244,13 @@ describe("settings", () => {
     });
     writeFileSync(file, "not json");
     resetSettingsCache();
-    expect(loadSettings()).toEqual({
-      aiRouting: DEFAULT_AI_ROUTING,
+    expect(loadSettings()).toMatchObject({
+      aiRouting: DISABLED_AI_ROUTING,
       agent: "claude",
       models: {},
       claudeAuth: "subscription",
     });
+    expect(loadSettings().aiRoutingError).toMatch(/unreadable/);
   });
 
   it("applyToEnv sets and clears CAPY_USE_API_KEY / ANTHROPIC_API_KEY", () => {
@@ -314,4 +319,39 @@ it("validates versioned AI routing settings and rejects nested unknown limits", 
       },
     }).tasks.review?.model,
   ).toBe("claude-haiku-5-5");
+});
+
+it("invalid present routing disables AI while preserving independent auth and valid preferences", () => {
+  mkdirSync(dataDir(), { recursive: true });
+  writeFileSync(
+    settingsFile(),
+    JSON.stringify({
+      browser: "firefox",
+      claudeAuth: "apiKey",
+      apiKey: "sk-preserved",
+      aiRouting: {
+        ...DEFAULT_AI_ROUTING,
+        allowCloud: false,
+        maxJobUsd: 0.01,
+        maxDayUsd: 0.02,
+        tasks: { metadata: { agent: "claude", model: "", premium: false } },
+      },
+    }),
+  );
+  resetSettingsCache();
+  const settings = loadSettings();
+  expect(settings).toMatchObject({
+    browser: "firefox",
+    claudeAuth: "apiKey",
+    apiKey: "sk-preserved",
+    aiRouting: {
+      allowCloud: false,
+      maxJobUsd: 0,
+      maxDayUsd: 0,
+      maxDayRequests: 0,
+      maxDayTokens: 0,
+    },
+  });
+  expect(settings.aiRoutingError).toMatch(/invalid|disabled/i);
+  expect(effective().claudeAuth).toBe("apiKey");
 });

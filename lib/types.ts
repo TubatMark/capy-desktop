@@ -560,6 +560,8 @@ export const MODELS = [
 /** App-wide settings stored in <CAPY_DATA_DIR>/settings.json (see server/settings.ts). */
 export interface AppSettings {
   aiRouting?: AiRoutingSettings;
+  /** Present invalid privacy/budget policy disables AI until repaired. Never persisted as policy. */
+  aiRoutingError?: string;
   /** The AI that picks clips and writes titles, hooks and descriptions. */
   agent: AgentId;
   /** Model per agent; empty means the agent's own default (Claude: the first of MODELS). */
