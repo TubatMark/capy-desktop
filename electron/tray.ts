@@ -140,12 +140,18 @@ export function createTray(o: {
     } catch {
       health = undefined;
     }
-    keepAwake(summary.activeCount > 0);
+    // watching channels counts as work too, so new uploads are caught while the Mac sits locked
+    const c = health?.controls;
+    keepAwake(
+      summary.activeCount > 0 ||
+        (!!health && !c?.globalStop && !c?.monitorPaused && (summary.watching ?? 0) > 0),
+    );
     render();
   }
 
-  // Posts upload at their slot time, so an idle-sleeping Mac would miss them. While any are scheduled or
-  // uploading, hold off idle sleep (the screen may still turn off; a closed lid on battery still sleeps).
+  // Posts upload at their slot time and new uploads are found by hourly checks, so an idle-sleeping Mac would
+  // miss both. While capy has work, hold off idle sleep: the screen may still turn off and lock, but a closed
+  // lid on battery still sleeps.
   let blocker: number | undefined;
   function keepAwake(on: boolean) {
     if (on && blocker === undefined)
