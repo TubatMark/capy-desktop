@@ -197,6 +197,7 @@ pnpm clip "https://youtu.be/VIDEO_ID" --layout blur --style clean
 ## Dev
 
 ```bash
+pnpm desktop:bundle # prerequisite: worker-service tests use dist-electron/worker.cjs
 pnpm test         # unit tests (parsers, snapping, ASS builder, render helpers, settings, doctor, access, PATH)
 pnpm typecheck
 pnpm build        # production build of the web app

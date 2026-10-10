@@ -67,6 +67,7 @@ function project(d: DeliveryRecord) {
     queue().mutate((all) =>
       all.map((e) =>
         e.key === d.queueKey &&
+        !["rejected", "review"].includes(e.status) &&
         e.publishPackage?.packageHash === d.package.packageHash
           ? {
               ...e,
@@ -104,6 +105,7 @@ function gate(
   files: NonNullable<QueueEntry["publicationFiles"]>,
   clientIdentity: string,
   signal: AbortSignal,
+  mutationKind?: "thumbnail",
 ) {
   requireWorker(signal);
   if (paused())
@@ -114,6 +116,26 @@ function gate(
   if (!e)
     throw new GateDenied(
       "Publication package changed or was removed; review required",
+    );
+  const pendingThumbnail =
+    mutationKind === "thumbnail" &&
+    d.visibility === "public" &&
+    ["pending", "unknown"].includes(d.thumbnail.status) &&
+    e.status === "posted";
+  if (
+    !pendingThumbnail &&
+    (!["scheduled", "posting", "failed"].includes(e.status) ||
+      e.slotAt === undefined)
+  )
+    throw new GateDenied(
+      "Publication authorization is no longer executable; review required",
+    );
+  if (
+    d.package.deliveryOptions.mode === "scheduled" &&
+    d.package.deliveryOptions.publishAt <= Date.now() + 60000
+  )
+    throw new GateDenied(
+      "The approved remote publication time has expired; only status checks are allowed",
     );
   const earliest =
     (e.slotAt ?? 0) - (e.remoteSchedule?.uploadAheadMinutes ?? 0) * 60000;
@@ -258,12 +280,12 @@ async function executeDelivery(
   const resolved = e ? await resolvePublicationFiles(e) : "missing";
   const files = typeof resolved === "object" ? resolved : { file: "" };
   // Status queries can still establish prior outcomes after local media/review changes.
-  const mutationsAllowed = () => {
+  const mutationsAllowed = (kind?: "thumbnail") => {
     if (handles.destinationClientIdentity !== clientIdentity)
       throw new GateDenied(
         "Original delivery client identity is unavailable; status checks only",
       );
-    gate(readDelivery(d.id)!, files, clientIdentity, signal);
+    gate(readDelivery(d.id)!, files, clientIdentity, signal, kind);
   };
   try {
     const token = await (deps.token ?? getAccessToken)(
@@ -280,7 +302,7 @@ async function executeDelivery(
       throw new GateDenied(
         "Publishing destination changed during token acquisition",
       );
-    if (!reconcileOnly) mutationsAllowed();
+    // Status reads remain valid after revocation/deadline; each actual mutation enters the gate.
     let observed = false;
     const observe = (o: RemoteObservation) => {
       const at = Date.now();
@@ -336,8 +358,13 @@ async function executeDelivery(
                   : d.phase;
       d = updateDelivery(d.id, (x) => ({
         ...x,
-        phase,
-        state: phase === "media-accepted" ? "uploaded" : "uploading",
+        phase: p.thumbnailStatus && x.state === "public" ? x.phase : phase,
+        state:
+          p.thumbnailStatus && x.state === "public"
+            ? "public"
+            : phase === "media-accepted"
+              ? "uploaded"
+              : "uploading",
         thumbnail: p.thumbnailStatus
           ? {
               status:
@@ -370,7 +397,13 @@ async function executeDelivery(
           throw new GateDenied(
             "Reconciliation cannot perform a new remote mutation",
           );
-        mutationsAllowed();
+        mutationsAllowed(
+          url.startsWith(
+            "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?",
+          )
+            ? "thumbnail"
+            : undefined,
+        );
       }
       const response = await (deps.fetch ?? scopedFetch)(input, {
         ...init,
@@ -397,6 +430,10 @@ async function executeDelivery(
     const job = {
       file: files.file,
       thumbFile: files.thumbFile,
+      thumbnailPending:
+        d.thumbnail.status === "pending" &&
+        handles.destinationClientIdentity === clientIdentity &&
+        !handles.thumbnailStatus,
       text: d.package.text,
       thumbAt: e?.thumbAt,
       madeForKids: e?.madeForKids,
@@ -556,8 +593,11 @@ export async function tickDeliveries(signal: AbortSignal): Promise<void> {
     if (!pkg) continue;
     const d = deliveryForPackage(pkg.packageHash);
     if (d) {
+      if (["rejected", "review"].includes(e.status)) continue;
+      // Delivery is authoritative: repair a projection lost after its separate durable commit.
+      project(d);
       if (
-        d.state === "public" ||
+        (d.state === "public" && d.thumbnail.status !== "pending") ||
         (!d.nextTryAt &&
           ["needs-action", "delivery-unknown", "failed"].includes(d.state)) ||
         (d.nextTryAt && d.nextTryAt > Date.now())

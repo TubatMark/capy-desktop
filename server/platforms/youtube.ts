@@ -131,6 +131,14 @@ async function upload(
   while (offset < size) {
     const end = Math.min(size, offset + CHUNK);
     ctx.beforeMutation?.();
+    if (
+      job.deliveryOptions?.mode === "scheduled" &&
+      job.deliveryOptions.publishAt <= Date.now() + 60000
+    )
+      throw new PlatformError(
+        "The approved remote publication time has expired; status checks only",
+        false,
+      );
     ctx.checkpoint?.({
       deliveryPhase: "attempted",
       uploadOffset: String(offset),
@@ -190,7 +198,9 @@ async function thumbnail(
   if (
     !job.thumbFile ||
     ctx.reconcileOnly ||
-    (job.resume?.videoId && !job.resume.thumbnailStatus) ||
+    (job.resume?.videoId &&
+      !job.resume.thumbnailStatus &&
+      !job.thumbnailPending) ||
     ["accepted", "refused", "unknown"].includes(
       job.resume?.thumbnailStatus ?? "",
     )
@@ -207,7 +217,7 @@ async function thumbnail(
     });
     return;
   }
-  ctx.beforeMutation?.();
+  ctx.beforeMutation?.("thumbnail");
   ctx.checkpoint?.({
     thumbnailStatus: "unknown",
     thumbnailChecksum: checksum,

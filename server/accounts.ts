@@ -325,7 +325,10 @@ async function refreshExact(
         if (lease?.owner === owner)
           store.put("account-refresh", lockKey, {
             ...lease,
-            state: error instanceof OAuthError ? "done" : "uncertain",
+            state:
+              error instanceof OAuthError && error.outcome === "rejected"
+                ? "done"
+                : "uncertain",
           });
         if (
           error instanceof OAuthError &&

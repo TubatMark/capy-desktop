@@ -27,6 +27,8 @@ export class OAuthError extends Error {
     message: string,
     /** The grant or token is bad: the user has to connect again. */
     public isAuth: boolean,
+    /** Only explicit protocol refusal proves that no refresh rotation was accepted. */
+    public outcome: "rejected" | "unknown" = "unknown",
   ) {
     super(message);
   }
@@ -143,9 +145,7 @@ async function readJson(res: Response): Promise<Json> {
 /** Throw an OAuthError for an error body or a non-2xx status. */
 function check(res: Response, body: Json): Json {
   const err = body.error as
-    | string
-    | { message?: string; code?: string }
-    | undefined;
+    string | { message?: string; code?: string } | undefined;
   if (res.ok && !err) return body;
   const msg =
     typeof err === "string"
@@ -157,7 +157,15 @@ function check(res: Response, body: Json): Json {
     /invalid_grant|invalid_token|expired|revoked/i.test(
       String(msg) + JSON.stringify(err ?? ""),
     );
-  throw new OAuthError(String(msg), auth);
+  const code = typeof err === "string" ? err : err?.code;
+  const rejected =
+    res.status < 500 &&
+    (res.status === 400 || res.status === 401 || res.status === 403) &&
+    (/^(invalid_grant|invalid_client|unauthorized_client|invalid_request|unsupported_grant_type|invalid_token)$/.test(
+      String(code),
+    ) ||
+      String(code) === "190");
+  throw new OAuthError(String(msg), auth, rejected ? "rejected" : "unknown");
 }
 
 const form = (params: Record<string, string>) => ({
@@ -236,7 +244,8 @@ export async function refreshTokens(
   f: typeof fetch = fetch,
 ): Promise<TokenSet> {
   if (p === "instagram") return metaLongLived(t.accessToken, c, f);
-  if (!t.refreshToken) throw new OAuthError("No refresh token stored", true);
+  if (!t.refreshToken)
+    throw new OAuthError("No refresh token stored", true, "rejected");
   if (p === "youtube") {
     const res = await f(
       "https://oauth2.googleapis.com/token",

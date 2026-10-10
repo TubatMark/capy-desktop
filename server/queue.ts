@@ -1,4 +1,8 @@
-import { deliveryForPackage, deliveryProjection } from "./delivery-store";
+import {
+  deliveryForPackage,
+  deliveryProjection,
+  updateDelivery,
+} from "./delivery-store";
 import { queueGroup } from "../lib/queue-source";
 import { legacyState, mutateLegacy } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
@@ -263,7 +267,17 @@ export const reject = (entries: QueueEntry[], key: string, now: Date) =>
     key,
     (e) => (
       assertDeliveryMutable(e),
-      note({ ...e, status: "rejected", slotAt: undefined }, "Rejected", now)
+      note(
+        {
+          ...e,
+          status: "rejected",
+          slotAt: undefined,
+          nextTryAt: undefined,
+          publicationDecision: undefined,
+        },
+        "Rejected",
+        now,
+      )
     ),
   );
 
@@ -619,7 +633,35 @@ export function queue() {
   return {
     list: () => load(),
     mutate(fn: (e: QueueEntry[]) => QueueEntry[]): QueueEntry[] {
-      return mutateLegacy("queue", emptyQueue, validQueue, fn);
+      return mutateLegacy("queue", emptyQueue, validQueue, (all) => {
+        const next = fn(all);
+        // Revoke pre-intent delivery retries in the same transaction as the local decision.
+        for (const old of all) {
+          const after = next.find((e) => e.key === old.key);
+          if (
+            old.publishPackage &&
+            (!after ||
+              after.status === "rejected" ||
+              after.status === "review") &&
+            !deliveryMutationReason(old)
+          ) {
+            const d = deliveryForPackage(old.publishPackage.packageHash);
+            if (
+              d &&
+              (d.nextTryAt !== undefined ||
+                d.reason !== "Publication authorization revoked")
+            )
+              updateDelivery(d.id, (x) => ({
+                ...x,
+                state: "needs-action",
+                nextTryAt: undefined,
+                retryClass: undefined,
+                reason: "Publication authorization revoked",
+              }));
+          }
+        }
+        return next;
+      });
     },
   };
 }

@@ -277,6 +277,24 @@ async function follow(
             note: "TikTok reports completion, but public visibility is not confirmed. Check the post in TikTok.",
           };
     }
+    if (st === "PROCESSING_UPLOAD" && (ctx.singlePoll || ctx.reconcileOnly)) {
+      const offset = Number(s.uploaded_bytes);
+      if (!Number.isSafeInteger(offset) || offset < 0)
+        throw new DeliveryUnknownError(
+          "TikTok did not confirm a recoverable upload offset",
+        );
+      ctx.checkpoint?.({ confirmedUploadOffset: String(offset) });
+      ctx.observe?.({
+        state: "uploading",
+        visibility: "unknown",
+        remoteStatus: st,
+      });
+      return {
+        kind: "needs_action",
+        id: publishId,
+        note: "TikTok upload is incomplete; the saved session will resume after current checks",
+      };
+    }
     ctx.observe?.({
       state: "processing",
       visibility: "unknown",

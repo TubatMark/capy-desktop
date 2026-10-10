@@ -9,6 +9,8 @@ export interface PostJob {
   file: string;
   /** The rendered thumbnail (.jpg next to the mp4). */
   thumbFile?: string;
+  /** Durable new delivery proves attachment has never reached intent (not legacy progress). */
+  thumbnailPending?: boolean;
   /** Seconds into the clip for the cover frame. */
   thumbAt?: number;
   text: PostText;
@@ -49,7 +51,7 @@ export interface RemoteObservation {
   publishedAt?: number;
 }
 export interface ClientCtx {
-  beforeMutation?: () => void;
+  beforeMutation?: (kind?: "thumbnail") => void;
   observe?: (observation: RemoteObservation) => void;
   /** Production returns after one status request; durable worker polls later. */
   singlePoll?: boolean;

@@ -270,3 +270,28 @@ it("purges destination metrics on principal replacement but retains them on norm
       ?.value.generation,
   ).toBeGreaterThan(0);
 });
+
+it("a refresh accepted before a server error remains uncertain and is never replayed", async () => {
+  saveAccount("youtube", {
+    clientId: "client",
+    clientSecret: "secret",
+    account: { id: "fixture-account", name: "Fixture" },
+    tokens: {
+      accessToken: "expired",
+      refreshToken: "single-use",
+      expiresAt: 0,
+    },
+  });
+  let accepted = 0;
+  const endpoint = (async () => {
+    accepted++;
+    return Response.json({ error: "internal_error" }, { status: 500 });
+  }) as typeof fetch;
+  await expect(
+    getAccessToken("youtube", endpoint, "fixture-account"),
+  ).rejects.toThrow();
+  await expect(
+    getAccessToken("youtube", endpoint, "fixture-account"),
+  ).rejects.toThrow(/uncertain/);
+  expect(accepted).toBe(1);
+});
