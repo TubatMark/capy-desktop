@@ -1,3 +1,5 @@
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { startWorkerService, type RunningWorker } from "./worker-service";
 import {
   app,
@@ -35,7 +37,7 @@ if (!app.requestSingleInstanceLock()) {
     dialog.showErrorBox(title, `${message}${detail}`);
   }
 
-  function createWindow(): BrowserWindow {
+  function createWindow(hidden = false): BrowserWindow {
     const state = loadWindowState(userData);
     const w = new BrowserWindow({
       ...state,
@@ -66,7 +68,7 @@ if (!app.requestSingleInstanceLock()) {
       event.preventDefault();
       void shell.openExternal(url);
     });
-    w.once("ready-to-show", () => w.show());
+    w.once("ready-to-show", () => !hidden && w.show());
     w.on("closed", () => {
       if (win === w) win = undefined;
     });
@@ -80,6 +82,7 @@ if (!app.requestSingleInstanceLock()) {
     const w = win ?? createWindow();
     if (server && (fresh || page)) void w.loadURL(server.url + (page ?? ""));
     if (w.isMinimized()) w.restore();
+    if (!w.isVisible()) w.show();
     w.focus();
   }
 
@@ -95,7 +98,17 @@ if (!app.requestSingleInstanceLock()) {
     );
 
     // Open the window first so the app feels alive while the server boots; the page loads once it is ready.
-    const w = createWindow();
+    // Start with the Mac (hidden in the menu bar) so watching and posting survive restarts. Registered once:
+    // if the user removes capy from Login Items in System Settings, that choice stands.
+    const marker = path.join(userData, "login-item.json");
+    if (app.isPackaged && !existsSync(marker)) {
+      app.setLoginItemSettings({ openAtLogin: true });
+      writeFileSync(marker, JSON.stringify({ registeredAt: Date.now() }));
+    }
+    const atLogin =
+      process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin;
+    if (atLogin) app.dock?.hide();
+    const w = createWindow(atLogin);
 
     try {
       worker = startWorkerService({
