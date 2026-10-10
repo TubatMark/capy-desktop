@@ -26,7 +26,11 @@ export function chunking(size: number) {
 /** Send a clip to the TikTok inbox (works before the app audit) or post it directly. */
 export async function postTikTok(job: PostJob, ctx: ClientCtx & { mode: "inbox" | "direct"; username?: string }): Promise<PostOutcome> {
   // an earlier attempt already sent the file: only follow its status (never send it twice)
+  const bound = job.deliveryOptions;
+  if (bound && (bound.mode !== ctx.mode || (bound.mode !== "inbox" && bound.mode !== "direct"))) throw new PlatformError("TikTok delivery mode differs from approval", false);
   const resumed = job.resume?.publishId;
+  if (resumed && bound?.mode === "direct" && !["PUBLIC_TO_EVERYONE", "SELF_ONLY"].includes(job.resume?.privacy ?? "")) throw new PlatformError("TikTok resumed privacy is uncertain or outside approval", false);
+  if (resumed && bound?.mode === "inbox" && job.resume?.privacy) throw new PlatformError("TikTok resumed action differs from assisted inbox approval", false);
   const { publishId, privacy } = resumed ? { publishId: resumed, privacy: job.resume?.privacy ?? "" } : await send(job, ctx);
   return follow(publishId, privacy, ctx);
 }
@@ -40,7 +44,9 @@ async function send(job: PostJob, ctx: ClientCtx & { mode: "inbox" | "direct" })
   if (ctx.mode === "direct") {
     const info = await api(ctx, "/post/publish/creator_info/query/", {});
     const opts = (info.privacy_level_options as string[] | undefined) ?? [];
-    privacy = opts.includes("PUBLIC_TO_EVERYONE") ? "PUBLIC_TO_EVERYONE" : (opts[0] ?? "SELF_ONLY");
+    // Creator capabilities cannot silently strengthen or substitute the approved visibility policy.
+    privacy = opts.includes("PUBLIC_TO_EVERYONE") ? "PUBLIC_TO_EVERYONE" : opts.includes("SELF_ONLY") ? "SELF_ONLY" : "";
+    if (!privacy) throw new PlatformError("TikTok offers no privacy allowed by the approved policy", false);
     init = await api(ctx, "/post/publish/video/init/", {
       post_info: {
         title: job.text.caption ?? "",

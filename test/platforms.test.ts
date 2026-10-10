@@ -206,3 +206,22 @@ describe("youtube: made for kids", () => {
     expect(JSON.parse(String(calls[0]!.body)).status.selfDeclaredMadeForKids).toBe(true);
   });
 });
+
+describe("approved TikTok visibility policy", () => {
+  it("bound assisted inbox cannot dispatch as direct", async () => {
+    const {f,calls}=stub([]);
+    await expect(postTikTok({...job,deliveryOptions:{mode:"inbox",privacyPolicy:"assisted-inbox"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("delivery mode differs");
+    expect(calls).toHaveLength(0);
+  });
+  it("unapproved provider privacy never initializes an upload", async () => {
+    const {f,calls}=stub([json({data:{privacy_level_options:["MUTUAL_FOLLOW_FRIENDS"]},error:{code:"ok"}})]);
+    await expect(postTikTok({...job,deliveryOptions:{mode:"direct",privacyPolicy:"public-or-self-only"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("no privacy allowed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain("creator_info/query");
+  });
+  it("unknown resumed privacy cannot exceed approved policy",async()=>{
+    const {f,calls}=stub([]);
+    await expect(postTikTok({...job,deliveryOptions:{mode:"direct",privacyPolicy:"public-or-self-only"},resume:{publishId:"prior",privacy:"MUTUAL_FOLLOW_FRIENDS"}}, {...ctx(f),mode:"direct"})).rejects.toThrow("outside approval");
+    expect(calls).toHaveLength(0);
+  });
+});

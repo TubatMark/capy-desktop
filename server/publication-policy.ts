@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { PublishPackageSchema, evaluatePublication, type PublishPackage, type PublishPackageInput, type PublicationContext } from "../lib/publication";
+import { PublishPackageSchema, evaluatePublication, type PublishPackage, type PublishPackageInput, type PublicationContext, type PublicationDeliveryOptions } from "../lib/publication";
 import type { QueueEntry, Platform } from "../lib/types";
 import { loadAccounts } from "./accounts";
 export { evaluatePublication } from "../lib/publication";
-export const PUBLICATION_POLICY_VERSION = "publication-v1";
+export const PUBLICATION_POLICY_VERSION = "publication-v2";
 /** Stable manifest encoding ignores object key order; array order remains meaningful. */
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -23,11 +23,18 @@ export function connectedAccountId(platform: Platform): string | undefined {
   if (!a.tokens?.accessToken || a.needsReconnect) return undefined;
   return (platform === "instagram" ? a.igUserId : a.account?.id) || undefined;
 }
+/** Fixed approved visibility policy: inbox stays assisted; direct may only be public or self-only. */
+export function deliveryOptions(platform: Platform): PublicationDeliveryOptions {
+  if (platform !== "tiktok") return {mode:"public",privacyPolicy:"public"};
+  return loadAccounts().tiktok.mode === "direct"
+    ? {mode:"direct",privacyPolicy:"public-or-self-only"}
+    : {mode:"inbox",privacyPolicy:"assisted-inbox"};
+}
 export const mediaOptions = (e: QueueEntry) => hashManifest({fp:e.fp,thumbAt:e.thumbAt,madeForKids:e.madeForKids});
 export function publicationContext(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)): PublicationContext {
   const pkg = e.publishPackage;
   const { packageHash: _hash, ...snapshot } = pkg ?? {};
-  return {artifactHash:hashFile(files?.file),textHash:hashManifest(e.text),thumbnailHash:hashFile(files?.thumbFile),thumbnailRevision:files?.thumbFile ? hashFile(files.thumbFile) : undefined,mediaOptionsHash:mediaOptions(e),connectedAccountId:accountId,platform:e.platform,review:e.aiReview,reviewHash:hashManifest(e.aiReview),packageReviewHash:hashManifest(pkg?.review),policyVersion:PUBLICATION_POLICY_VERSION,approval:e.publicationDecision,packageHash:packageDigest(snapshot)};
+  return {deliveryOptions:deliveryOptions(e.platform),artifactHash:hashFile(files?.file),textHash:hashManifest(e.text),thumbnailHash:hashFile(files?.thumbFile),thumbnailRevision:files?.thumbFile ? hashFile(files.thumbFile) : undefined,mediaOptionsHash:mediaOptions(e),connectedAccountId:accountId,platform:e.platform,review:e.aiReview,reviewHash:hashManifest(e.aiReview),packageReviewHash:hashManifest(pkg?.review),policyVersion:PUBLICATION_POLICY_VERSION,approval:e.publicationDecision,packageHash:packageDigest(snapshot)};
 }
 export function eligibility(e: QueueEntry, files = e.publicationFiles, accountId = connectedAccountId(e.platform)) { return evaluatePublication(e.publishPackage, publicationContext(e,files,accountId)); }
 /** A fresh explicit human decision can adopt legacy media only after resolving and hashing it. */
@@ -36,6 +43,6 @@ export function decide(e: QueueEntry, override: boolean, now: Date): QueueEntry 
   const accountId = connectedAccountId(e.platform);
   if (!checksum || !accountId || (e.publicationFiles?.thumbFile && !hashFile(e.publicationFiles.thumbFile))) return e;
   const thumbnailHash = hashFile(e.publicationFiles?.thumbFile);
-  const pkg = buildPublishPackage({id:`${e.key}:${now.getTime()}`,artifact:{id:e.key,checksum},text:e.text,textHash:hashManifest(e.text),thumbnail:thumbnailHash ? {revision:thumbnailHash,checksum:thumbnailHash} : undefined,platform:e.platform,accountId,review:e.aiReview,policyVersion:PUBLICATION_POLICY_VERSION,mediaOptionsHash:mediaOptions(e)});
+  const pkg = buildPublishPackage({deliveryOptions:deliveryOptions(e.platform),id:`${e.key}:${now.getTime()}`,artifact:{id:e.key,checksum},text:e.text,textHash:hashManifest(e.text),thumbnail:thumbnailHash ? {revision:thumbnailHash,checksum:thumbnailHash} : undefined,platform:e.platform,accountId,review:e.aiReview,policyVersion:PUBLICATION_POLICY_VERSION,mediaOptionsHash:mediaOptions(e)});
   return {...e,publishPackage:pkg,publicationDecision:{kind:override ? "human_override" : "human",packageHash:pkg.packageHash,at:now.getTime()}};
 }

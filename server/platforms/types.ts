@@ -1,7 +1,10 @@
+import type { PublicationDeliveryOptions } from "../../lib/publication";
 import type { PostText } from "../../lib/types";
 
 /** What a platform client needs to post one clip. */
 export interface PostJob {
+  /** Immutable delivery mode/visibility authorized by the publication gate. */
+  deliveryOptions?: PublicationDeliveryOptions;
   file: string;
   /** The rendered thumbnail (.jpg next to the mp4). */
   thumbFile?: string;

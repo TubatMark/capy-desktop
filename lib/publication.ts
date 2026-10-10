@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { ContentReview, Platform, PostText } from "./types";
 
 /** Serializable publication snapshots; hashing and filesystem access live on the server. */
+export type PublicationDeliveryOptions =
+  | { mode: "public"; privacyPolicy: "public" }
+  | { mode: "inbox"; privacyPolicy: "assisted-inbox" }
+  | { mode: "direct"; privacyPolicy: "public-or-self-only" };
+
 export interface PublishPackageInput {
   id: string;
   artifact: { id: string; checksum: string; projectId?: string; revision?: number };
@@ -13,10 +18,12 @@ export interface PublishPackageInput {
   review?: ContentReview;
   policyVersion: string;
   mediaOptionsHash: string;
+  deliveryOptions: PublicationDeliveryOptions;
 }
 export interface PublishPackage extends PublishPackageInput { packageHash: string }
 export interface PublicationDecision { kind: "human" | "human_override"; packageHash: string; at: number }
 export interface PublicationContext {
+  deliveryOptions: PublicationDeliveryOptions;
   artifactHash?: string;
   textHash: string;
   thumbnailHash?: string;
@@ -33,7 +40,21 @@ export interface PublicationContext {
   packageHash: string;
 }
 /** Persisted snapshots are untrusted input; legacy/malformed records never authorize a side effect. */
+export const PublicationDecisionSchema = z.strictObject({
+  kind: z.enum(["human", "human_override"]),
+  packageHash: z.string().regex(/^[a-f0-9]{64}$/),
+  at: z.number().finite().nonnegative(),
+});
+export const AutomaticPublicationPolicySchema = z.strictObject({
+  enabled:z.boolean(),policyVersion:z.string().min(1),accountId:z.string().min(1),
+});
+export const PublicationDeliveryOptionsSchema = z.discriminatedUnion("mode", [
+  z.strictObject({mode:z.literal("public"),privacyPolicy:z.literal("public")}),
+  z.strictObject({mode:z.literal("inbox"),privacyPolicy:z.literal("assisted-inbox")}),
+  z.strictObject({mode:z.literal("direct"),privacyPolicy:z.literal("public-or-self-only")}),
+]);
 export const PublishPackageSchema = z.strictObject({
+  deliveryOptions:PublicationDeliveryOptionsSchema,
   id:z.string().min(1),
   artifact:z.strictObject({id:z.string().min(1),checksum:z.string().regex(/^[a-f0-9]{64}$/),projectId:z.string().optional(),revision:z.number().int().nonnegative().optional()}),
   text:z.strictObject({title:z.string().optional(),description:z.string().optional(),tags:z.array(z.string()).optional(),caption:z.string().optional()}),
@@ -52,16 +73,21 @@ export function evaluatePublication(pkg: PublishPackage | undefined, c: Publicat
   else if (pkg.artifact.checksum !== c.artifactHash) reasons.push("Media changed; new decision required");
   if (pkg.textHash !== c.textHash) reasons.push("Posting text changed");
   if (pkg.thumbnail?.checksum !== c.thumbnailHash || pkg.thumbnail?.revision !== c.thumbnailRevision) reasons.push("Thumbnail changed or missing");
+  const options = PublicationDeliveryOptionsSchema.parse(pkg.deliveryOptions);
+  if ((pkg.platform === "tiktok") === (options.mode === "public")) reasons.push("Invalid destination delivery mode");
+  if (options.mode !== c.deliveryOptions.mode || options.privacyPolicy !== c.deliveryOptions.privacyPolicy) reasons.push("Destination delivery options changed");
   if (pkg.mediaOptionsHash !== c.mediaOptionsHash) reasons.push("Media options changed");
   if (!pkg.accountId || !c.connectedAccountId) reasons.push("Connected destination identity missing");
   else if (pkg.accountId !== c.connectedAccountId || pkg.platform !== c.platform) reasons.push("Destination account changed");
   if (pkg.policyVersion !== c.policyVersion) reasons.push("Publication policy changed");
   if (pkg.packageHash !== c.packageHash) reasons.push("Publication snapshot changed");
   if (c.reviewHash !== c.packageReviewHash) reasons.push("Review changed or stale");
-  const human = c.approval && c.approval.packageHash === pkg.packageHash;
-  const automatic = c.automaticPolicy?.enabled && c.automaticPolicy.policyVersion === pkg.policyVersion && c.automaticPolicy.accountId === pkg.accountId;
+  const decision = PublicationDecisionSchema.safeParse(c.approval);
+  const human = decision.success && decision.data.packageHash === pkg.packageHash;
+  const policy = AutomaticPublicationPolicySchema.safeParse(c.automaticPolicy);
+  const automatic = policy.success && policy.data.enabled === true && policy.data.policyVersion === pkg.policyVersion && policy.data.accountId === pkg.accountId;
   if (!human && !automatic) reasons.push("Publication decision missing or stale");
-  if (c.review?.verdict === "block" && !(human && c.approval?.kind === "human_override")) reasons.push("Content review blocked publication");
+  if (c.review?.verdict === "block" && !(human && decision.success && decision.data.kind === "human_override")) reasons.push("Content review blocked publication");
   if (!human && c.review?.verdict !== "ok") reasons.push("Automatic publication requires a successful review");
   return {allowed:reasons.length===0,reasons};
 }

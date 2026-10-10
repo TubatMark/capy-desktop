@@ -80,7 +80,9 @@ function defaultDeps(): PosterDeps {
         if (!a.igUserId) throw new AuthError("Pick the Instagram account to post as in Settings → Accounts");
         return postInstagram(job, { ...ctx, igUserId: a.igUserId });
       }
-      return postTikTok(job, { ...ctx, mode: a.mode ?? "inbox", username: (a.account as { username?: string } | undefined)?.username });
+      const mode = job.deliveryOptions?.mode;
+      if (mode !== "inbox" && mode !== "direct") throw new PlatformError("Missing approved TikTok delivery mode", false);
+      return postTikTok(job, { ...ctx, mode, username: (a.account as { username?: string } | undefined)?.username });
     },
   };
 }
@@ -136,7 +138,7 @@ export async function tick(d: PosterDeps = defaultDeps()): Promise<void> {
           if (!current || current.status !== "posting") return;
           const result = eligibility(current, f);
           if (!result.allowed) return void stop(result.reasons.join("; "));
-          r = { outcome: await d.post(e, { file: f.file, thumbFile: f.thumbFile, thumbAt: e.thumbAt, text: e.text, resume: e.progress, madeForKids: e.madeForKids }, token, checkpoint) };
+          r = { outcome: await d.post(current, { file: f.file, thumbFile: f.thumbFile, thumbAt: current.thumbAt, text: current.publishPackage!.text, resume: current.progress, madeForKids: current.madeForKids, deliveryOptions: current.publishPackage!.deliveryOptions }, token, checkpoint) };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (err instanceof AuthError) r = { error: { message, retryable: false, auth: true } };

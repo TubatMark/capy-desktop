@@ -197,3 +197,27 @@ describe("last upload gate",()=>{
     const d=deps();await tick(d);expect(d.posted).toEqual([]);expect(get("J:1:youtube").error).toContain("Missing publication revision");
   });
 });
+
+it("inbox-to-direct settings mutation prevents adapter calls until fresh decision",async()=>{
+  seed([{n:1,platform:"tiktok",slotAt:now.getTime()}]);
+  const {saveAccount}=await import("../server/accounts");saveAccount("tiktok",{mode:"direct"});
+  const d=deps();await tick(d);expect(d.posted).toEqual([]);
+  queue().mutate(all=>all.map(e=>({...decide(e,false,now),status:"scheduled",slotAt:now.getTime()})));
+  await tick(d);expect(d.posted).toEqual(["J:1:tiktok"]);
+});
+
+it("executes the freshly checked snapshot rather than the pre-token entry",async()=>{
+  seed([{n:1,platform:"tiktok",slotAt:now.getTime()}]);
+  let executedTitle:string|undefined;
+  let executedProgress:string|undefined;
+  let executedMode:string|undefined;
+  const d=deps({token:async()=>{
+    queue().mutate(all=>all.map(e=>({...decide({...e,text:{title:"Fresh checked title"}},false,now),progress:{marker:"latest"}})));
+    return "T";
+  },post:async(e,job)=>{
+    executedTitle=job.text.title;executedProgress=job.resume?.marker;executedMode=job.deliveryOptions?.mode;
+    expect(e.text.title).toBe("Fresh checked title");
+    return {kind:"posted",id:"fixture"};
+  }});
+  await tick(d);expect(executedTitle).toBe("Fresh checked title");expect(executedProgress).toBe("latest");expect(executedMode).toBe("inbox");
+});

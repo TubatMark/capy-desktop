@@ -74,7 +74,7 @@ describe("immutable package decisions",()=>{
   it("canonical package hashes ignore key order and random identity",()=>{
     const e=entry();const {packageHash:_hash,...input}=e.publishPackage!;
     expect(buildPublishPackage({...input,id:"another-id",text:{...input.text}}).packageHash).toBe(e.publishPackage!.packageHash);
-    const c=publicationContext(e);c.policyVersion="publication-v2";expect(evaluatePublication(e.publishPackage,c).allowed).toBe(false);
+    const c=publicationContext(e);c.policyVersion="different-policy";expect(evaluatePublication(e.publishPackage,c).allowed).toBe(false);
     const stale=publicationContext(e);stale.reviewHash="stale";expect(evaluatePublication(e.publishPackage,stale).allowed).toBe(false);
   });
 });
@@ -82,4 +82,17 @@ describe("immutable package decisions",()=>{
 it("malformed persisted packages cannot authorize publication",()=>{
   const e=entry();
   expect(eligibility({...e,publishPackage:{...e.publishPackage!,artifact:{id:"broken",checksum:"not-a-hash"}}}).allowed).toBe(false);
+});
+
+it("malformed persisted decisions never grant human authority",()=>{
+  const e=entry();
+  for(const decision of [{packageHash:e.publishPackage!.packageHash,at:1},{kind:"unknown",packageHash:e.publishPackage!.packageHash,at:1},{kind:"human",packageHash:e.publishPackage!.packageHash},{kind:"human",packageHash:e.publishPackage!.packageHash,at:NaN},{kind:"human_override",packageHash:e.publishPackage!.packageHash,at:Infinity}]) {
+    expect(eligibility({...e,publicationDecision:decision as QueueEntry["publicationDecision"]}).allowed).toBe(false);
+  }
+});
+it("changing TikTok assisted inbox to direct requires a new decision",()=>{
+  const raw=upsertForRender([],{publicationFiles:files,jobId:"TT",n:1,start:0,end:30,clipTitle:"TikTok"},["tiktok"],new Date())[0]!;
+  const e=decide(raw,false,new Date());expect(eligibility(e).allowed).toBe(true);
+  saveAccount("tiktok",{mode:"direct"});expect(eligibility(e).allowed).toBe(false);
+  expect(eligibility(decide(e,false,new Date())).allowed).toBe(true);
 });
