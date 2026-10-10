@@ -110,3 +110,71 @@ describe("nondestructive edits", () => {
     ).toBe(2);
   });
 });
+
+describe("exact source metadata validation", () => {
+  it.each([
+    null,
+    [],
+    "0",
+    {},
+    { numerator: "0", denominator: "0" },
+    { numerator: "0", denominator: "-1" },
+    { numerator: "-1", denominator: "3" },
+    { numerator: "0.5", denominator: "3" },
+    { numerator: 0, denominator: "3" },
+    { numerator: "1".repeat(41), denominator: "3" },
+    { numerator: "1", denominator: "1".repeat(41) },
+    { numerator: "1", denominator: "3", extra: true },
+    { numerator: "1", denominator: "1" },
+  ].map((phase) => [phase]))(
+    "rejects malformed or noncanonical non-loop phase %j",
+    (phase) => {
+      const doc = fixture();
+      Object.assign(doc.items[0]!, { sourcePhaseUs: phase });
+      expect(() => validateProject(doc)).toThrow("Invalid source phase");
+    },
+  );
+  it.each([NaN, Infinity, -1, 1000000.5, Number.MAX_SAFE_INTEGER + 1, 10999999])(
+    "rejects invalid retained extent %j",
+    (extent) => {
+      const doc = fixture();
+      doc.items[0]!.sourceAvailableOutUs = extent;
+      expect(() => validateProject(doc)).toThrow("Invalid retained source extent");
+    },
+  );
+  it("rejects source metadata without an asset range", () => {
+    for (const metadata of [
+      { sourcePhaseUs: { numerator: "1", denominator: "3" } },
+      { sourceAvailableOutUs: 1000000 },
+    ]) {
+      const doc = fixture();
+      const item = doc.items[0]!;
+      delete item.assetId;
+      item.text = { value: "Title", fontSize: 40, color: "#ffffff" };
+      Object.assign(item, metadata);
+      expect(() => validateProject(doc)).toThrow();
+    }
+  });
+  it("bounds combined loop phase and validates linked source metadata", () => {
+    const doc = fixture();
+    doc.items[0]!.loop = true;
+    doc.items[0]!.sourcePhaseUs = { numerator: "9999999", denominator: "1" };
+    doc.items[0]!.loopOffsetUs = 1;
+    expect(() => validateProject(doc)).toThrow("Invalid source phase");
+    delete doc.items[0]!.loopOffsetUs;
+    validateProject(doc);
+    const detached = applyEdit(doc, {
+      type: "detach-audio",
+      itemId: "a",
+      newId: "sound",
+      trackId: "sound-track",
+    }).document;
+    const sound = detached.items.find((i) => i.id === "sound")!;
+    sound.sourcePhaseUs = { numerator: "0", denominator: "1" };
+    expect(() => validateProject(detached)).toThrow("Invalid detached audio link");
+    sound.sourcePhaseUs = { numerator: "19999998", denominator: "2" };
+    validateProject(detached);
+    sound.sourceAvailableOutUs = 12000000;
+    expect(() => validateProject(detached)).toThrow("Invalid detached audio link");
+  });
+});

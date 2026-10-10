@@ -7,7 +7,13 @@ import {
   createProject,
   saveProject,
   projectHistory,
+  getProject,
 } from "../server/studio/projects";
+import { applyEdit } from "../lib/studio/operations";
+import { sourceFrameTimeUs } from "../lib/studio/audio";
+import { buildAudioPlan, audioSourceAtTime } from "../src/studio/audio-plan";
+import { frameTimeUs } from "../lib/studio/time";
+import type { AssetRef } from "../lib/studio/types";
 import { importAsset, relinkAsset } from "../server/studio/assets";
 let dir: string;
 let store: Store;
@@ -273,4 +279,67 @@ it("seeds existing local transcript words in asset microseconds without changing
     doc.sourceWords?.[0]?.words.find((w) => w.text === "mapped"),
   ).toMatchObject({ startUs: 2000000, endUs: 3000000 });
   expect(store.get("legacy-jobs", job.id)?.value).toEqual(job);
+});
+
+it("rejects malformed timing payloads before persistence and reopens exact generated phases", async () => {
+  const file = path.join(dir, "timing.wav");
+  await writeFile(file, "disposable sound bytes");
+  const deps = { store, root: dir, enqueue: async () => ({ id: "probe" }) };
+  const imported = await importAsset({ path: file, kind: "audio" }, deps);
+  const asset: AssetRef = { ...imported, status: "ready", durationUs: 2000000 };
+  store.put("assets", asset.id, asset);
+  const doc = await createProject({ sources: [{ assetId: asset.id }] }, deps);
+  const original = store.get("projects", doc.id);
+  const history = projectHistory(doc.id, deps);
+  const invalid = [
+    { sourcePhaseUs: { numerator: "0", denominator: "0" } },
+    { sourcePhaseUs: { numerator: "1", denominator: "-3" } },
+    { sourcePhaseUs: null },
+    { sourcePhaseUs: { numerator: "0.5", denominator: "1" } },
+    { sourcePhaseUs: { numerator: "1", denominator: "1" } },
+    { sourcePhaseUs: { numerator: "1", denominator: "1".repeat(41) } },
+    { sourceAvailableOutUs: 1000000.5 },
+    { sourceAvailableOutUs: -1 },
+    { sourceAvailableOutUs: Number.MAX_SAFE_INTEGER + 1 },
+    { sourceAvailableOutUs: 1999999 },
+    { sourceAvailableOutUs: 3000000 },
+    { loop: true, sourcePhaseUs: { numerator: "2000000", denominator: "1" } },
+  ];
+  for (const metadata of invalid) {
+    const malformed = structuredClone(doc);
+    Object.assign(malformed.items[0]!, metadata);
+    await expect(saveProject(malformed, doc.revision, deps)).rejects.toThrow();
+    expect(store.get("projects", doc.id)).toEqual(original);
+    expect(projectHistory(doc.id, deps)).toEqual(history);
+  }
+  const id = doc.items[0]!.id;
+  const trimmed = applyEdit(doc, {
+    type: "trim", itemId: id, inFrame: 1, outFrame: 30,
+  }).document;
+  expect(trimmed.items[0]!.sourcePhaseUs).toEqual({
+    numerator: "1", denominator: "3",
+  });
+  const saved = await saveProject(trimmed, doc.revision, deps);
+  store.close();
+  store = new Store(path.join(dir, "db.sqlite"));
+  const reopenedDeps = { ...deps, store };
+  const reopened = getProject(doc.id, reopenedDeps)!;
+  expect(reopened).toEqual(saved);
+  expect(sourceFrameTimeUs(reopened.items[0]!, 0, reopened)).toEqual({
+    numerator: "100000", denominator: "3",
+  });
+  const split = applyEdit(reopened, {
+    type: "split", itemId: id, frame: 1, newId: "split-sound",
+  }).document;
+  const right = split.items.find((i) => i.id === "split-sound")!;
+  expect(right.sourcePhaseUs).toEqual({ numerator: "2", denominator: "3" });
+  const secondSave = await saveProject(split, reopened.revision, reopenedDeps);
+  const plan = buildAudioPlan(secondSave, [asset]);
+  expect(
+    audioSourceAtTime(
+      plan.clips.find((c) => c.itemId === right.id)!,
+      frameTimeUs(right.startFrame, secondSave),
+    ),
+  ).toEqual(sourceFrameTimeUs(right, right.startFrame, secondSave));
+  expect(await readFile(file, "utf8")).toBe("disposable sound bytes");
 });

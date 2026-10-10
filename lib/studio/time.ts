@@ -64,12 +64,20 @@ export const ceilUs = (value: ExactUs) =>
   );
 export const minimumUs = (a: ExactUs, b: ExactUs) =>
   compareUs(a, b) <= 0 ? a : b;
-export function validExactUs(value: ExactUs): boolean {
+export function validExactUs(value: unknown): value is ExactUs {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fields = Object.keys(value);
+  if (
+    fields.length !== 2 ||
+    !fields.includes("numerator") ||
+    !fields.includes("denominator")
+  )
+    return false;
+  const exact = value as ExactUs;
   return (
-    !!value &&
-    typeof value.numerator === "string" &&
-    typeof value.denominator === "string" &&
-    /^\d{1,40}$/.test(value.numerator) &&
-    /^[1-9]\d{0,39}$/.test(value.denominator)
+    typeof exact.numerator === "string" &&
+    typeof exact.denominator === "string" &&
+    /^(0|[1-9]\d{0,39})$/.test(exact.numerator) &&
+    /^[1-9]\d{0,39}$/.test(exact.denominator)
   );
 }

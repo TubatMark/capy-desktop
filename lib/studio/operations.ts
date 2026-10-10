@@ -207,6 +207,22 @@ export function validateProject(
     )
       throw Error("Invalid loop offset");
     if (
+      i.sourceAvailableOutUs !== undefined &&
+      (!i.assetId ||
+        !integer(i.sourceAvailableOutUs, 1) ||
+        i.sourceAvailableOutUs < i.sourceOutUs!)
+    )
+      throw Error("Invalid retained source extent");
+    if (i.sourcePhaseUs !== undefined) {
+      if (!i.assetId || !validExactUs(i.sourcePhaseUs))
+        throw Error("Invalid source phase");
+      // Non-loop starts store only the remainder below one microsecond.
+      // Loop starts store a phase inside their source window, including legacy offsets.
+      const limit = integerUs(i.loop ? i.sourceOutUs! - i.sourceInUs! : 1);
+      if (compareUs(sourcePhaseUs(i), limit) >= 0)
+        throw Error("Invalid source phase");
+    }
+    if (
       i.opacity !== undefined &&
       (!Number.isFinite(i.opacity) || i.opacity < 0 || i.opacity > 1)
     )
@@ -238,7 +254,10 @@ export function validateProject(
         audio.startFrame !== i.startFrame ||
         audio.durationFrames !== i.durationFrames ||
         audio.sourceInUs !== i.sourceInUs ||
-        audio.sourceOutUs !== i.sourceOutUs)
+        audio.sourceOutUs !== i.sourceOutUs ||
+        compareUs(sourcePhaseUs(audio), sourcePhaseUs(i)) !== 0 ||
+        (audio.sourceAvailableOutUs ?? audio.sourceOutUs) !==
+          (i.sourceAvailableOutUs ?? i.sourceOutUs))
     )
       throw Error("Invalid detached audio link");
     if (
