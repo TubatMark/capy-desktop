@@ -33,6 +33,7 @@ import { extractFrameCandidates } from "../src/thumbnails/frames";
 import { buildThumbnailBrief } from "../src/thumbnails/brief";
 import { creatorPolicy } from "./automation-policy";
 import { judgeThumbnails } from "./thumbnail-judge";
+import { footageCurrent } from "./thumbnail-footage";
 import { pickThumbnail, type VisionAsk } from "./thumbnail-pick";
 import {
   composeOriginalThumbnail,
@@ -352,16 +353,7 @@ export function listThumbnailFrames(
     .sort((a, b) => b.quality.score - a.quality.score);
 }
 function sourceStale(source: ThumbnailSourceRef, deps: ThumbnailDependencies) {
-  if (source.kind === "project")
-    return (
-      deps.store.get<ProjectDocument>("projects", source.projectId)
-        ?.revision !== source.revision
-    );
-  const row = deps.store.get<JobState>("legacy-jobs", source.jobId);
-  return (
-    row?.revision !== source.revision ||
-    row.value.clips.find((c) => c.n === source.clipN)?.render.status !== "done"
-  );
+  return !footageCurrent(source, deps.store);
 }
 /** The source video's ID for legacy clips; "original" designs must come from this video. */
 function sourceVideoId(source: ThumbnailSourceRef, deps: ThumbnailDependencies) {

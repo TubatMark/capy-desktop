@@ -1,4 +1,5 @@
 import { deliveryMutationReason } from "./queue";
+import { footageCurrent } from "./thumbnail-footage";
 import { clipThumbnailDesigns } from "./queue-thumbnails";
 import { randomUUID } from "node:crypto";
 import { realpath, readFile, mkdir, writeFile } from "node:fs/promises";
@@ -156,11 +157,7 @@ export async function approveThumbnail(
   };
   return deps.store.transaction(() => {
     const source = doc.sourceIdentity;
-    const currentSource =
-      source.kind === "project"
-        ? deps.store.get("projects", source.projectId)
-        : deps.store.get("legacy-jobs", source.jobId);
-    if (currentSource?.revision !== source.revision)
+    if (!footageCurrent(source, deps.store))
       throw fail("Thumbnail footage is stale", 409);
     const key = `${id}:${editRevision}`,
       prior = deps.store.get<ThumbnailReviewAudit>("thumbnail-reviews", key);
@@ -701,11 +698,7 @@ async function attachToEntry(
         : entry.jobId !== source.jobId || entry.n !== source.clipN)
     )
       throw fail("Thumbnail belongs to different source footage/revision");
-    const currentSource =
-      source.kind === "project"
-        ? deps.store.get("projects", source.projectId)
-        : deps.store.get("legacy-jobs", source.jobId);
-    if (currentSource?.revision !== source.revision)
+    if (!footageCurrent(source, deps.store))
       throw fail("Thumbnail footage is stale", 409);
     const { packageHash: _hash, ...manifest } = pkg;
     const versionId = randomUUID();

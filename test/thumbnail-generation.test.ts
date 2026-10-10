@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Store } from "../server/db";
@@ -240,7 +241,7 @@ it("failure_preserves_versions_and_budget across bounded retries and stale edits
   await f.execute(blocked);
   expect(calls).toBe(2);
   const row = f.store.get<any>("legacy-jobs", "job")!;
-  f.store.save("legacy-jobs", "job", row.value, row.revision);
+  appendFileSync(row.value.clips[0].render.file, "re-rendered");
   expect(
     listThumbnails(f.source, f.deps).every((d) => d.reviewState === "stale"),
   ).toBe(true);

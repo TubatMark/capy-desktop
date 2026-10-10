@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { Store } from "../server/db";
@@ -617,8 +618,15 @@ it("explicit background regeneration spends one fixture call and applies atomica
 it("source staleness archives the previous revision and prevents attachment without removing downloads", async () => {
   const { listStudioThumbnails } = await import("../server/thumbnail-studio");
   const f = await fixture();
-  const job = f.store.get("legacy-jobs", "job")!;
+  const job = f.store.get<any>("legacy-jobs", "job")!;
+  // saving the video job (another clip rendering, a field edit) is not staleness: this clip's footage is the same
   f.store.save("legacy-jobs", "job", job.value, job.revision);
+  expect(
+    listStudioThumbnails(f.source, f.deps).find((d) => d.id === f.design.id)
+      ?.reviewState,
+  ).not.toBe("stale");
+  // re-rendering this clip is
+  appendFileSync(job.value.clips[0].render.file, "re-rendered");
   expect(
     listStudioThumbnails(f.source, f.deps).find((d) => d.id === f.design.id)
       ?.reviewState,
@@ -666,11 +674,11 @@ it("explicit review binds immutable historical design without provider, document
   expect(
     getThumbnail(f.design.id, f.design.editRevision, f.deps).reviewState,
   ).toBe("approved");
-  const job = f.store.get("legacy-jobs", "job")!;
-  f.store.save("legacy-jobs", "job", job.value, job.revision);
+  const job = f.store.get<any>("legacy-jobs", "job")!;
+  appendFileSync(job.value.clips[0].render.file, "re-rendered");
   await expect(
     approveThumbnail(f.design.id, saved.editRevision, f.deps),
-  ).rejects.toThrow(/stale/);
+  ).rejects.toThrow(/stale|checksum changed/);
 });
 
 it("thumbnail writer refuses ambiguous and unprojected durable intent without replacing package or history", async () => {

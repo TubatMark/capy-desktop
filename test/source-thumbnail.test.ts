@@ -1,5 +1,6 @@
 import { afterAll, expect, it, vi } from "vitest";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 // OUTPUT_ROOT and the data folder resolve at import: point both at a temp folder first
@@ -436,17 +437,20 @@ it("the source video's own thumbnail becomes the first design, is attached, and 
 
 it("staleness: a frame design without frames, or an original design without its source thumbnail, is stale", () => {
   const store = runtimeStore();
+  const clipFile = path.join(OUTPUT_ROOT, "prov-clip.mp4");
+  mkdirSync(OUTPUT_ROOT, { recursive: true });
+  writeFileSync(clipFile, "rendered clip bytes");
   store.put("legacy-jobs", "prov", {
     id: "prov",
     videoId: VIDEO,
-    clips: [{ n: 1, render: { status: "done" } }],
+    clips: [{ n: 1, render: { status: "done", file: clipFile } }],
   });
   const source = {
     kind: "legacy" as const,
     jobId: "prov",
     clipN: 1,
     revision: store.get("legacy-jobs", "prov")!.revision,
-    renderChecksum: "0".repeat(64),
+    renderChecksum: createHash("sha256").update("rendered clip bytes").digest("hex"),
   };
   const design = (id: string, over: Partial<ThumbnailDesign>): ThumbnailDesign => ({
     id,

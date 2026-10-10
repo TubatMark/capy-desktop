@@ -26,6 +26,7 @@ import {
 } from "../lib/thumbnails";
 import { hashManifest } from "./publication-policy";
 import { fence } from "./worker/context";
+import { footageCurrent } from "./thumbnail-footage";
 export function planCreatorWork(input: CreatorWorkInput): WorkDecision {
   const { candidate: c, policy: p, capacity: b } = input;
   const result = (
@@ -640,17 +641,9 @@ export function getAutomationPublicationChecks(e: QueueEntry): {
         )?.value
       : undefined;
     const source = pkg.thumbnail.sourceIdentity;
-    const currentSource =
-      source?.kind === "legacy"
-        ? runtimeStore().get("legacy-jobs", source.jobId)?.revision
-        : source?.kind === "project"
-          ? runtimeStore().get<{ revision: number }>(
-              "projects",
-              source.projectId,
-            )?.value.revision
-          : undefined;
     const matches =
-      currentSource === source?.revision &&
+      !!source &&
+      footageCurrent(source, runtimeStore()) &&
       selected &&
       hashManifest(selected.sourceIdentity) === hashManifest(source) &&
       source?.renderChecksum === pkg.artifact.checksum;

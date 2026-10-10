@@ -137,7 +137,7 @@ it.each(["none", "source_frame"] as const)(
   "optional %s preserves an explicitly selected immutable design and its exact source frame at actual upload",
   async (fallback) => {
     const { e, files, p, store } = fixture(fallback);
-    store.put("legacy-jobs", e.jobId!, { clips: [] });
+    store.put("legacy-jobs", e.jobId!, { clips: [{ n: 1, render: { status: "done", file: files.file } }] });
     const sourceRow = store.get("legacy-jobs", e.jobId!)!;
     const sourceIdentity = {
       kind: "legacy" as const,
