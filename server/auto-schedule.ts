@@ -5,7 +5,7 @@ import type { QueueEntry } from "../lib/types";
 import { DEFAULT_CONTROLS } from "../lib/creator-policy";
 import { runtimeStore } from "./db/runtime";
 import { resolvePublicationFiles } from "./poster";
-import { approve, queue } from "./queue";
+import { approve, note, queue } from "./queue";
 import { effective, loadSettings } from "./settings";
 
 /**
@@ -48,6 +48,9 @@ export function similarClear(s: ClipSimilarity): boolean {
   return s.verdict.level !== "near-duplicate" && !s.opinions.some((o) => o.level === "near-duplicate");
 }
 
+const STALE_MS = 3 * 86_400_000;
+const newest = (entries: QueueEntry[]) => Math.max(...entries.map((e) => e.createdAt));
+
 const automated = (e: QueueEntry) =>
   !!e.jobId &&
   !e.source &&
@@ -63,7 +66,22 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
     if (e.status === "review" && automated(e))
       groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
   const done: string[] = [];
-  for (const [group, entries] of groups) {
+  // one post a day: the freshest clip gets the next free day; a moment older than 3 days isn't worth a slot,
+  // and leaving it waiting would hold the backlog full so no new upload gets clipped
+  const stale = [...groups].filter(([, entries]) => now.getTime() - newest(entries) >= STALE_MS);
+  if (stale.length) {
+    const keys = new Set(stale.flatMap(([, entries]) => entries.map((e) => e.key)));
+    queue().mutate((all) =>
+      all.map((x) =>
+        keys.has(x.key) && x.status === "review"
+          ? note({ ...x, status: "rejected" }, "Expired: more than 3 days old and no free day came up", now)
+          : x,
+      ),
+    );
+  }
+  const fresh = [...groups].filter(([, entries]) => now.getTime() - newest(entries) < STALE_MS);
+  fresh.sort(([, a], [, b]) => newest(b) - newest(a));
+  for (const [group, entries] of fresh) {
     const similarity = runtimeStore().get<ClipSimilarity>(SIMILARITY_STORE, group)?.value;
     if (autoScheduleBlockers(entries, similarity).length) continue;
     const prepared = await Promise.all(

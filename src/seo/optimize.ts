@@ -92,6 +92,13 @@ const Rewrite = z.object({
     ),
 });
 
+/**
+ * Shorts get ~97% of their views from the Shorts feed, not search, so the title is written for a scroller: the
+ * owner's hits all read "<Creator> <what happens, one word in CAPS> <emoji> #creator #topic #shorts".
+ */
+export const SHORT_TITLE_RULE = `
+- This is a Short: almost every view comes from the Shorts feed, so the title must make a scroller stop, and search comes second. Start with the creator's name, then what happens in plain words (e.g. "Kai Cenat eats SHEEP BALLS in Iceland 🐑 #kaicenat #iceland #shorts"). One word in CAPS for the payoff is fine. No "Keyword: description" colon style, no words like "clip", "moment" or "stream". Under 60 characters before the hashtags, then 2-3 hashtags (the creator, the topic, #shorts) at the end of the title.`;
+
 export function rewritePrompt(i: {
   kind: SeoKind;
   text: SeoText;
@@ -114,7 +121,7 @@ What it is: ${i.about.slice(0, 1500)}
 
 Rules:
 - Pick the keyword this video can honestly rank for (it must describe the video). Put it near the start of the title and in the first sentence of the description.
-- Keep the title true to the video: no promises it doesn't keep, no all caps, at most one emoji.${i.kind === "video" ? "" : "\n- Include #shorts in the hashtags."}${i.kind === "kids" ? "\n- Made for kids: no requests to subscribe, like, comment or turn on notifications; nothing aimed at children. Write for parents." : ""}${i.keep ? `\n- Keep this line in the description: ${i.keep}` : ""}`;
+- Keep the title true to the video: no promises it doesn't keep, no all caps, at most one emoji.${i.kind === "video" ? "" : "\n- Include #shorts in the hashtags."}${i.kind === "short" ? SHORT_TITLE_RULE : ""}${i.kind === "kids" ? "\n- Made for kids: no requests to subscribe, like, comment or turn on notifications; nothing aimed at children. Write for parents." : ""}${i.keep ? `\n- Keep this line in the description: ${i.keep}` : ""}`;
 }
 
 /** Put a line (e.g. "Credit: …") back into a description, above its hashtag lines. */

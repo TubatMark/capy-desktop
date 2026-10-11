@@ -109,7 +109,7 @@ export function audienceTz(id?: string) {
   return AUDIENCES.find((a) => a.id === (id ?? "us-east"))?.tz ?? "America/New_York";
 }
 
-/** Candidate posting hours per weekday (audience local); each day has three at least 5h apart. 0 = Sunday. */
+/** Candidate posting hours per weekday (audience local), best first. 0 = Sunday. */
 export const CANDIDATE_HOURS: Record<number, number[]> = {
   5: [17, 12, 22, 15, 19],
   4: [17, 12, 22, 15, 19],
@@ -119,14 +119,18 @@ export const CANDIDATE_HOURS: Record<number, number[]> = {
   2: [15, 10, 20, 19, 18],
   1: [15, 10, 20, 19, 18],
 };
-/** 1–3 Shorts a day, hours apart, is the common advice; more than ~5 risks looking like spam. */
-const GAP_MS = 5 * 3_600_000;
-export const POSTS_PER_DAY = 3;
+/**
+ * One Short a day per platform. On this channel only the first Short of a day ever reached the Shorts feed:
+ * second posts 3-5h later (and four "Post now" uploads in two minutes) got 1-13 views, from search alone.
+ * The gap keeps a late post and the next morning's apart too.
+ */
+export const GAP_MS = 20 * 3_600_000;
+export const POSTS_PER_DAY = 1;
 const PER_DAY = POSTS_PER_DAY;
 
 /**
- * Earliest good slot (at least 30 min away) where every platform has fewer than 3 posts that
- * audience-local day and none within 5h. `taken` holds scheduled, posting and recently posted entries.
+ * Earliest good slot (at least 30 min away) where every platform has fewer than POSTS_PER_DAY posts that
+ * audience-local day and none within GAP_MS; within a day the best-ranked free hour wins. `taken` holds scheduled, posting and recently posted entries.
  * With `source` (the upload a clip came from), days that already post a clip of that upload are skipped so its
  * clips spread across days; if none is free within the horizon, the plain rule applies.
  */
@@ -167,8 +171,7 @@ function allocate(
     const p = partsIn(new Date(Date.UTC(start.y, start.m - 1, start.d + off, 12)), audienceTz);
     const cands = (CANDIDATE_HOURS[p.wd] ?? [17])
       .map((h) => ({ h, at: fromZoned(p.y, p.m, p.d, h, audienceTz) }))
-      .filter(({ h, at }) => partsIn(at, audienceTz).h === h) // an hour skipped by DST doesn't exist
-      .sort((a, b) => a.at.getTime() - b.at.getTime());
+      .filter(({ h, at }) => partsIn(at, audienceTz).h === h); // an hour skipped by DST doesn't exist
     for (const { at } of cands) {
       const t = at.getTime();
       if (t < now.getTime() + 30 * 60_000) continue;
@@ -182,6 +185,12 @@ function allocate(
     }
   }
   return null;
+}
+
+/** The audience-local calendar day of an instant, as "y-m-d". */
+export function localDay(t: number, tz: string) {
+  const p = partsIn(new Date(t), tz);
+  return `${p.y}-${p.m}-${p.d}`;
 }
 
 /** UTC instant of a wall-clock time in `tz` (for the queue's "Move" picker). */

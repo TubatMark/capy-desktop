@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import {
   postNow,
   queue,
+  recentPost,
   reject,
   retry,
   deliveryMutationReason,
@@ -63,6 +64,16 @@ export async function POST(
     if (!result.allowed)
       return NextResponse.json(
         { error: result.reasons.join("; "), reasons: result.reasons },
+        { status: 409 },
+      );
+  }
+  if (action === "post-now") {
+    const recent = recentPost(queue().list(), e, new Date());
+    if (recent)
+      return NextResponse.json(
+        {
+          error: `"${recent.clipTitle}" went out less than 20 hours ago. A second Short that soon barely reaches the Shorts feed, so this one keeps its slot.`,
+        },
         { status: 409 },
       );
   }

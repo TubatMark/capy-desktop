@@ -271,7 +271,7 @@ export async function updateVideoText(
       id,
       snippet: {
         ...keep,
-        categoryId: keep.categoryId ?? "22",
+        categoryId: keep.categoryId ?? "24",
         title: t.title.slice(0, 100),
         description: t.description.slice(0, 5000),
         tags: t.tags,

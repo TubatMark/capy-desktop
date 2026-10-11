@@ -139,6 +139,9 @@ export async function renderClip(
     "-map",
     "0:a?",
     ...vcodec,
+    // Shorts play at about -14 LUFS; a quiet clip sounds weak next to the one before it in the feed
+    "-af",
+    "loudnorm=I=-14:TP=-1.5:LRA=11",
     "-c:a",
     "aac",
     "-b:a",

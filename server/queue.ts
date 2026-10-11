@@ -7,7 +7,7 @@ import { queueGroup } from "../lib/queue-source";
 import { SIMILARITY_STORE, type ClipSimilarity } from "../lib/similarity";
 import { legacyState, mutateLegacy, runtimeStore } from "./db/runtime";
 import { decide, eligibility } from "./publication-policy";
-import { allocateSlot, fmtIn } from "../lib/post-time";
+import { allocateSlot, fmtIn, GAP_MS, localDay, POSTS_PER_DAY } from "../lib/post-time";
 import type {
   ContentReview,
   Platform,
@@ -49,6 +49,8 @@ export interface ClipInfo {
 }
 
 const MIN = 60_000;
+/** Automatic scheduling fills only this many days ahead: a streamer moment goes stale fast. */
+export const AUTO_HORIZON_DAYS = 3;
 const LATE_MS = 2 * 60 * MIN;
 const BACKOFF_MIN = [2, 10, 30];
 
@@ -246,7 +248,7 @@ export function approve(
       chosen.map((e) => e.platform),
       o.audienceTz,
       o.now,
-      undefined,
+      o.automatic ? AUTO_HORIZON_DAYS : undefined,
       chosen[0]?.source ? undefined : chosen[0]?.jobId,
     );
     for (const e of chosen) {
@@ -266,7 +268,7 @@ export function approve(
               `${o.automatic ? "Scheduled automatically (every check passed)" : o.override ? "Explicit human override approved" : "Approved"} for ${fmtIn(slot, o.audienceTz)}`,
               o.now,
             )
-          : note(x, "No free slot in the next 30 days", o.now),
+          : note(x, `No free slot in the next ${o.automatic ? AUTO_HORIZON_DAYS : 30} days`, o.now),
       );
       if (slot) scheduled.push(out.find((x) => x.key === e.key)!);
     }
@@ -407,6 +409,77 @@ export const retry = (entries: QueueEntry[], key: string, now: Date) =>
       now,
     ),
   );
+
+/** A post on this platform that went out (or is going out) less than GAP_MS ago: "Post now" would land in its shadow. */
+export function recentPost(entries: QueueEntry[], e: QueueEntry, now: Date): QueueEntry | undefined {
+  return entries.find(
+    (x) =>
+      x.key !== e.key &&
+      x.platform === e.platform &&
+      (x.status === "posting" || x.status === "posted" || (x.status === "needs_action" && !!x.result?.id)) &&
+      now.getTime() - (x.slotAt ?? x.updatedAt) < GAP_MS,
+  );
+}
+
+/**
+ * Keep automatically scheduled posts to the one-a-day rule. When any of them breaks it (a backlog made under the
+ * old 3-a-day rule, or a slot squeezed next to a manual post), all of them are re-slotted, newest clip first, into
+ * the next AUTO_HORIZON_DAYS days; the rest go back to "review" and the auto-scheduler offers them again as days
+ * free up. Manual approvals, moves and remote schedules are the owner's call and stay put (but still count as taken).
+ */
+export function respace(entries: QueueEntry[], audienceTz: string, now: Date): QueueEntry[] {
+  const movable = (e: QueueEntry) =>
+    e.status === "scheduled" &&
+    !!e.autoScheduledAt &&
+    !e.remoteSchedule &&
+    e.slotAt !== undefined &&
+    !deliveryMutationReason(e) &&
+    !e.history.some((h) => h.msg === "Post now" || h.msg.startsWith("Moved to "));
+  const mine = entries.filter(movable);
+  if (!mine.length) return entries;
+  const horizon = now.getTime() + AUTO_HORIZON_DAYS * 86_400_000;
+  const breaks = mine.some((e) => {
+    const others = taken(entries, now, (x) => x.key === e.key).filter((x) => x.platform === e.platform);
+    return (
+      e.slotAt! > horizon ||
+      others.some((x) => Math.abs(x.at - e.slotAt!) < GAP_MS) ||
+      others.filter((x) => localDay(x.at, audienceTz) === localDay(e.slotAt!, audienceTz)).length >= POSTS_PER_DAY
+    );
+  });
+  const fixed = taken(entries, now, movable);
+  if (!breaks) return entries;
+  const groups = new Map<string, QueueEntry[]>();
+  for (const e of mine) groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
+  const order = [...groups.values()].sort(
+    (a, b) => Math.max(...b.map((e) => e.createdAt)) - Math.max(...a.map((e) => e.createdAt)),
+  );
+  const slots = [...fixed];
+  let out = entries;
+  for (const group of order) {
+    const slot = allocateSlot(
+      slots,
+      group.map((e) => e.platform),
+      audienceTz,
+      now,
+      AUTO_HORIZON_DAYS,
+      group[0]!.source ? undefined : group[0]!.jobId,
+    );
+    for (const e of group) {
+      if (slot) slots.push({ platform: e.platform, at: slot.getTime(), source: e.jobId });
+      if (slot?.getTime() === e.slotAt) continue;
+      out = patch(out, e.key, (x) =>
+        slot
+          ? note({ ...x, slotAt: slot.getTime() }, `Re-slotted to ${fmtIn(slot, audienceTz)} (one post a day)`, now)
+          : note(
+              { ...x, status: "review", slotAt: undefined, nextTryAt: undefined },
+              `Back to review: capy now posts once a day and the next ${AUTO_HORIZON_DAYS} days are full`,
+              now,
+            ),
+      );
+    }
+  }
+  return out;
+}
 
 /** Slots that passed while capy wasn't running: under 2h late still post; later ones move to a new slot. */
 export function reconcileMissed(

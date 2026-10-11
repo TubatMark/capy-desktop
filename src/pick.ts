@@ -21,13 +21,13 @@ const ClipSchema = z.object({
   hook: z
     .string()
     .describe(
-      "On-screen hook text shown for the first 2-3s, under 40 chars, no emoji. Frames the situation for a cold viewer, naming the people when known; not a transcript quote",
+      "On-screen hook text shown for the first 2-3s, under 30 chars (two lines on screen), no emoji. Frames the situation for a cold viewer, naming the people when known; not a transcript quote",
     ),
   score: z.number().min(1).max(10).describe("Predicted performance, 1-10"),
   ytTitle: z
     .string()
     .describe(
-      "YouTube Shorts title, max 100 chars: punchy, may include one emoji, ends with 2-3 #hashtags",
+      "YouTube Shorts title, max 100 chars: starts with the creator's name, then what happens in plain words (one CAPS payoff word is fine), one emoji, then 2-3 #hashtags",
     ),
   description: z
     .string()
@@ -193,13 +193,15 @@ Rules:
 - Start on a strong hook line, ideally a claim, question, contrarian take, punchline setup, or emotional peak. Never start mid-sentence.
 - End on a complete thought or payoff. Never end mid-sentence.
 - Prefer moments with: a clear single idea, concrete specifics, story beats, humor that landed, or strong emotion.
+- Prefer real-life moments where faces and reactions fill the screen (IRL, pranks, food, crowds, people arguing). Skip stretches of pure gameplay, menus, loading screens or empty scenes, and never start a clip on one: the first second must show someone reacting or talking.
+- Hook text: under 30 chars so it fits on two lines.
 - Avoid: intros, sponsor reads, housekeeping, "as I said earlier", references to things not in the clip, dead air.
 - Clips must not overlap. Spread across the video when quality allows.
 - Decide the reason first, then write title and hook that sell that exact moment. If the reason is "a heated argument over a missed trip", the title and hook are about that argument, not a throwaway line from it.
 - hook = the text a viewer with zero context reads before anyone speaks. Set up the situation or stakes in third person and name who is in it when the video title or channel tells you (e.g. "Mia & Jay almost fall out over a missed trip"). Do not just quote the transcript; a quote only works if it makes sense on its own and states the conflict.
 - title = what happens in the clip (the conflict, reveal, or payoff), specific, under 60 chars.
 - ${languageRule(o.audience)}
-- For each clip also write the YouTube Shorts upload text: ytTitle (max 100 chars, may include one emoji, end with 2-3 #hashtags like "#${(meta.channel ?? "creator").replace(/[^a-z0-9]/gi, "").toLowerCase()} #shorts"), a description (2-4 short lines: what happens, a hook question or CTA, "Credit: ${meta.channel ?? "original creator"}", hashtags last), and 4-8 hashtags (no # sign; include creator names, the topic, and shorts).
+- For each clip also write the YouTube Shorts upload text: ytTitle (start with the creator's name, then what happens in plain words, under 60 chars before the hashtags, e.g. "Kai Cenat eats SHEEP BALLS in Iceland 🐑 #kaicenat #iceland #shorts"; one CAPS payoff word and one emoji are fine; no "Keyword: description" colon style; end with 2-3 #hashtags like "#${(meta.channel ?? "creator").replace(/[^a-z0-9]/gi, "").toLowerCase()} #shorts"), a description (2-4 short lines: what happens, a hook question or CTA, "Credit: ${meta.channel ?? "original creator"}", hashtags last), and 4-8 hashtags (no # sign; include creator names, the topic, and shorts).
 - start and end are in seconds from the start of the video. Each transcript line starts at the [seconds] marker; estimate positions within a line proportionally.
 ${o.replace ? `- Find a different moment. The previous pick at ${mmss(o.replace.start)}–${mmss(o.replace.end)} was rejected because: ${o.replace.reason}. Avoid that problem. Do not overlap these ranges: ${[o.replace, ...o.replace.avoid].map((r) => `${mmss(r.start)}–${mmss(r.end)}`).join(", ")}.\n` : ""}${o.focus ? `- Editor's focus: ${o.focus}\n` : ""}
 ${o.peaks?.length ? `Viewer replay peaks (the parts viewers rewound to most: a strong signal of a great moment; prefer clips that contain one, but each clip must still be self-contained):\n${fmtPeaks(o.peaks)}\n\n` : ""}Transcript:
@@ -282,7 +284,7 @@ Transcript of the clip:
 ${excerpt}
 
 Write the YouTube Shorts upload text for this clip:
-- ytTitle: max 100 chars, punchy, may include one emoji, ends with 2-3 #hashtags (e.g. "#${handle} #shorts").
+- ytTitle: starts with the creator's name, then what happens in plain words, under 60 chars before the hashtags (e.g. "Kai Cenat eats SHEEP BALLS in Iceland 🐑 #kaicenat #iceland #shorts"); one CAPS payoff word and one emoji are fine; no "Keyword: description" colon style; ends with 2-3 #hashtags (e.g. "#${handle} #shorts").
 - description: 2-4 short lines: what happens, a hook question or CTA, then "Credit: ${meta.channel ?? "original creator"}", then the hashtags on the last line.
 - hashtags: 4-8 without the # sign: creator names, topic, and shorts.
 ${audience === "en-us" ? "Write in natural US English for American viewers." : "Same language as the speakers."}`;

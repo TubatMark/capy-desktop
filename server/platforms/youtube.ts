@@ -94,7 +94,7 @@ async function upload(
             title: job.text.title ?? "",
             description: job.text.description ?? "",
             tags: job.text.tags ?? [],
-            categoryId: "22",
+            categoryId: "24",
           },
           status: {
             privacyStatus: publishAt !== undefined ? "private" : "public",

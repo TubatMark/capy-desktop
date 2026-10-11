@@ -9,7 +9,7 @@ import {
   deliveryForPackage,
   deliveryProjection,
 } from "./delivery-store";
-import { queue, reconcileMissed, recoverInterrupted } from "./queue";
+import { queue, reconcileMissed, recoverInterrupted, respace } from "./queue";
 import {
   eligibility,
   connectedAccountId,
@@ -571,12 +571,17 @@ export async function tickDeliveries(signal: AbortSignal): Promise<void> {
           )
           .map((e) => e.key),
       );
-      const revised = reconcileMissed(
-        recoverInterrupted(
-          all.filter((e) => !protectedKeys.has(e.key)),
+      const tz = audienceTz(effective().postingAudience);
+      const revised = respace(
+        reconcileMissed(
+          recoverInterrupted(
+            all.filter((e) => !protectedKeys.has(e.key)),
+            new Date(),
+          ),
+          tz,
           new Date(),
         ),
-        audienceTz(effective().postingAudience),
+        tz,
         new Date(),
       );
       return all.map((e) =>
