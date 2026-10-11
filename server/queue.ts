@@ -427,9 +427,15 @@ export function recentPost(entries: QueueEntry[], e: QueueEntry, now: Date): Que
  * the next AUTO_HORIZON_DAYS days; the rest go back to "review" and the auto-scheduler offers them again as days
  * free up. Manual approvals, moves and remote schedules are the owner's call and stay put (but still count as taken).
  */
-export function respace(entries: QueueEntry[], audienceTz: string, now: Date): QueueEntry[] {
+export function respace(
+  entries: QueueEntry[],
+  audienceTz: string,
+  now: Date,
+  locked?: (e: QueueEntry) => boolean,
+): QueueEntry[] {
   const movable = (e: QueueEntry) =>
     e.status === "scheduled" &&
+    !locked?.(e) &&
     !!e.autoScheduledAt &&
     !e.remoteSchedule &&
     e.slotAt !== undefined &&

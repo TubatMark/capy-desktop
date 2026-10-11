@@ -572,22 +572,24 @@ export async function tickDeliveries(signal: AbortSignal): Promise<void> {
           .map((e) => e.key),
       );
       const tz = audienceTz(effective().postingAudience);
-      const revised = respace(
-        reconcileMissed(
-          recoverInterrupted(
-            all.filter((e) => !protectedKeys.has(e.key)),
-            new Date(),
-          ),
-          tz,
+      const revised = reconcileMissed(
+        recoverInterrupted(
+          all.filter((e) => !protectedKeys.has(e.key)),
           new Date(),
         ),
         tz,
         new Date(),
       );
-      return all.map((e) =>
-        protectedKeys.has(e.key)
-          ? e
-          : (revised.find((r) => r.key === e.key) ?? e),
+      // respacing must see every post, delivered ones included, but only moves unprotected ones
+      return respace(
+        all.map((e) =>
+          protectedKeys.has(e.key)
+            ? e
+            : (revised.find((r) => r.key === e.key) ?? e),
+        ),
+        tz,
+        new Date(),
+        (e) => protectedKeys.has(e.key),
       );
     }),
   );

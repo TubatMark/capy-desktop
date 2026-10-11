@@ -450,6 +450,13 @@ describe("one post a day", () => {
     expect(byKey(out, "S2:2:youtube").slotAt).toBe(e[1]!.slotAt);
     expect(byKey(out, "S3:3:youtube").slotAt).toBe(e[2]!.slotAt);
   });
+  it("counts a post that already went out, even one it may not move", () => {
+    const e = oldBacklog();
+    const posted = { ...e[0]!, status: "posted" as const, slotAt: now.getTime() - 3 * H };
+    const out = respace([posted, ...e.slice(1)], tz, now, (x) => x.key === posted.key);
+    for (const x of out.filter((x) => x.status === "scheduled" && x.key !== posted.key))
+      expect(x.slotAt! - posted.slotAt!).toBeGreaterThanOrEqual(20 * H);
+  });
   it("Post now is refused within 20h of the last post on that platform", () => {
     const e = oldBacklog();
     const posted = { ...e[0]!, status: "posted" as const, slotAt: now.getTime() - 3 * H };
