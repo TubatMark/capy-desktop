@@ -14,11 +14,27 @@ const body = (d: string) =>
     .join("\n")
     .trim();
 
+/**
+ * Every hit on the channel ended its title with "#creator #topic #shorts", and the AI often leaves them off, so a
+ * Short's title always gets them: up to two of its hashtags (the description's hashtag line when none are given) then
+ * #shorts, as many as fit in YouTube's 100 characters. A title that already has hashtags only gains #shorts.
+ */
+export function shortsTitle(title: string, description = "", hashtags: string[] = []): string {
+  const t = cut(title.trim(), 100);
+  const has = (t.match(/#[\p{L}\p{N}_]+/gu) ?? []).map((h) => h.slice(1).toLowerCase());
+  const fromDesc = description.split("\n").filter((l) => /^\s*(#\S+\s*)+$/.test(l)).join(" ").match(/#[\p{L}\p{N}_]+/gu) ?? [];
+  const pool = [...new Set([...hashtags, ...fromDesc].map((h) => bare(h).toLowerCase()).filter((h) => h && h !== "shorts"))];
+  const add = [...(has.length ? [] : pool.slice(0, 2)), "shorts"].filter((h) => !has.includes(h));
+  let out = t;
+  for (const h of add) if (`${out} #${h}`.length <= 100) out = `${out} #${h}`;
+  return out;
+}
+
 export function youtubeText(p: Publish): PostText {
   // search tags first (they're chosen for search), then the hashtags; YouTube caps the list at 500 characters
   const tags: string[] = [];
   for (const t of new Set([...(p.tags ?? []).map((x) => x.trim()).filter(Boolean), ...tagsOf(p)])) if ([...tags, t].join(",").length <= 500) tags.push(t);
-  return { title: cut(p.ytTitle.trim(), 100), description: cut(p.description.trim(), 5000), tags };
+  return { title: shortsTitle(p.ytTitle, p.description, p.hashtags), description: cut(p.description.trim(), 5000), tags };
 }
 
 export function instagramText(p: Publish, hook?: string): PostText {

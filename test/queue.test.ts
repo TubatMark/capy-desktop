@@ -319,7 +319,7 @@ describe("clip identity (a re-cut clip at the same number)", () => {
     expect(live).toHaveLength(1);
     expect(live[0]).toMatchObject({
       status: "review",
-      text: { title: "Other moment" },
+      text: { title: "Other moment #shorts" },
     });
     expect(live[0]!.slotAt).toBeUndefined();
     const old = e.find((x) => x.key !== "J:1:youtube")!;

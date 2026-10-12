@@ -11,6 +11,7 @@ import {
   type PostJob,
   type PostOutcome,
 } from "./types";
+import { shortsTitle } from "./text";
 const API = "https://www.googleapis.com";
 const CHUNK = 8 * 1024 * 1024;
 /** Session and intent are durable before any bytes. A resumed transfer always queries first. */
@@ -91,7 +92,7 @@ async function upload(
         },
         body: JSON.stringify({
           snippet: {
-            title: job.text.title ?? "",
+            title: shortsTitle(job.text.title ?? "", job.text.description ?? ""),
             description: job.text.description ?? "",
             tags: job.text.tags ?? [],
             categoryId: "24",

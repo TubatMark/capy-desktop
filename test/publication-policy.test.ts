@@ -30,7 +30,7 @@ const entry=():QueueEntry=>decide(upsertForRender([],{publicationFiles:files,job
 describe("immutable package decisions",()=>{
   it("fresh valid package succeeds and snapshot text is independent of mutable input",()=>{
     const e=entry();expect(eligibility(e).allowed).toBe(true);
-    e.text.title="modified";expect(e.publishPackage!.text.title).toBe("Fixture");expect(eligibility(e).allowed).toBe(false);
+    e.text.title="modified";expect(e.publishPackage!.text.title).toBe("Fixture #shorts");expect(eligibility(e).allowed).toBe(false);
   });
   it("changed_package_requires_new_decision",()=>{
     for(const bytes of ["different footage","caption-only render","audio-only render"]){

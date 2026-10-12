@@ -88,7 +88,7 @@ describe("youtube", () => {
     );
     expect(calls[0]!.headers["x-upload-content-length"]).toBe("1024");
     const meta = JSON.parse(String(calls[0]!.body));
-    expect(meta.snippet.title).toBe("Title");
+    expect(meta.snippet.title).toBe("Title #shorts");
     expect(meta.status.privacyStatus).toBe("public");
     expect(calls[1]!.method).toBe("PUT");
     expect(calls[1]!.url).toBe("https://upload.example/session1");
