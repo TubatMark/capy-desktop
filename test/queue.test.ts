@@ -138,14 +138,17 @@ describe("approve / reject", () => {
     // one upload's clips never share a day
     expect(days.size).toBe(6);
   });
-  it("two uploads' clips get one day each: one post a day", () => {
+  it("clips of two uploads interleave: each day mixes uploads, still 3 a day", () => {
     let e: QueueEntry[] = [];
     for (let n = 1; n <= 3; n++) e = upsertForRender(e, clip(n), ["youtube"], now);
     for (let n = 1; n <= 3; n++) e = upsertForRender(e, clip(n, { jobId: "K" }), ["youtube"], now);
     e = approve(e, "J", undefined, { audienceTz: tz, now }).entries;
     e = approve(e, "K", undefined, { audienceTz: tz, now }).entries;
     const day = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t));
-    expect(new Set(e.map((x) => day(x.slotAt!))).size).toBe(6);
+    const byDay = new Map<string, string[]>();
+    for (const x of e) byDay.set(day(x.slotAt!), [...(byDay.get(day(x.slotAt!)) ?? []), x.jobId!]);
+    expect(byDay.size).toBe(3);
+    for (const jobs of byDay.values()) expect([...jobs].sort()).toEqual(["J", "K"]);
   });
   it("platforms not chosen at approval are rejected", () => {
     const { entries } = approve(
@@ -414,28 +417,35 @@ describe("story entries", () => {
   });
 });
 
-describe("one post a day", () => {
-  // a backlog made under the old 3-a-day rule: six automatic posts, 5h apart
+describe("posts a day and spacing", () => {
+  // a backlog that breaks the rule: twelve automatic posts, an hour apart
   const oldBacklog = () => {
     let e: QueueEntry[] = [];
-    for (let n = 1; n <= 6; n++) e = upsertForRender(e, clip(n, { jobId: `S${n}` }), ["youtube"], now);
+    for (let n = 1; n <= 12; n++) e = upsertForRender(e, clip(n, { jobId: `S${n}` }), ["youtube"], now);
     return e.map((x, i) => ({
       ...x,
       status: "scheduled" as const,
       autoScheduledAt: now.getTime(),
-      slotAt: now.getTime() + (i + 1) * 5 * H,
-      createdAt: now.getTime() - (6 - i) * H, // S6 is the freshest
+      slotAt: now.getTime() + (i + 1) * H,
+      createdAt: now.getTime() - (12 - i) * H, // S12 is the freshest
     }));
   };
-  it("re-slots an automatic backlog one a day, freshest first, and returns the overflow to review", () => {
+  const dayET = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(t));
+  it("re-slots an automatic backlog 3 a day, 5h apart, freshest first, and returns the overflow to review", () => {
     const out = respace(oldBacklog(), tz, now);
     const sched = out.filter((x) => x.status === "scheduled").sort((a, b) => a.slotAt! - b.slotAt!);
-    expect(sched.length).toBeGreaterThanOrEqual(3);
-    expect(sched.length).toBeLessThanOrEqual(4);
-    for (let i = 1; i < sched.length; i++) expect(sched[i]!.slotAt! - sched[i - 1]!.slotAt!).toBeGreaterThanOrEqual(20 * H);
-    expect(sched[0]!.jobId).toBe("S6");
+    expect(sched.length).toBeGreaterThanOrEqual(6);
+    expect(sched.length).toBeLessThan(12);
+    for (let i = 1; i < sched.length; i++) expect(sched[i]!.slotAt! - sched[i - 1]!.slotAt!).toBeGreaterThanOrEqual(5 * H);
+    const perDay = new Map<string, number>();
+    for (const x of sched) perDay.set(dayET(x.slotAt!), (perDay.get(dayET(x.slotAt!)) ?? 0) + 1);
+    expect(Math.max(...perDay.values())).toBeLessThanOrEqual(3);
+    expect(sched.every((x) => x.slotAt! - now.getTime() <= 3 * 86_400_000)).toBe(true);
+    // the freshest clip got a slot, the oldest went back to review
+    expect(byKey(out, "S12:12:youtube").status).toBe("scheduled");
+    expect(byKey(out, "S1:1:youtube").status).toBe("review");
     const back = out.filter((x) => x.status === "review");
-    expect(back.length).toBe(6 - sched.length);
+    expect(back.length).toBe(12 - sched.length);
     expect(back.every((x) => x.slotAt === undefined)).toBe(true);
   });
   it("leaves a schedule that already keeps the rule alone", () => {
@@ -452,23 +462,15 @@ describe("one post a day", () => {
   });
   it("counts a post that already went out, even one it may not move", () => {
     const e = oldBacklog();
-    const posted = { ...e[0]!, status: "posted" as const, slotAt: now.getTime() - 3 * H };
+    const posted = { ...e[0]!, status: "posted" as const, slotAt: now.getTime() - 1 * H };
     const out = respace([posted, ...e.slice(1)], tz, now, (x) => x.key === posted.key);
     for (const x of out.filter((x) => x.status === "scheduled" && x.key !== posted.key))
-      expect(x.slotAt! - posted.slotAt!).toBeGreaterThanOrEqual(20 * H);
+      expect(x.slotAt! - posted.slotAt!).toBeGreaterThanOrEqual(5 * H);
   });
-  it("Post now is refused within 20h of the last post on that platform", () => {
+  it("Post now is refused within 5h of the last post on that platform", () => {
     const e = oldBacklog();
     const posted = { ...e[0]!, status: "posted" as const, slotAt: now.getTime() - 3 * H };
     expect(recentPost([posted, e[1]!], e[1]!, now)?.key).toBe(posted.key);
-    expect(recentPost([{ ...posted, slotAt: now.getTime() - 21 * H }, e[1]!], e[1]!, now)).toBeUndefined();
-  });
-  it("automatic approval only looks 3 days ahead", () => {
-    let e: QueueEntry[] = [];
-    for (let n = 1; n <= 5; n++) e = upsertForRender(e, clip(n, { jobId: `A${n}` }), ["youtube"], now);
-    for (let n = 1; n <= 5; n++) e = approve(e, `A${n}`, undefined, { audienceTz: tz, now, automatic: true }).entries;
-    const sched = e.filter((x) => x.status === "scheduled");
-    expect(sched.length).toBeLessThanOrEqual(4);
-    expect(sched.every((x) => x.slotAt! - now.getTime() <= 3 * 86_400_000)).toBe(true);
+    expect(recentPost([{ ...posted, slotAt: now.getTime() - 6 * H }, e[1]!], e[1]!, now)).toBeUndefined();
   });
 });

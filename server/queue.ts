@@ -422,8 +422,8 @@ export function recentPost(entries: QueueEntry[], e: QueueEntry, now: Date): Que
 }
 
 /**
- * Keep automatically scheduled posts to the one-a-day rule. When any of them breaks it (a backlog made under the
- * old 3-a-day rule, or a slot squeezed next to a manual post), all of them are re-slotted, newest clip first, into
+ * Keep automatically scheduled posts to the posts-a-day and spacing rule. When any of them breaks it (a backlog
+ * made under an older rule, or a slot squeezed next to a manual post), all of them are re-slotted, newest clip first, into
  * the next AUTO_HORIZON_DAYS days; the rest go back to "review" and the auto-scheduler offers them again as days
  * free up. Manual approvals, moves and remote schedules are the owner's call and stay put (but still count as taken).
  */
@@ -475,10 +475,10 @@ export function respace(
       if (slot?.getTime() === e.slotAt) continue;
       out = patch(out, e.key, (x) =>
         slot
-          ? note({ ...x, slotAt: slot.getTime() }, `Re-slotted to ${fmtIn(slot, audienceTz)} (one post a day)`, now)
+          ? note({ ...x, slotAt: slot.getTime() }, `Re-slotted to ${fmtIn(slot, audienceTz)} (${POSTS_PER_DAY} a day, ${GAP_MS / 3_600_000}h apart)`, now)
           : note(
               { ...x, status: "review", slotAt: undefined, nextTryAt: undefined },
-              `Back to review: capy now posts once a day and the next ${AUTO_HORIZON_DAYS} days are full`,
+              `Back to review: the next ${AUTO_HORIZON_DAYS} days are full (${POSTS_PER_DAY} posts a day)`,
               now,
             ),
       );

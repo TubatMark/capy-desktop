@@ -45,12 +45,15 @@ describe("allocateSlot", () => {
     expect(d.getTime()).toBeGreaterThan(now.getTime() + 30 * 60_000);
     expect(dayET(d.getTime())).toBe(dayET(now.getTime()));
   });
-  it("puts one post per platform per local day, at least 20h apart", () => {
+  it("puts at most 3 per platform per local day, 5h apart, so 6 clips span 2 days", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
     for (let i = 0; i < 6; i++) taken.push({ platform: "youtube", at: allocateSlot(taken, ["youtube"], tz, now)!.getTime() });
-    expect(new Set(taken.map((t) => dayET(t.at))).size).toBe(6);
+    const days = new Map<string, number>();
+    for (const t of taken) days.set(dayET(t.at), (days.get(dayET(t.at)) ?? 0) + 1);
+    expect(days.size).toBe(2);
+    expect(Math.max(...days.values())).toBe(3);
     const sorted = taken.map((t) => t.at).sort((a, b) => a - b);
-    for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(20 * 3600_000);
+    for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(5 * 3600_000);
   });
   it("takes the day's best-ranked hour, not its earliest", () => {
     // Wed 2026-09-23: candidates [16, 11, 21, 12, 20] ET, 16:00 ranks first
@@ -59,28 +62,31 @@ describe("allocateSlot", () => {
   it("needs every chosen platform free at the shared time", () => {
     const first = allocateSlot([], ["youtube", "tiktok"], tz, now)!;
     const second = allocateSlot([{ platform: "tiktok", at: first.getTime() }], ["youtube", "tiktok"], tz, now)!;
-    expect(second.getTime() - first.getTime()).toBeGreaterThanOrEqual(20 * 3600_000);
+    expect(Math.abs(second.getTime() - first.getTime())).toBeGreaterThanOrEqual(5 * 3600_000);
     expect(allocateSlot([{ platform: "tiktok", at: first.getTime() }], ["youtube"], tz, now)!.getTime()).toBe(first.getTime());
   });
   it("only uses candidate hours in the audience zone", () => {
     const d = allocateSlot([], ["instagram"], tz, now)!;
     expect([10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22]).toContain(hourET(d));
   });
-  it("a backlog keeps filling later days, one a day, up to 30 days ahead", () => {
+  it("a backlog keeps filling later days, 3 a day, up to 30 days ahead", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 60; i++) {
       const d = allocateSlot(taken, ["youtube"], tz, now);
       expect(d).not.toBeNull();
       taken.push({ platform: "youtube", at: d!.getTime() });
     }
-    expect(new Set(taken.map((t) => dayET(t.at))).size).toBe(25);
+    const perDay = new Map<string, number>();
+    for (const t of taken) perDay.set(dayET(t.at), (perDay.get(dayET(t.at)) ?? 0) + 1);
+    expect(perDay.size).toBe(20);
+    expect(Math.max(...perDay.values())).toBe(3);
     expect(Math.max(...taken.map((t) => t.at)) - now.getTime()).toBeLessThan(30 * 86400_000);
   });
   it("returns null when the horizon is full", () => {
     const taken: { platform: "youtube"; at: number }[] = [];
     let d: Date | null;
     while ((d = allocateSlot(taken, ["youtube"], tz, now, 2))) taken.push({ platform: "youtube", at: d.getTime() });
-    expect(taken.length).toBeLessThanOrEqual(2);
+    expect(taken.length).toBeLessThanOrEqual(6);
     expect(taken.length).toBeGreaterThan(0);
   });
   it("survives the spring-forward DST change without duplicate slots", () => {

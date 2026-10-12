@@ -120,12 +120,11 @@ export const CANDIDATE_HOURS: Record<number, number[]> = {
   1: [15, 10, 20, 19, 18],
 };
 /**
- * One Short a day per platform. On this channel only the first Short of a day ever reached the Shorts feed:
- * second posts 3-5h later (and four "Post now" uploads in two minutes) got 1-13 views, from search alone.
- * The gap keeps a late post and the next morning's apart too.
+ * Three Shorts a day per platform (the owner's choice), at least 5h apart: each day's candidate hours hold three
+ * that far apart. Posts close together starve each other: four "Post now" uploads in two minutes got 1-13 views.
  */
-export const GAP_MS = 20 * 3_600_000;
-export const POSTS_PER_DAY = 1;
+export const GAP_MS = 5 * 3_600_000;
+export const POSTS_PER_DAY = 3;
 const PER_DAY = POSTS_PER_DAY;
 
 /**

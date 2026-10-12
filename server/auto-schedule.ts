@@ -66,7 +66,7 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
     if (e.status === "review" && automated(e))
       groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
   const done: string[] = [];
-  // one post a day: the freshest clip gets the next free day; a moment older than 3 days isn't worth a slot,
+  // the freshest clip gets the next free slot; a moment older than 3 days isn't worth a slot,
   // and leaving it waiting would hold the backlog full so no new upload gets clipped
   const stale = [...groups].filter(([, entries]) => now.getTime() - newest(entries) >= STALE_MS);
   if (stale.length) {

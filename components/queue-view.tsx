@@ -144,7 +144,7 @@ export function QueueView() {
         </h1>
         <p className="max-w-prose text-pretty text-sm text-muted-foreground">
           New clips wait here for your OK. Once approved they post on their own
-          at spread-out times (one a day per app, at least 20 hours apart), in{" "}
+          at spread-out times (3 a day per app, at least 5 hours apart), in{" "}
           {tzLabel} time.{" "}
           <Link
             href="/settings#accounts"

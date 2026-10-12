@@ -1,6 +1,7 @@
 import { deliveryForPackage, updateDelivery } from "@/server/delivery-store";
 import { eligibility } from "@/server/publication-policy";
 import { NextResponse } from "next/server";
+import { GAP_MS } from "@/lib/post-time";
 import {
   postNow,
   queue,
@@ -72,7 +73,7 @@ export async function POST(
     if (recent)
       return NextResponse.json(
         {
-          error: `"${recent.clipTitle}" went out less than 20 hours ago. A second Short that soon barely reaches the Shorts feed, so this one keeps its slot.`,
+          error: `"${recent.clipTitle}" went out less than ${GAP_MS / 3_600_000} hours ago. A Short posted that soon after another barely reaches the Shorts feed, so this one keeps its slot.`,
         },
         { status: 409 },
       );
