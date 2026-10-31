@@ -3,6 +3,7 @@ import path from "node:path";
 import { isCancelled, withCancel, withExecution } from "../../src/exec";
 import { LeaseLostError, type JobLease, type WorkQueue } from "./leases";
 import { withWork } from "./context";
+import { removeWorkspace } from "./scratch";
 import { creatorPolicy } from "../automation-policy";
 import { runtimeStore } from "../db/runtime";
 import { withAiContext } from "../ai-router";
@@ -142,6 +143,12 @@ export async function runJob(
       }),
     );
     queue.finish(lease, "complete");
+    // everything the stages finished was promoted; what's left in the workspace is scratch
+    try {
+      removeWorkspace(opts.artifactRoot, lease.id);
+    } catch (e) {
+      console.error("[worker] could not remove a finished workspace", e);
+    }
   } catch (error) {
     opts.onError?.(error);
     const cur = queue.get(lease.id);

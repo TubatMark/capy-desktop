@@ -18,6 +18,7 @@ import { registerWork, stagesFor } from "./registry";
 import { registerMediaWorkers } from "./media";
 import { admitResources } from "./budget";
 import { runJob } from "./runner";
+import { sweepScratch } from "./scratch";
 const SERVICE_MS = 15_000;
 const recovered = new Set<string>();
 export function registerWorkers() {
@@ -91,6 +92,11 @@ export async function workerOnce(
     await maybeSweepSimilarity();
     // clips that pass every check go to the schedule without waiting for approval (owner's setting)
     await maybeAutoSchedule();
+    try {
+      sweepScratch(OUTPUT_ROOT, (id) => q.get(id)?.status);
+    } catch (e) {
+      console.error("[worker] scratch sweep failed", e);
+    }
   }
   const lease = await q.claim(owner);
   if (!lease) return false;
