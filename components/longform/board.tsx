@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, Bot, CalendarClock, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
+import { AlertTriangle, Bot, CalendarClock, Mic, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,7 @@ import {
   type SlotResult,
   type UploadSlot,
 } from "@/lib/longform";
+import type { ShortTestGroup, ShortTestState, ShortTestSummary } from "@/lib/shorts-test";
 import { cn } from "@/lib/utils";
 
 interface Board {
@@ -34,6 +35,7 @@ interface Board {
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
   live: Record<string, LiveTime>;
+  shortsTest: ShortTestState & { summary: ShortTestSummary };
   autopilot: AutopilotSettings;
   autopilotLog: AutopilotLogEntry[];
 }
@@ -134,6 +136,8 @@ export function LongFormBoard() {
       )}
 
       {board && <AutopilotPanel settings={board.autopilot} log={board.autopilotLog} onChange={load} />}
+
+      {board && <ShortsTestPanel test={board.shortsTest} onChange={load} />}
 
       {board && (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -572,6 +576,48 @@ function AutopilotPanel({ settings, log, onChange }: { settings: AutopilotSettin
           </ul>
         </details>
       )}
+    </section>
+  );
+}
+
+function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChange: () => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  async function set(on: boolean) {
+    setErr(null);
+    try {
+      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "shorts-test", on }) });
+      onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  const row = (label: string, g: ShortTestGroup, tone: string) => (
+    <div className={cn("rounded-lg p-3 text-sm", tone)}>
+      <p className="font-medium">{label}</p>
+      <p className="text-2xl font-semibold tabular-nums">{g.feedViews.toLocaleString("en-US")}</p>
+      <p className="text-xs">
+        feed views from {g.posts} Shorts. {g.reachedFeed} reached the feed, median {g.medianFeedViews.toLocaleString("en-US")}.
+      </p>
+    </div>
+  );
+  return (
+    <section className="space-y-3 rounded-xl border p-4">
+      <h2 className="flex items-center gap-2 font-medium">
+        <Mic className="size-4" /> Narrated Shorts test
+      </h2>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={test.on} onChange={(e) => set(e.target.checked)} />
+        <span>
+          <span className="font-medium">Narrate half of new Shorts</span>
+          <span className="block text-xs text-muted-foreground">The host adds an opinion at the start and a verdict at the end. Shorts already made or scheduled don't change.</span>
+        </span>
+      </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {row("Narrated", test.summary.narrated, "bg-violet-500/10")}
+        {row("Plain", test.summary.plain, "bg-slate-500/10")}
+      </div>
+      <p className="text-sm">{test.summary.verdict}</p>
+      {err && <p className="text-sm text-destructive">{err}</p>}
     </section>
   );
 }

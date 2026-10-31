@@ -600,6 +600,8 @@ export interface ClipState {
   captionsTranslated?: boolean | "error";
   /** The AI content reviewer's verdict on the rendered clip. */
   contentReview?: ContentReview;
+  /** Which side of the narrated Shorts test this clip is on. */
+  shortTest?: { group: "narrated" | "plain" | "failed"; opening?: string; verdict?: string; voice?: string; error?: string };
 }
 
 export type ReviewVerdict = "pass" | "fix_hook" | "fail" | "needs_review";

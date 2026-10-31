@@ -9,6 +9,7 @@ import {
   recipeSettings,
 } from "./automation-policy";
 import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
+import { applyShortTest } from "./shorts-test";
 import {
   captureRenderInputs,
   measureRenderedAttribution,
@@ -1787,6 +1788,13 @@ class JobManager extends EventEmitter {
           },
         },
       );
+      const addedSeconds = await applyShortTest(job, c, file, words);
+      if (c.shortTest)
+        this.log(
+          job,
+          "render",
+          `clip ${c.n} Shorts test: ${c.shortTest.group}${c.shortTest.error ? ` (${c.shortTest.error})` : ""}`,
+        );
       // Missing probe evidence cannot invent attribution or discard an otherwise completed render.
       const attributionOutput = await measureRenderedAttribution(file).catch(
         () => undefined,
@@ -1825,7 +1833,7 @@ class JobManager extends EventEmitter {
             checksum: hash,
             path: file,
             probe: {
-              durationUs: Math.round(len * 1e6),
+              durationUs: Math.round((len + addedSeconds) * 1e6),
               width: 1080,
               height: 1920,
               fps: { numerator: 30, denominator: 1 },

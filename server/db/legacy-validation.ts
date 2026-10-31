@@ -101,6 +101,7 @@ const clip = z
       .optional(),
     publish: text.optional(),
     contentReview: review.optional(),
+    shortTest: z.object({ group: z.enum(["narrated", "plain", "failed"]) }).passthrough().optional(),
     seo: seo.optional(),
     review: z
       .object({
