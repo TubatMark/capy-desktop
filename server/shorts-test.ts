@@ -8,7 +8,6 @@ import { run } from "../src/exec";
 import { speak } from "../src/longform/narrate";
 import { detectEncoder } from "../src/render";
 import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCommentary } from "../src/shorts-commentary";
-import { getAccessToken, loadAccounts } from "./accounts";
 import { runtimeStore } from "./db/runtime";
 import { dataDir, effective } from "./settings";
 
@@ -26,6 +25,9 @@ export function setShortTest(on: boolean, now = Date.now()) {
   runtimeStore().put(CONFIG, "shorts-test", { on, startedAt: cur.startedAt ?? (on ? now : undefined) });
 }
 
+/** Set by the daily check once there's evidence either way. */
+const loadNarrateMode = () => runtimeStore().get<{ narrate?: "half" | "all" | "off" }>(CONFIG, "tuning")?.value.narrate ?? "half";
+
 /** Half the clips, the same half every time a clip is rendered again. */
 export const shortTestGroup = (jobId: string, n: number): "narrated" | "plain" =>
   createHash("sha256").update(`${jobId}:${n}`).digest()[0]! % 2 === 0 ? "narrated" : "plain";
@@ -38,7 +40,8 @@ export const shortTestGroup = (jobId: string, n: number): "narrated" | "plain" =
 export async function applyShortTest(job: JobState, c: ClipState, file: string, words: Word[]): Promise<number> {
   const test = loadShortTest();
   if (!test.on || !test.startedAt || !job.automation || (job.createdAt ?? 0) < test.startedAt) return 0;
-  const group = shortTestGroup(job.id, c.n);
+  const narrate = loadNarrateMode();
+  const group = narrate === "all" ? "narrated" : narrate === "off" ? "plain" : shortTestGroup(job.id, c.n);
   if (group === "plain") {
     c.shortTest = { group };
     return 0;
@@ -96,59 +99,8 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
 
 // ---------- results ----------
 
-const RESULTS = "shorts-test-results";
-const REFRESH_MS = 6 * 3600_000;
-let lastRefresh = 0;
-
-interface RawJob {
-  id: string;
-  clips?: { n: number; shortTest?: { group: string } }[];
-}
-
-/** Feed views for every test Short that has posted, from YouTube Analytics. */
-export async function refreshShortTest(now = Date.now(), f: typeof fetch = fetch) {
-  if (now - lastRefresh < REFRESH_MS) return;
-  lastRefresh = now;
-  const store = runtimeStore();
-  const groups = new Map<string, string>();
-  for (const { value: job } of store.list<RawJob>("legacy-jobs"))
-    for (const c of job.clips ?? []) if (c.shortTest && c.shortTest.group !== "failed") groups.set(`${job.id}:${c.n}`, c.shortTest.group);
-  if (!groups.size) return;
-  const posted = (store.get<{ jobId?: string; n?: number; status: string; result?: { id?: string }; updatedAt?: number }[]>("legacy-state", "queue")?.value ?? []).filter(
-    (e) => e.status === "posted" && e.result?.id && groups.has(`${e.jobId}:${e.n}`),
-  );
-  if (!posted.length) return;
-  const account = loadAccounts().youtube.account?.id;
-  const token = await getAccessToken("youtube", f, account);
-  const results: ShortTestResult[] = [];
-  for (const e of posted) {
-    const q = new URLSearchParams({
-      ids: "channel==MINE",
-      startDate: "2026-01-01",
-      endDate: new Date(now).toISOString().slice(0, 10),
-      metrics: "views",
-      dimensions: "insightTrafficSourceType",
-      filters: `video==${e.result!.id}`,
-    });
-    const r = await f(`https://youtubeanalytics.googleapis.com/v2/reports?${q}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!r.ok) continue;
-    const rows = ((await r.json()) as { rows?: [string, number][] }).rows ?? [];
-    const totals = new URLSearchParams({ ids: "channel==MINE", startDate: "2026-01-01", endDate: new Date(now).toISOString().slice(0, 10), metrics: "views,engagedViews", filters: `video==${e.result!.id}` });
-    const t = await f(`https://youtubeanalytics.googleapis.com/v2/reports?${totals}`, { headers: { Authorization: `Bearer ${token}` } });
-    const total = t.ok ? ((await t.json()) as { rows?: number[][] }).rows?.[0] : undefined;
-    results.push({
-      videoId: e.result!.id!,
-      group: groups.get(`${e.jobId}:${e.n}`) as ShortTestResult["group"],
-      postedAt: e.updatedAt ?? now,
-      views: rows.reduce((a, x) => a + Number(x[1]), 0),
-      feedViews: Number(rows.find((x) => x[0] === "SHORTS")?.[1] ?? 0),
-      stayed: total && total[0]! > 0 ? total[1]! / total[0]! : undefined,
-    });
-  }
-  store.put(CONFIG, RESULTS, results);
-}
-
+export const SHORT_TEST_RESULTS = "shorts-test-results";
 export function shortTestReport(now = Date.now()) {
-  const results = runtimeStore().get<ShortTestResult[]>(CONFIG, RESULTS)?.value ?? [];
-  return { ...loadShortTest(), summary: shortTestSummary(results, now) };
+  const results = runtimeStore().get<ShortTestResult[]>(CONFIG, SHORT_TEST_RESULTS)?.value ?? [];
+  return { ...loadShortTest(), narrate: loadNarrateMode(), summary: shortTestSummary(results, now) };
 }

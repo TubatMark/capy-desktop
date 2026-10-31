@@ -1,4 +1,4 @@
-import { refreshShortTest } from "../shorts-test";
+import { maybeRunDailyCheck } from "../daily-check";
 import { autopilotTick } from "./autopilot";
 import { LONG_FOLDER } from "./store";
 import { enqueueWork } from "../worker/api";
@@ -37,7 +37,7 @@ export function registerLongFormWorkers() {
             if (next) await queueStep(next);
             if (s.step === "observe") {
               await autopilotTick((step) => queueStep(step));
-              await refreshShortTest().catch((e) => console.error("[shorts test]", e));
+              await maybeRunDailyCheck().catch((e) => console.error("[daily check]", e));
             }
           } catch (e) {
             // an upload may just have lost the network: let the worker try it again first

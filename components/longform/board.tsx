@@ -40,7 +40,7 @@ interface Board {
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
   live: Record<string, LiveTime>;
-  shortsTest: ShortTestState & { summary: ShortTestSummary };
+  shortsTest: ShortTestState & { narrate: "half" | "all" | "off"; summary: ShortTestSummary };
   autopilot: AutopilotSettings;
   autopilotLog: AutopilotLogEntry[];
 }
@@ -696,7 +696,7 @@ function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChan
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={test.on} onChange={(e) => set(e.target.checked)} />
         <span>
-          <span className="font-medium">Narrate half of new Shorts</span>
+          <span className="font-medium">{test.narrate === "all" ? "Narrate every new Short" : test.narrate === "off" ? "Narration stopped by the daily check" : "Narrate half of new Shorts"}</span>
           <span className="block text-xs text-muted-foreground">The host adds an opinion at the start, a comment partway through and a verdict at the end. Shorts already made or scheduled don't change.</span>
         </span>
       </label>

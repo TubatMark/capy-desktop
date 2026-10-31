@@ -9,6 +9,7 @@ import {
   recipeSettings,
 } from "./automation-policy";
 import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
+import { loadTuning } from "./daily-check";
 import { shortFinishedPosting } from "./shorts-cleanup";
 import { applyShortTest } from "./shorts-test";
 import {
@@ -773,6 +774,8 @@ class JobManager extends EventEmitter {
       ...settingsIn,
     };
     settings.audience ??= effective().audience;
+    // the daily check tunes clip length from how people actually watched
+    if (extra.automation) settings.maxSec = loadTuning().clipMaxSec;
     if (extra.automation?.recipeId) {
       const recipe = creatorRecipe(extra.automation.recipeId);
       if (!recipe) throw Error("Creator recipe revision is missing");

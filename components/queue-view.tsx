@@ -7,6 +7,7 @@ import { Copy, Loader2, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReviewCard } from "@/components/review-card";
 import { QueueCalendar } from "@/components/queue/queue-calendar";
+import { DailyCheck } from "@/components/daily-check";
 import { DayPosts } from "@/components/queue/day-posts";
 import { ShortKanban } from "@/components/queue/short-kanban";
 import { ViewToggle, useBoardView } from "@/components/view-toggle";
@@ -144,7 +145,7 @@ export function QueueView() {
     ) ?? false;
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
@@ -171,6 +172,8 @@ export function QueueView() {
           {toast}
         </p>
       )}
+
+      <DailyCheck onChecked={() => void results.refresh()} />
 
       {mode === "kanban" && (
         <ShortKanban
