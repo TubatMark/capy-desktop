@@ -1,18 +1,18 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { LongClip, LongVideo, LongWorkStep } from "../../lib/longform";
+import { badgeFor, type LongClip, type LongVideo, type LongWorkStep } from "../../lib/longform";
 import { detectEncoder } from "../../src/render";
 import { run } from "../../src/exec";
 import { assembleArgs, candidateArgs, cardArgs, cardAss, chapterLines, clipArgs, clipAss, concatList, keepRanges, rangesLength, readProblems, thumbArgs, thumbAss, wordsInCut, type Range } from "../../src/longform/edit";
 import { speak } from "../../src/longform/narrate";
-import { pickCover, reviewScript, reviseScript, screenClips, writeScript, type LongScript } from "../../src/longform/script";
+import { pickCovers, reviewScript, reviseScript, screenClips, writeScript, type LongScript } from "../../src/longform/script";
 import { getAccessToken, loadAccounts } from "../accounts";
 import { loadSnapshot } from "../channel";
 import { OUTPUT_ROOT } from "../paths";
 import { dataDir, effective } from "../settings";
 import { availableClips, clipWindow, fillClips, getVideo, listVideos, skipClips, loadAudience, patchVideo, saveAudience, videoDir, wordsFor } from "./store";
-import { readAudience, readVideo, sendSlice, setThumbnail, startUpload, videoViews, type YtDeps } from "./youtube";
+import { readAudience, readVideo, sendSlice, setThumbnail, startUpload, videoQuality, videoViews, type YtDeps } from "./youtube";
 
 /** One step of work. Each returns the next, so sections and upload slices run as separate turns and posting can run between them. */
 export interface Step {
@@ -33,8 +33,8 @@ const footage = (c: LongClip) => path.join(OUTPUT_ROOT, c.file);
 
 export type Section =
   | { name: string; kind: "teaser"; clip: LongClip }
-  | { name: string; kind: "card"; speech: string; title: string; clip: LongClip; rank?: number; line?: string; credit?: string }
-  | { name: string; kind: "clip"; clip: LongClip; rank: number };
+  | { name: string; kind: "card"; speech: string; title: string; clip: LongClip; badge?: string; line?: string; credit?: string }
+  | { name: string; kind: "clip"; clip: LongClip; badge: string };
 
 const pad = (i: number) => String(i).padStart(2, "0");
 export function sections(v: LongVideo): Section[] {
@@ -46,8 +46,9 @@ export function sections(v: LongVideo): Section[] {
   out.push({ name: "intro", kind: "card", speech: v.intro ?? "", title: v.title, clip: best, line: "A ranking, with commentary" });
   v.clips.forEach((clip, i) => {
     const rank = n - i;
-    out.push({ name: `rank-${pad(rank)}-card`, kind: "card", speech: clip.line ?? "", title: clip.title, clip, rank, line: clip.line, credit: `Source: ${clip.channel}` });
-    out.push({ name: `rank-${pad(rank)}-clip`, kind: "clip", clip, rank });
+    const badge = badgeFor(v.format, rank, n, clip.label);
+    out.push({ name: `rank-${pad(rank)}-card`, kind: "card", speech: clip.line ?? "", title: clip.title, clip, badge, line: clip.line, credit: `Source: ${clip.channel}` });
+    out.push({ name: `rank-${pad(rank)}-clip`, kind: "clip", clip, badge });
   });
   out.push({ name: "outro", kind: "card", speech: v.outro ?? "", title: "What's your number one?", clip: v.clips[0]!, line: "Original streams are linked in the description" });
   return out;
@@ -102,23 +103,27 @@ async function plan(v: LongVideo): Promise<Step> {
   const screenedOut: NonNullable<LongVideo["screenedOut"]> = [];
   const screened = await screenPicks(v, screenedOut);
   const withWords = screened.map(excerpt);
-  let script: LongScript = await writeScript(v.creator, withWords, ai());
+  let script: LongScript = await writeScript(v.creator, withWords, ai(), v.format);
   const reviewFailed = { verdict: "caution" as const, notes: ["The automatic script review couldn't run"] };
   let review = await reviewScript(script, ai()).catch(() => reviewFailed);
   let fixTried = v.fixTried;
   if (review.verdict === "caution" && review !== reviewFailed) {
     fixTried = true;
     patchVideo(v.id, { step: "Fixing the review's notes" });
-    script = await reviseScript(v.creator, withWords, script, review.notes, ai());
+    script = await reviseScript(v.creator, withWords, script, review.notes, ai(), v.format);
     review = await reviewScript(script, ai()).catch(() => reviewFailed);
   }
-  const clips = screened.map((c, i) => ({ ...c, line: script.lines.find((l) => l.rank === screened.length - i)!.line.trim() }));
+  const clips = screened.map((c, i) => {
+    const spoken = script.lines.find((l) => l.rank === screened.length - i)!;
+    return { ...c, line: spoken.line.trim(), label: spoken.label.trim() };
+  });
   const next: Partial<LongVideo> = {
     title: script.title.trim(),
     thumbnailText: script.thumbnailText.trim(),
     intro: script.intro.trim(),
     outro: script.outro.trim(),
     tags: script.tags,
+    titleOptions: script.otherTitles.map((t) => t.trim()).filter(Boolean).slice(0, 2),
     clips,
     screenedOut,
     fixTried,
@@ -160,7 +165,7 @@ async function renderSection(v: LongVideo, s: Section, out: string) {
     const speech = spokenFile(v.id, s.speech);
     if (!speech) throw new Error(`The narration for ${s.name} is missing`);
     const total = (await seconds(speech)) + LEAD + TAIL;
-    writeFileSync(path.join(dir, assName), cardAss({ rank: s.rank, title: s.title, line: s.line, seconds: total, credit: s.credit }));
+    writeFileSync(path.join(dir, assName), cardAss({ badge: s.badge, format: v.format, title: s.title, line: s.line, seconds: total, credit: s.credit }));
     const w = clipWindow(s.clip);
     await run("ffmpeg", cardArgs({ footage: footage(s.clip), offset: w.start - s.clip.segStart, narration: speech, seconds: total, lead: LEAD, ass: assName, out: temp, enc }), { cwd: dir });
   } else {
@@ -171,7 +176,7 @@ async function renderSection(v: LongVideo, s: Section, out: string) {
     const on = wordsInCut(words, cut);
     const ass = s.kind === "teaser"
       ? clipAss({ title: "Coming up", credit: `Source: ${s.clip.channel}`, seconds: total, words: on })
-      : clipAss({ rank: s.rank, title: s.clip.title, credit: `Source: ${s.clip.channel}`, seconds: total, words: on });
+      : clipAss({ badge: s.badge, title: s.clip.title, credit: `Source: ${s.clip.channel}`, seconds: total, words: on });
     writeFileSync(path.join(dir, assName), ass);
     await run("ffmpeg", clipArgs({ footage: footage(s.clip), ranges: toFootage(cut, s.clip), ass: assName, out: temp, enc }), { cwd: dir });
   }
@@ -189,8 +194,8 @@ async function render(v: LongVideo, index: number): Promise<Step> {
   return index + 1 < all.length ? { id: v.id, step: "render", index: index + 1 } : { id: v.id, step: "assemble" };
 }
 
-/** Stills from the top moments; the AI picks. If it can't, the top moment's middle, which the owner sees at review. */
-async function chooseCover(v: LongVideo, dir: string): Promise<{ clip: LongClip; offset: number; headline: string }> {
+/** Stills from the top moments; the AI picks up to three. If it can't, the top moment's middle, which shows at review. */
+async function chooseCovers(v: LongVideo, dir: string): Promise<{ clip: LongClip; offset: number; headline: string }[]> {
   const options = v.clips.slice(-5).reverse().flatMap((clip) => [0.3, 0.65].map((p) => ({ clip, offset: Math.max(0, clip.start - clip.segStart + (clip.end - clip.start) * p) })));
   const files: string[] = [];
   mkdirSync(path.join(dir, "covers"), { recursive: true });
@@ -199,11 +204,12 @@ async function chooseCover(v: LongVideo, dir: string): Promise<{ clip: LongClip;
     await run("ffmpeg", candidateArgs(footage(o.clip), o.offset, f));
     files.push(f);
   }
-  const pick = await pickCover(files, v.title).catch((e) => {
+  const picks = await pickCovers(files, v.title).catch((e) => {
     console.error("[long-form] cover", e);
-    return undefined;
+    return [];
   });
-  return { ...options[pick?.index ?? 1]!, headline: pick?.headline ?? v.thumbnailText ?? v.title };
+  if (!picks.length) return [{ ...options[1]!, headline: v.thumbnailText ?? v.title }];
+  return picks.map((p) => ({ ...options[p.index]!, headline: p.headline }));
 }
 
 async function assemble(v: LongVideo): Promise<Step> {
@@ -214,13 +220,20 @@ async function assemble(v: LongVideo): Promise<Step> {
   writeFileSync(list, concatList(files));
   const master = path.join(dir, "master.mp4");
   await run("ffmpeg", assembleArgs(list, master));
-  const thumb = path.join(dir, "thumb.jpg");
-  const cover = await chooseCover(v, dir);
-  writeFileSync(path.join(dir, "thumb.ass"), thumbAss(cover.headline));
-  await run("ffmpeg", thumbArgs({ footage: footage(cover.clip), offset: cover.offset, ass: "thumb.ass", out: thumb }), { cwd: dir });
+  const covers = await chooseCovers(v, dir);
+  const thumbs: string[] = [];
+  for (const [i, cover] of covers.entries()) {
+    const file = path.join(dir, i === 0 ? "thumb.jpg" : `thumb-${i + 1}.jpg`);
+    const ass = `thumb-${i + 1}.ass`;
+    writeFileSync(path.join(dir, ass), thumbAss(cover.headline));
+    await run("ffmpeg", thumbArgs({ footage: footage(cover.clip), offset: cover.offset, ass, out: file }), { cwd: dir });
+    thumbs.push(file);
+  }
+  const thumb = thumbs[0]!;
+  const cover = covers[0]!;
   const parts = await Promise.all(
     sections(v).map(async (s, i) => ({
-      title: s.name === "teaser-0" ? "Intro" : s.kind === "card" && s.rank !== undefined ? `#${s.rank} ${s.title}` : s.name === "outro" ? "Your number one" : "",
+      title: s.name === "teaser-0" ? "Intro" : s.kind === "card" && s.badge !== undefined ? `${s.badge}: ${s.title}` : s.name === "outro" ? "Your number one" : "",
       seconds: await seconds(files[i]!),
     })),
   );
@@ -228,6 +241,7 @@ async function assemble(v: LongVideo): Promise<Step> {
   patchVideo(v.id, {
     master: rel(master),
     thumb: rel(thumb),
+    thumbOptions: thumbs.slice(1).map(rel),
     masterBytes: statSync(master).size,
     thumbnailText: cover.headline,
     description: chapters.length ? `${v.description ?? ""}\n\nChapters:\n${chapters.join("\n")}` : v.description,
@@ -322,7 +336,7 @@ export async function observe(now = Date.now()): Promise<null> {
       for (const ageHours of [48, 168] as const) {
         if (now - youtube.publishedAt < ageHours * 3600_000 || metrics.some((m) => m.ageHours === ageHours)) continue;
         const seen = await videoViews(d, id, youtube.publishedAt, now).catch(() => null);
-        if (seen) metrics.push({ at: now, ageHours, ...seen });
+        if (seen) metrics.push({ at: now, ageHours, ...seen, ...(await videoQuality(d, id, youtube.publishedAt, now).catch(() => ({}))) });
       }
       patch.metrics = metrics;
     }

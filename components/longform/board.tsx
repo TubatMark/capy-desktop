@@ -165,7 +165,7 @@ function VideoCard({ video: v, live, onOpen }: { video: LongVideo; live?: LiveTi
       )}
       <p className="line-clamp-2 text-sm font-medium">{v.title}</p>
       <p className="text-xs text-muted-foreground">
-        {v.creator} · {v.clips.length} moments{v.check?.duration ? ` · ${formatLength(v.check.duration)}` : ""}
+        {v.creator} · {v.format === "tier" ? "Tier list" : v.format === "awards" ? "Awards" : "Countdown"} · {v.clips.length} moments{v.check?.duration ? ` · ${formatLength(v.check.duration)}` : ""}
       </p>
       {v.step && (
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -429,6 +429,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
             {v.metrics.map((m) => (
               <p key={m.ageHours} className="text-muted-foreground">
                 After {m.ageHours === 48 ? "48 hours" : "a week"}: {m.views.toLocaleString("en-US")} views, {m.philippinesViews.toLocaleString("en-US")} from the Philippines
+                {m.avgViewPct !== undefined ? `, ${Math.round(m.avgViewPct)}% watched` : ""}
               </p>
             ))}
           </div>
@@ -487,6 +488,22 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
             </div>
           </details>
         )}
+
+        {v.titleOptions?.length || v.thumbOptions?.length ? (
+          <details className="rounded-lg border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Other titles and thumbnails to A/B test</summary>
+            <p className="mt-2 text-xs text-muted-foreground">YouTube Studio can test up to three of each, and picks the winner by watch time. Use Test &amp; compare on the video&apos;s page there.</p>
+            <ul className="mt-2 list-disc pl-5 text-muted-foreground">
+              {v.titleOptions?.map((t) => <li key={t}>{t}</li>)}
+            </ul>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {v.thumbOptions?.map((t) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <a key={t} href={media(t)} download><img src={media(t)} alt="Thumbnail option" className="aspect-video w-full rounded object-cover" /></a>
+              ))}
+            </div>
+          </details>
+        ) : null}
 
         {v.screenedOut?.length ? (
           <details className="rounded-lg border p-3 text-sm">
@@ -597,6 +614,7 @@ function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChan
       <p className="text-2xl font-semibold tabular-nums">{g.feedViews.toLocaleString("en-US")}</p>
       <p className="text-xs">
         feed views from {g.posts} Shorts. {g.reachedFeed} reached the feed, median {g.medianFeedViews.toLocaleString("en-US")}.
+        {g.stayedToWatch !== undefined ? ` ${Math.round(g.stayedToWatch * 100)}% stayed to watch.` : ""}
       </p>
     </div>
   );
@@ -609,7 +627,7 @@ function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChan
         <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={test.on} onChange={(e) => set(e.target.checked)} />
         <span>
           <span className="font-medium">Narrate half of new Shorts</span>
-          <span className="block text-xs text-muted-foreground">The host adds an opinion at the start and a verdict at the end. Shorts already made or scheduled don't change.</span>
+          <span className="block text-xs text-muted-foreground">The host adds an opinion at the start, a comment partway through and a verdict at the end. Shorts already made or scheduled don't change.</span>
         </span>
       </label>
       <div className="grid gap-3 sm:grid-cols-2">

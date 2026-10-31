@@ -89,7 +89,7 @@ export const DEFAULT_CREATOR_POLICY: CreatorPolicy = {
   // three posts a day, at most 3 days queued: a fresh upload's best moment beats a week-old backlog
   targetQueueDays: 3,
   maxBacklogDays: 3,
-  destinationDailySlots: 3,
+  destinationDailySlots: 2,
   freshnessHours: 24,
   expireFreshness: true,
   requireAudio: false,

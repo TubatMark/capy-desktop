@@ -5,7 +5,7 @@ import { reviseScript, writeScript } from "../src/longform/script";
 import type { LongClip } from "../lib/longform";
 
 const clip = { title: "t", excerpt: "e", sourceTitle: "s" } as LongClip & { excerpt: string };
-const script = (ranks: number[]) => ({ title: "T", thumbnailText: "x", intro: "i", outro: "o", description: "d", tags: [], lines: ranks.map((rank) => ({ rank, line: "l" })) });
+const script = (ranks: number[]) => ({ title: "T", thumbnailText: "x", intro: "i", outro: "o", description: "d", tags: [], otherTitles: ["a", "b"], lines: ranks.map((rank) => ({ rank, line: "l", label: "Best Moment" })) });
 const o = { agent: "claude" as const };
 
 it("acts on the review's notes, keeping the same ranks", async () => {

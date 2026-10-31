@@ -191,6 +191,7 @@ Pick the ${o.count} best moments to publish as standalone vertical shorts (TikTo
 Rules:
 - Each clip must be ${o.minSec}-${o.maxSec} seconds long and self-contained: a viewer with zero context must get it.
 - Start on a strong hook line, ideally a claim, question, contrarian take, punchline setup, or emotional peak. Never start mid-sentence.
+- Start as close to the payoff as the clip still makes sense, and cut slow setup: viewers decide in the first seconds whether to stay.
 - End on a complete thought or payoff. Never end mid-sentence.
 - Prefer moments with: a clear single idea, concrete specifics, story beats, humor that landed, or strong emotion.
 - Prefer real-life moments where faces and reactions fill the screen (IRL, pranks, food, crowds, people arguing). Skip stretches of pure gameplay, menus, loading screens or empty scenes, and never start a clip on one: the first second must show someone reacting or talking.

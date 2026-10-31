@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveTimes, philippineTime as pht, PUBLISH_HOLD_MS, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
+import { badgeFor, nextFormat, liveTimes, philippineTime as pht, PUBLISH_HOLD_MS, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
 import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
@@ -136,6 +136,20 @@ describe("go-live times", () => {
   it("skips failed and rejected videos", () => {
     const t = liveTimes([video({ id: "a", error: "x" }), video({ id: "b", status: "private", youtube: { id: "y", processedAt: 1, rejected: "copyright" } })], DEFAULT_SLOTS, NOW);
     expect(t).toEqual({});
+  });
+});
+
+describe("formats", () => {
+  it("rotates to the format used longest ago", () => {
+    expect(nextFormat([])).toBe("countdown");
+    expect(nextFormat([{ createdAt: 1 }])).toBe("tier");
+    expect(nextFormat([{ format: "countdown", createdAt: 3 }, { format: "tier", createdAt: 2 }, { format: "awards", createdAt: 1 }])).toBe("awards");
+  });
+  it("labels each moment by format", () => {
+    expect(badgeFor(undefined, 3, 10)).toBe("#3");
+    expect([1, 2, 3, 5, 6, 10].map((r) => badgeFor("tier", r, 10))).toEqual(["S tier", "S tier", "A tier", "A tier", "B tier", "B tier"]);
+    expect(badgeFor("awards", 1, 10, " Worst Negotiator ")).toBe("Worst Negotiator");
+    expect(badgeFor("awards", 4, 10)).toBe("#4");
   });
 });
 

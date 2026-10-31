@@ -132,6 +132,12 @@ export async function videoViews(d: YtDeps, id: string, publishedAt: number, now
   return { views: Number(all[0]?.[0] ?? 0), philippinesViews: Number(ph[0]?.[0] ?? 0) };
 }
 
+/** How well the video held people. The API has no thumbnail click rate: that's only in YouTube Studio. */
+export async function videoQuality(d: YtDeps, id: string, publishedAt: number, now: number) {
+  const held = await report(d, { startDate: day(publishedAt), endDate: day(now), filters: `video==${id}`, metrics: "averageViewPercentage,averageViewDuration" });
+  return { avgViewPct: held[0] ? Number(held[0][0]) : undefined, avgViewSeconds: held[0] ? Number(held[0][1]) : undefined };
+}
+
 const ageGender = (rows: Rows) => rows.map(([group, gender, pct]) => ({ group: String(group).replace(/^age/, ""), gender: String(gender), pct: Number(pct) }));
 
 /** Who watches, over the channel's life. Hour of day isn't available in these reports. */

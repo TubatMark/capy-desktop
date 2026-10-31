@@ -112,13 +112,16 @@ const event = (style: string, start: number, end: number, text: string, tags = "
 const at = (y: number) => `{\\pos(${W / 2},${y})\\fad(250,200)}`;
 
 /** The rank card (or an intro/outro card when there's no rank). */
-export function cardAss(o: { rank?: number; title: string; line?: string; seconds: number; credit?: string }): string {
+/** Each format has its own colour on the card (&HBBGGRR). */
+const BADGE_COLOUR: Record<string, string> = { countdown: "&H0000E5FF", tier: "&H00F0C040", awards: "&H00B060FF" };
+export function cardAss(o: { badge?: string; format?: string; title: string; line?: string; seconds: number; credit?: string }): string {
   let out = HEADER;
-  if (o.rank !== undefined) {
-    out += event("Rank", 0, o.seconds, `#${o.rank}`, at(320));
+  if (o.badge !== undefined) {
+    const size = o.badge.length <= 3 ? 230 : o.badge.length <= 8 ? 170 : 100;
+    out += event("Rank", 0, o.seconds, assText(o.badge), `${at(320).slice(0, -1)}\\fs${size}\\c${BADGE_COLOUR[o.format ?? "countdown"] ?? BADGE_COLOUR.countdown}&}`);
     out += event("Title", 0, o.seconds, assText(o.title), at(590));
   } else out += event("Title", 0, o.seconds, assText(o.title), at(o.line ? 360 : 500));
-  if (o.line) out += event("Line", 0, o.seconds, assText(o.line), at(o.rank !== undefined ? 800 : 640));
+  if (o.line) out += event("Line", 0, o.seconds, assText(o.line), at(o.badge !== undefined ? 800 : 640));
   if (o.credit) out += event("Credit", 0, o.seconds, assText(o.credit));
   return out;
 }
@@ -146,9 +149,9 @@ export function captionGroups(words: Word[], maxWords = 6, maxSec = 3): { start:
 }
 
 /** Over a clip: where it came from all the way through, its rank and title at the start, and captions. */
-export function clipAss(o: { rank?: number; title?: string; credit: string; seconds: number; words: Word[] }): string {
+export function clipAss(o: { badge?: string; title?: string; credit: string; seconds: number; words: Word[] }): string {
   let out = HEADER + event("Credit", 0, o.seconds, assText(o.credit));
-  if (o.title) out += event("Lower", 0.3, Math.min(5, o.seconds), `${o.rank !== undefined ? `#${o.rank}  ` : ""}${assText(o.title)}`, "{\\fad(200,300)}");
+  if (o.title) out += event("Lower", 0.3, Math.min(5, o.seconds), `${o.badge !== undefined ? `${assText(o.badge)}  ` : ""}${assText(o.title)}`, "{\\fad(200,300)}");
   for (const g of captionGroups(o.words)) out += event("Cap", g.start, Math.min(g.end + 0.15, o.seconds), g.text);
   return out;
 }

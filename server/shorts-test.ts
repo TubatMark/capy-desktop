@@ -7,7 +7,7 @@ import { shortTestSummary, type ShortTestResult, type ShortTestState } from "../
 import { run } from "../src/exec";
 import { speak } from "../src/longform/narrate";
 import { detectEncoder } from "../src/render";
-import { commentaryArgs, commentaryAss, outroLength, writeCommentary } from "../src/shorts-commentary";
+import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCommentary } from "../src/shorts-commentary";
 import { getAccessToken, loadAccounts } from "./accounts";
 import { runtimeStore } from "./db/runtime";
 import { dataDir, effective } from "./settings";
@@ -44,7 +44,7 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
     return 0;
   }
   const base = file.replace(/\.mp4$/, "");
-  const temp = [`${base}.narrated.ass`, `${base}.opening.wav`, `${base}.opening.aiff`, `${base}.opening.txt`, `${base}.verdict.wav`, `${base}.verdict.aiff`, `${base}.verdict.txt`, `${base}.narrated.part`];
+  const temp = [`${base}.narrated.ass`, `${base}.opening.wav`, `${base}.opening.aiff`, `${base}.opening.txt`, `${base}.verdict.wav`, `${base}.verdict.aiff`, `${base}.verdict.txt`, `${base}.middle.wav`, `${base}.middle.aiff`, `${base}.middle.txt`, `${base}.narrated.part`];
   try {
     const app = effective();
     const excerpt = words.filter((w) => w.end > c.start && w.start < c.end).map((w) => w.text).join(" ").slice(0, 500);
@@ -55,11 +55,15 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
     const opening = await speak(lines.opening, `${base}.opening`, dataDir());
     const verdict = await speak(lines.verdict, `${base}.verdict`, dataDir());
     const clipSeconds = await seconds(file);
+    const at = middleAt(words.filter((w) => w.start >= c.start && w.end <= c.end).map((w) => ({ start: w.start - c.start, end: w.end - c.start })), clipSeconds);
+    const spoken = at === undefined ? undefined : await speak(lines.middle, `${base}.middle`, dataDir());
+    const middle = at !== undefined && spoken && at + spoken.seconds < clipSeconds - 1 ? { file: spoken.file, at, seconds: spoken.seconds } : undefined;
     writeFileSync(
       `${base}.narrated.ass`,
       commentaryAss({
         opening: lines.opening,
         openingEnd: Math.min(clipSeconds, opening.seconds + 0.4),
+        middle: middle ? { text: lines.middle, start: middle.at, end: middle.at + middle.seconds + 0.2 } : undefined,
         verdict: lines.verdict,
         outroStart: clipSeconds,
         outroEnd: clipSeconds + outroLength(verdict.seconds),
@@ -71,6 +75,7 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
       clipSeconds,
       opening: opening.file,
       openingSeconds: opening.seconds,
+      middle,
       verdict: verdict.file,
       verdictSeconds: verdict.seconds,
       ass: path.basename(`${base}.narrated.ass`),
@@ -121,19 +126,23 @@ export async function refreshShortTest(now = Date.now(), f: typeof fetch = fetch
       ids: "channel==MINE",
       startDate: "2026-01-01",
       endDate: new Date(now).toISOString().slice(0, 10),
-      metrics: "views,averageViewPercentage",
+      metrics: "views",
       dimensions: "insightTrafficSourceType",
       filters: `video==${e.result!.id}`,
     });
     const r = await f(`https://youtubeanalytics.googleapis.com/v2/reports?${q}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!r.ok) continue;
-    const rows = ((await r.json()) as { rows?: [string, number, number][] }).rows ?? [];
+    const rows = ((await r.json()) as { rows?: [string, number][] }).rows ?? [];
+    const totals = new URLSearchParams({ ids: "channel==MINE", startDate: "2026-01-01", endDate: new Date(now).toISOString().slice(0, 10), metrics: "views,engagedViews", filters: `video==${e.result!.id}` });
+    const t = await f(`https://youtubeanalytics.googleapis.com/v2/reports?${totals}`, { headers: { Authorization: `Bearer ${token}` } });
+    const total = t.ok ? ((await t.json()) as { rows?: number[][] }).rows?.[0] : undefined;
     results.push({
       videoId: e.result!.id!,
       group: groups.get(`${e.jobId}:${e.n}`) as ShortTestResult["group"],
       postedAt: e.updatedAt ?? now,
       views: rows.reduce((a, x) => a + Number(x[1]), 0),
       feedViews: Number(rows.find((x) => x[0] === "SHORTS")?.[1] ?? 0),
+      stayed: total && total[0]! > 0 ? total[1]! / total[0]! : undefined,
     });
   }
   store.put(CONFIG, RESULTS, results);

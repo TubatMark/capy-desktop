@@ -42,6 +42,23 @@ const COLUMN: Record<LongStatus, LongColumn> = {
 };
 export const columnOf = (s: LongStatus): LongColumn => COLUMN[s];
 
+/** Not every video looks the same: YouTube doesn't count template-based bulk changes as adding anything. */
+export type LongFormat = "countdown" | "tier" | "awards";
+export const LONG_FORMATS: LongFormat[] = ["countdown", "tier", "awards"];
+
+/** The format used longest ago, so a run of videos doesn't repeat one. */
+export function nextFormat(videos: Pick<LongVideo, "format" | "createdAt">[]): LongFormat {
+  const last = (f: LongFormat) => Math.max(0, ...videos.filter((v) => (v.format ?? "countdown") === f).map((v) => v.createdAt));
+  return [...LONG_FORMATS].sort((a, b) => last(a) - last(b))[0]!;
+}
+
+/** What goes on the card: "#3", "S tier", or an award's name. `rank` 1 is the best of `total`. */
+export function badgeFor(format: LongFormat | undefined, rank: number, total: number, label?: string): string {
+  if (format === "tier") return rank <= Math.ceil(total * 0.2) ? "S tier" : rank <= Math.ceil(total * 0.5) ? "A tier" : "B tier";
+  if (format === "awards" && label?.trim()) return label.trim();
+  return `#${rank}`;
+}
+
 export interface LongClip {
   jobId: string;
   n: number;
@@ -63,6 +80,8 @@ export interface LongClip {
   sourceUrl: string;
   /** The narrator's line about this moment. */
   line?: string;
+  /** This moment's award, for the awards format. */
+  label?: string;
   /** Length after trimming, seconds. */
   seconds?: number;
 }
@@ -79,6 +98,9 @@ export interface LongMetrics {
   ageHours: 48 | 168;
   views: number;
   philippinesViews: number;
+  /** Share of the video watched on average, 0-100. */
+  avgViewPct?: number;
+  avgViewSeconds?: number;
 }
 
 export interface LongVideo {
@@ -98,6 +120,10 @@ export interface LongVideo {
   fixTried?: boolean;
   uploadStartedAt?: number;
   clips: LongClip[];
+  format?: LongFormat;
+  /** Other titles and thumbnails, ready for YouTube Studio's A/B test. */
+  titleOptions?: string[];
+  thumbOptions?: string[];
   /** Moments the screening left out of this video, for the owner to see. */
   screenedOut?: { title: string; why: string }[];
   title: string;

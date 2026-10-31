@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { askAgent } from "../agents";
 import type { AiOpts } from "../story/write";
-import type { LongClip } from "../../lib/longform";
+import type { LongClip, LongFormat } from "../../lib/longform";
+
+const FORMAT_RULES: Record<LongFormat, string> = {
+  countdown: "This video is a countdown: the host builds from the lowest rank to number one.",
+  tier: "This video is a tier list: the top moments are S tier, the middle A tier and the rest B tier. The host talks about why each moment belongs in its tier, and the title should say tier list.",
+  awards: "This video is an awards show: each moment wins its own award, given by its label. The host presents each award and says why it was earned, and the title should say awards.",
+};
 
 const strip = (s: Record<string, unknown>) => {
   const { $schema: _d, ...rest } = s;
@@ -14,7 +20,8 @@ const ScriptSchema = z.object({
   title: z.string().describe("YouTube title, under 70 characters. Names the creator and promises the ranking. No hashtags"),
   thumbnailText: z.string().describe("2-4 punchy words for the thumbnail, true of the whole video rather than one moment"),
   intro: z.string().describe("Spoken intro, 35-60 words: why these moments and what makes this ranking worth watching"),
-  lines: z.array(z.object({ rank: z.number().int(), line: z.string().describe("Spoken, 15-35 words: your own take on why this moment sits at this rank") })),
+  otherTitles: z.array(z.string()).describe("2 other honest titles for the same video, each taking a different angle"),
+  lines: z.array(z.object({ rank: z.number().int(), line: z.string().describe("Spoken, 15-35 words: your own take on why this moment sits at this rank"), label: z.string().describe("A 2-4 word award name for this moment, like 'Worst Negotiator'") })),
   outro: z.string().describe("Spoken outro, 15-30 words: which moment you would change, then ask viewers for their own number one"),
   description: z.string().describe("2-3 sentences for the YouTube description, in the same voice. No hashtags, links or credits"),
   tags: z.array(z.string()).describe("5-12 search tags"),
@@ -27,11 +34,13 @@ const ReviewSchema = z.object({
 });
 
 /** `clips` run from the lowest rank to number one. */
-export function scriptPrompt(creator: string, clips: (LongClip & { excerpt: string })[]): string {
+export function scriptPrompt(creator: string, clips: (LongClip & { excerpt: string })[], format: LongFormat = "countdown"): string {
   const moments = clips
     .map((c, i) => `#${clips.length - i}: "${c.title}" from "${c.sourceTitle}"\nWhy it stood out: ${c.reason ?? "n/a"}\nWhat is said: ${c.excerpt}`)
     .join("\n\n");
   return `You are the host of a countdown video ranking ${clips.length} moments of ${creator}. The order below is decided. Write the host's words.
+
+${FORMAT_RULES[format]}
 
 ${moments}
 
@@ -61,11 +70,11 @@ async function askScript(prompt: string, ranks: number, o: AiOpts): Promise<Long
   return script;
 }
 
-export const writeScript = (creator: string, clips: (LongClip & { excerpt: string })[], o: AiOpts) => askScript(scriptPrompt(creator, clips), clips.length, o);
+export const writeScript = (creator: string, clips: (LongClip & { excerpt: string })[], o: AiOpts, format?: LongFormat) => askScript(scriptPrompt(creator, clips, format), clips.length, o);
 
 /** The review's notes, acted on: nobody has to read them for the script to get better. */
-export function reviseScript(creator: string, clips: (LongClip & { excerpt: string })[], script: LongScript, notes: string[], o: AiOpts): Promise<LongScript> {
-  const prompt = `${scriptPrompt(creator, clips)}
+export function reviseScript(creator: string, clips: (LongClip & { excerpt: string })[], script: LongScript, notes: string[], o: AiOpts, format?: LongFormat): Promise<LongScript> {
+  const prompt = `${scriptPrompt(creator, clips, format)}
 
 Here is the current script as JSON:
 ${JSON.stringify(script)}
@@ -103,24 +112,26 @@ ${list}`,
 }
 
 const CoverSchema = z.object({
-  best: z.string().describe("The letter of the best frame"),
-  usable: z.boolean().describe("False if none of the frames is acceptable"),
-  headline: z.string().describe("2-4 punchy words that match what this frame actually shows"),
+  options: z.array(z.object({ frame: z.string().describe("The frame's letter"), headline: z.string().describe("2-4 punchy words that match what this frame actually shows") })).describe("Up to 3 different frames, best first. Empty if none is acceptable"),
 });
 
-/** Choose the cover among small stills, with words that fit it. Undefined if none will do. */
-export async function pickCover(files: string[], title: string): Promise<{ index: number; headline: string } | undefined> {
+/** Choose covers among small stills, best first, with words that fit each. */
+export async function pickCovers(files: string[], title: string): Promise<{ index: number; headline: string }[]> {
   const images = await Promise.all(
     files.map(async (f, i) => ({ mediaType: "image/jpeg" as const, label: `Frame ${String.fromCharCode(65 + i)}`, data: (await readFile(f)).toString("base64") })),
   );
   const res = await askAgent(
     "claude",
-    `Pick the best YouTube thumbnail frame for "${title}". Want: a person's face, clearly visible, with a strong reaction, sharp and brightly lit. Refuse: dark frames, revealing clothing or a focus on anyone's body, people seen from behind, a violent instant, motion blur, any readable offensive text.`,
+    `Pick the best YouTube thumbnail frames for "${title}". Want: a person's face, clearly visible, with a strong reaction, sharp and brightly lit. Refuse: dark frames, revealing clothing or a focus on anyone's body, people seen from behind, a violent instant, motion blur, any readable offensive text. The words must set honest expectations for the video: no clickbait.`,
     { task: "vision", system: "You pick video thumbnails. Answer only with the requested JSON.", schema: schemaOf(CoverSchema), images, effort: "low", maxTurns: 2, timeoutMs: 120_000 },
   );
-  const out = CoverSchema.parse(res.data);
-  const i = out.best.trim().toUpperCase().charCodeAt(0) - 65;
-  return out.usable && out.headline.trim() && i >= 0 && i < files.length ? { index: i, headline: out.headline.trim() } : undefined;
+  const seen = new Set<number>();
+  return CoverSchema.parse(res.data).options.flatMap((o) => {
+    const index = o.frame.trim().toUpperCase().charCodeAt(0) - 65;
+    if (index < 0 || index >= files.length || seen.has(index) || !o.headline.trim()) return [];
+    seen.add(index);
+    return [{ index, headline: o.headline.trim() }];
+  }).slice(0, 3);
 }
 
 /** A second read: does the host add something of their own, and is anything said about real people unsupported? */

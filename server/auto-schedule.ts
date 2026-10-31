@@ -1,4 +1,5 @@
 import { audienceTz } from "../lib/post-time";
+import { alternateByTest } from "../lib/shorts-test";
 import { queueGroup } from "../lib/queue-source";
 import { SIMILARITY_STORE, type ClipSimilarity } from "../lib/similarity";
 import type { QueueEntry } from "../lib/types";
@@ -51,6 +52,13 @@ export function similarClear(s: ClipSimilarity): boolean {
 const STALE_MS = 3 * 86_400_000;
 const newest = (entries: QueueEntry[]) => Math.max(...entries.map((e) => e.createdAt));
 
+/** Which side of the narrated Shorts test a post's clip is on, if any. */
+function shortTestGroupOf(e: QueueEntry): string | undefined {
+  if (!e.jobId) return undefined;
+  const job = runtimeStore().get<{ clips?: { n: number; shortTest?: { group: string } }[] }>("legacy-jobs", e.jobId)?.value;
+  return job?.clips?.find((c) => c.n === e.n)?.shortTest?.group;
+}
+
 const automated = (e: QueueEntry) =>
   !!e.jobId &&
   !e.source &&
@@ -81,7 +89,13 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
   }
   const fresh = [...groups].filter(([, entries]) => now.getTime() - newest(entries) < STALE_MS);
   fresh.sort(([, a], [, b]) => newest(b) - newest(a));
-  for (const [group, entries] of fresh) {
+  const groupOf = (entries: QueueEntry[]) => (shortTestGroupOf(entries[0]!) === "narrated" ? ("narrated" as const) : ("plain" as const));
+  const lastPost = queue()
+    .list()
+    .filter((e) => e.status === "scheduled" && e.slotAt && e.jobId)
+    .sort((a, b) => b.slotAt! - a.slotAt!)[0];
+  const ordered = alternateByTest(fresh, ([, entries]) => groupOf(entries), lastPost && shortTestGroupOf(lastPost) === "narrated" ? "narrated" : "plain");
+  for (const [group, entries] of ordered) {
     const similarity = runtimeStore().get<ClipSimilarity>(SIMILARITY_STORE, group)?.value;
     if (autoScheduleBlockers(entries, similarity).length) continue;
     const prepared = await Promise.all(

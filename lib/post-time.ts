@@ -124,7 +124,8 @@ export const CANDIDATE_HOURS: Record<number, number[]> = {
  * that far apart. Posts close together starve each other: four "Post now" uploads in two minutes got 1-13 views.
  */
 export const GAP_MS = 5 * 3_600_000;
-export const POSTS_PER_DAY = 3;
+/** Fewer re-used clips a day: YouTube's Oct 2026 change reduces reach for channels that mainly re-upload. */
+export const POSTS_PER_DAY = 2;
 const PER_DAY = POSTS_PER_DAY;
 
 /**

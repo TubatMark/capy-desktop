@@ -601,7 +601,7 @@ export interface ClipState {
   /** The AI content reviewer's verdict on the rendered clip. */
   contentReview?: ContentReview;
   /** Which side of the narrated Shorts test this clip is on. */
-  shortTest?: { group: "narrated" | "plain" | "failed"; opening?: string; verdict?: string; voice?: string; error?: string };
+  shortTest?: { group: "narrated" | "plain" | "failed"; opening?: string; middle?: string; verdict?: string; voice?: string; error?: string };
 }
 
 export type ReviewVerdict = "pass" | "fix_hook" | "fail" | "needs_review";
@@ -678,7 +678,8 @@ export interface Word {
 export const DEFAULT_SETTINGS: JobSettings = {
   count: 6,
   minSec: 20,
-  maxSec: 60,
+  // our own clips held viewers far better under 48 seconds than at 60
+  maxSec: 40,
   layout: "center",
   style: "bold",
   captions: true,
