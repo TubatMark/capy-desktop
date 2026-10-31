@@ -23,6 +23,7 @@ const Body = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("text"), title: z.string().trim().min(1).max(100), description: z.string().max(5000) }),
   z.strictObject({ action: z.literal("upload") }),
   z.strictObject({ action: z.literal("retry") }),
+  z.strictObject({ action: z.literal("recheck") }),
   z.strictObject({ action: z.literal("schedule"), at: z.number().int().positive(), slotId: z.string().max(40).optional() }),
   z.strictObject({ action: z.literal("unschedule") }),
   z.strictObject({ action: z.literal("free") }),
@@ -50,6 +51,10 @@ export async function POST(req: Request, ctx: Ctx) {
         if (!video.failedStep) return NextResponse.json({ error: "Nothing to retry" }, { status: 409 });
         await queueStep({ id, step: video.failedStep, index: video.failedIndex });
         return NextResponse.json(patchVideo(id, { error: undefined, failedStep: undefined, failedIndex: undefined, step: "Trying again" }));
+      case "recheck":
+        if (video.status !== "review" || !video.master) return NextResponse.json({ error: "Only a finished video in review can be checked again" }, { status: 409 });
+        await queueStep({ id, step: "check" });
+        return NextResponse.json(video);
       case "schedule": {
         if (!video.youtube?.id || !video.youtube.processedAt) return NextResponse.json({ error: "It has to finish processing on YouTube first" }, { status: 409 });
         if (video.youtube.publishedAt) return NextResponse.json({ error: "It's already public" }, { status: 409 });

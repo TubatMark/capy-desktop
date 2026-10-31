@@ -246,6 +246,13 @@ describe("the edit", () => {
     expect(chapterLines([{ title: "a", seconds: 3600 }, { title: "b", seconds: 60 }, { title: "c", seconds: 60 }])[2]).toBe("1:01:00 c");
   });
 
+  it("doesn't call a dark title card black, but does catch black footage", () => {
+    const log = "black_start:10 black_end:26.6 black_duration:16.6\nblack_start:100 black_end:110 black_duration:10";
+    expect(readProblems(log, [{ start: 10, end: 27 }])).toEqual(["10.0s of black at 100s"]);
+    // a stretch that runs well past the card is still a problem
+    expect(readProblems("black_start:10 black_end:30 black_duration:20", [{ start: 10, end: 15 }])).toHaveLength(1);
+  });
+
   it("reads problems from ffmpeg's log", () => {
     expect(readProblems("black_start:10 black_end:15 black_duration:5\nsilence_end: 40.5 | silence_duration: 7.2")).toEqual(["5.0s of black at 10s", "7.2s of silence ending at 41s"]);
   });

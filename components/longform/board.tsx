@@ -369,6 +369,11 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
               {busy === "upload" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Upload as Private now
             </Button>
           )}
+          {v.status === "review" && !!v.check?.warnings?.length && (
+            <Button variant="outline" disabled={!!busy} onClick={() => action("recheck", { action: "recheck" })}>
+              <RotateCcw className="size-4" /> Run the checks again
+            </Button>
+          )}
           {editable && (["draft", "review"].includes(v.status) || v.error) && (
             <Button variant="outline" disabled={!!busy} onClick={remove}>
               <Trash2 className="size-4" /> Delete

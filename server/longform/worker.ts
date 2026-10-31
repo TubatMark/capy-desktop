@@ -256,7 +256,14 @@ async function check(v: LongVideo): Promise<null> {
   const duration = await seconds(master);
   const { stderr } = await run("ffmpeg", ["-hide_banner", "-nostats", "-i", master, "-vf", "fps=5,scale=320:-2,blackdetect=d=3:pix_th=0.08", "-af", "silencedetect=n=-45dB:d=6", "-f", "null", "-"]);
   const { stdout: streams } = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "csv=p=0", master]);
-  const warnings = readProblems(stderr);
+  const cards: Range[] = [];
+  let at = 0;
+  for (const [i, s] of sections(v).entries()) {
+    const length = await seconds(path.join(videoDir(v.id), "sections", `${pad(i)}-${s.name}.mp4`));
+    if (s.kind === "card") cards.push({ start: at, end: at + length });
+    at += length;
+  }
+  const warnings = readProblems(stderr, cards);
   if (!/audio/.test(streams)) warnings.unshift("The video has no sound");
   if (!/video,1920,1080/.test(streams)) warnings.unshift("The video isn't 1920x1080");
   const script = v.check?.script;

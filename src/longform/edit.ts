@@ -262,10 +262,19 @@ export function chapterLines(parts: { title: string; seconds: number }[]): strin
   return kept.length >= 3 ? kept.map((m) => `${stamp(m.start)} ${m.title}`) : [];
 }
 
-/** Long black or silent stretches, read from `blackdetect` and `silencedetect` output. */
-export function readProblems(log: string): string[] {
+/**
+ * Long black or silent stretches, read from `blackdetect` and `silencedetect` output. Title cards in `cards` are left
+ * out of the black check: dark footage behind one looks black to ffmpeg, but its words are on screen.
+ */
+export function readProblems(log: string, cards: Range[] = []): string[] {
   const out: string[] = [];
-  for (const m of log.matchAll(/black_start:([\d.]+) black_end:([\d.]+) black_duration:([\d.]+)/g)) out.push(`${Number(m[3]).toFixed(1)}s of black at ${Math.round(Number(m[1]))}s`);
+  for (const m of log.matchAll(/black_start:([\d.]+) black_end:([\d.]+) black_duration:([\d.]+)/g)) {
+    const start = Number(m[1]);
+    const end = Number(m[2]);
+    const onCards = cards.reduce((a, c) => a + Math.max(0, Math.min(end, c.end) - Math.max(start, c.start)), 0);
+    if (onCards >= (end - start) * 0.9) continue;
+    out.push(`${Number(m[3]).toFixed(1)}s of black at ${Math.round(start)}s`);
+  }
   for (const m of log.matchAll(/silence_end: ([\d.]+) \| silence_duration: ([\d.]+)/g)) out.push(`${Number(m[2]).toFixed(1)}s of silence ending at ${Math.round(Number(m[1]))}s`);
   return out;
 }
