@@ -93,6 +93,8 @@ export interface LongVideo {
   failedStep?: LongWorkStep;
   failedIndex?: number;
   clips: LongClip[];
+  /** Moments the screening left out of this video, for the owner to see. */
+  screenedOut?: { title: string; why: string }[];
   title: string;
   thumbnailText?: string;
   intro?: string;

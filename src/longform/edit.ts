@@ -165,8 +165,16 @@ const AUDIO = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"];
 const fit = `fps=${FPS},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
 /** Streams show live chat and counters in this corner, and chat can hold anything. The credit sits on top of the blur. */
 const CHAT_BOX = { x: 1490, y: 0, w: 430, h: 340 };
+const CHAT_FEATHER = 48;
 export const hideChat = (input: string, output: string) =>
-  `[${input}]split[hc0][hc1];[hc1]crop=${CHAT_BOX.w}:${CHAT_BOX.h}:${CHAT_BOX.x}:${CHAT_BOX.y},boxblur=24:2[hc2];[hc0][hc2]overlay=${CHAT_BOX.x}:${CHAT_BOX.y}[${output}]`;
+  [
+    `[${input}]split[hc0][hc1]`,
+    `[hc1]crop=${CHAT_BOX.w}:${CHAT_BOX.h}:${CHAT_BOX.x}:${CHAT_BOX.y},boxblur=24:2,format=yuva420p[hc2]`,
+    // a mask drawn once and held: the blur fades out towards the picture instead of ending on a hard line
+    `color=white:s=${CHAT_BOX.w}x${CHAT_BOX.h}:r=${FPS},format=gray,geq=lum='255*min(1\\,min(X/${CHAT_FEATHER}\\,(H-1-Y)/${CHAT_FEATHER}))',loop=loop=-1:size=1:start=0[hc3]`,
+    `[hc2][hc3]alphamerge=shortest=1[hc4]`,
+    `[hc0][hc4]overlay=${CHAT_BOX.x}:${CHAT_BOX.y}:shortest=1:format=auto[${output}]`,
+  ].join(";");
 const fades = (seconds: number) => `fade=t=in:st=0:d=${FADE},fade=t=out:st=${r3(seconds - FADE)}:d=${FADE}`;
 const audioFades = (seconds: number) => `afade=t=in:st=0:d=${FADE},afade=t=out:st=${r3(seconds - FADE)}:d=${FADE}`;
 

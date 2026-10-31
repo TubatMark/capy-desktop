@@ -75,12 +75,13 @@ export function descriptionFor(v: LongVideo, intro: string): string {
 const clipKey = (c: LongClip) => `${c.jobId}:${c.n}`;
 
 /** Screen the picks, and refill with the next best (screened too) so a dropped moment doesn't shorten the video. */
-async function screenPicks(v: LongVideo): Promise<LongClip[]> {
+async function screenPicks(v: LongVideo, screenedOut: NonNullable<LongVideo["screenedOut"]>): Promise<LongClip[]> {
   const check = async (list: LongClip[]) => {
     if (!list.length) return list;
     const drop = await screenClips(list.map((c) => ({ ...c, excerpt: wordsFor(c).map((w) => w.text).join(" ").slice(0, 450) })), ai());
-    skipClips(drop.map((i) => clipKey(list[i]!)));
-    return list.filter((_, i) => !drop.includes(i));
+    skipClips(drop.map((d) => clipKey(list[d.index]!)));
+    screenedOut.push(...drop.map((d) => ({ title: list[d.index]!.title, why: d.why })));
+    return list.filter((_, i) => !drop.some((d) => d.index === i));
   };
   let kept = await check(v.clips);
   const views = await viewsLookup();
@@ -98,7 +99,8 @@ async function screenPicks(v: LongVideo): Promise<LongClip[]> {
 async function plan(v: LongVideo): Promise<Step> {
   patchVideo(v.id, { status: "planning", step: "Writing the commentary", error: undefined, failedStep: undefined });
   const excerpt = (c: LongClip) => ({ ...c, excerpt: wordsFor(c).map((w) => w.text).join(" ").slice(0, 450) });
-  const screened = await screenPicks(v);
+  const screenedOut: NonNullable<LongVideo["screenedOut"]> = [];
+  const screened = await screenPicks(v, screenedOut);
   const withWords = screened.map(excerpt);
   const script = await writeScript(v.creator, withWords, ai());
   const clips = screened.map((c, i) => ({ ...c, line: script.lines.find((l) => l.rank === screened.length - i)!.line.trim() }));
@@ -110,6 +112,7 @@ async function plan(v: LongVideo): Promise<Step> {
     outro: script.outro.trim(),
     tags: script.tags,
     clips,
+    screenedOut,
     check: { ok: review.verdict === "ok", duration: 0, warnings: [], script: review },
   };
   next.description = descriptionFor({ ...v, ...next }, script.description.trim());
@@ -228,7 +231,7 @@ async function check(v: LongVideo): Promise<null> {
   patchVideo(v.id, { status: "checking", step: "Checking the finished video", error: undefined, failedStep: undefined });
   const master = path.join(OUTPUT_ROOT, v.master!);
   const duration = await seconds(master);
-  const { stderr } = await run("ffmpeg", ["-hide_banner", "-i", master, "-vf", "fps=5,scale=320:-2,blackdetect=d=3:pix_th=0.08", "-af", "silencedetect=n=-45dB:d=6", "-f", "null", "-"]);
+  const { stderr } = await run("ffmpeg", ["-hide_banner", "-nostats", "-i", master, "-vf", "fps=5,scale=320:-2,blackdetect=d=3:pix_th=0.08", "-af", "silencedetect=n=-45dB:d=6", "-f", "null", "-"]);
   const { stdout: streams } = await run("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,width,height", "-of", "csv=p=0", master]);
   const warnings = readProblems(stderr);
   if (!/audio/.test(streams)) warnings.unshift("The video has no sound");

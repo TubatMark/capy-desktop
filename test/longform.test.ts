@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
-import { assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
+import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
 
@@ -114,6 +114,13 @@ describe("the edit", () => {
     const filter = args[args.indexOf("-filter_complex") + 1]!;
     expect(filter).toContain("volume=0.08");
     expect(filter).toContain("adelay=delays=350:all=1");
+  });
+
+  it("fades the chat blur out instead of ending on a hard line", () => {
+    const f = hideChat("in", "out");
+    expect(f).toContain("alphamerge");
+    expect(f).toContain("loop=loop=-1:size=1");
+    expect(f.endsWith("[out]")).toBe(true);
   });
 
   it("quotes file names when joining", () => {

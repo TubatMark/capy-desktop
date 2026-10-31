@@ -216,6 +216,8 @@ export interface RunOpts {
   onStderr?: (chunk: string) => void;
   timeoutMs?: number;
   killGraceMs?: number;
+  /** Stops the process past this much stdout. Default 16 MB. */
+  maxOutputBytes?: number;
 }
 
 const MAX_KEEP = 64 * 1024;
@@ -271,7 +273,7 @@ export function run(
     }
     p.stdout.on("data", (d: Buffer) => {
       outBytes += d.length;
-      if (outBytes <= 16 * 1024 * 1024) out.push(d);
+      if (outBytes <= (opts.maxOutputBytes ?? 16 * 1024 * 1024)) out.push(d);
       else stop(new Error("Subprocess output limit exceeded"));
     });
     p.stderr.on("data", (d: Buffer) => {

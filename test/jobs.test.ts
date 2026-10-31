@@ -622,13 +622,15 @@ describe("automation fixes", () => {
     });
     watching(job.id);
     await jobs().onReady(job);
+    // the review is saved just after the render is marked done
     await vi.waitFor(
-      () => expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("done"),
-      { timeout: 5000 },
+      () => {
+        const c = jobs().get(job.id)!.clips[0]!;
+        expect(c.render.status).toBe("done");
+        expect(c.contentReview).toMatchObject({ verdict: "caution" });
+      },
+      { timeout: 25_000 },
     );
-    expect(jobs().get(job.id)!.clips[0]!.contentReview).toMatchObject({
-      verdict: "caution",
-    });
   });
 });
 

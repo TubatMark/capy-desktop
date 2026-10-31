@@ -67,16 +67,25 @@ const ScreenSchema = z.object({
 
 /**
  * Before a moment goes into a video that ranks it for laughs: leave out what shouldn't be entertainment or would
- * put the video at risk. Returns the positions in `clips` to drop.
+ * put the video at risk. Returns the positions in `clips` to drop, and why.
  */
-export async function screenClips(clips: Pick<LongClip & { excerpt: string }, "title" | "reason" | "excerpt">[], o: AiOpts): Promise<number[]> {
+export async function screenClips(clips: Pick<LongClip & { excerpt: string }, "title" | "reason" | "excerpt">[], o: AiOpts): Promise<{ index: number; why: string }[]> {
   const list = clips.map((c, i) => `${i}: "${c.title}"\nWhat is said: ${c.excerpt}`).join("\n\n");
   const res = await askAgent(
     o.agent,
-    `These moments may go into a ranked comedy countdown on YouTube. List the ones to leave out because they centre on: racial slurs or race jokes, self-harm or suicide, sexual content, anyone who may be a minor in a sexual or humiliating situation, real violence, harassing or embarrassing a private person who didn't choose to be on stream, or illegal acts played for laughs. Mild swearing and streamer banter are fine.\n\n${list}`,
+    `These moments may go into a ranked comedy countdown on YouTube. Leave one out only if the moment itself centres on: racial slurs or race jokes, self-harm or suicide, sexual content, a possible minor in a sexual or humiliating situation, real violence, humiliating a private person who didn't agree to be on stream, or a real crime played for laughs.
+
+Keep everything else. Swearing, banter, pranks among friends, staged bits people signed up for, gross food, expensive things and a single rude word in passing are all fine. When unsure, keep it: the owner reviews every video.
+
+${list}`,
     { task: "review", model: o.model, maxTurns: 2, effort: "low", system: "You are a careful content reviewer. Answer only with the requested JSON.", schema: schemaOf(ScreenSchema) },
   );
-  return [...new Set(ScreenSchema.parse(res.data).avoid.map((a) => a.id))].filter((i) => i >= 0 && i < clips.length);
+  const seen = new Set<number>();
+  return ScreenSchema.parse(res.data).avoid.flatMap((a) => {
+    if (a.id < 0 || a.id >= clips.length || seen.has(a.id)) return [];
+    seen.add(a.id);
+    return [{ index: a.id, why: a.why }];
+  });
 }
 
 const CoverSchema = z.object({

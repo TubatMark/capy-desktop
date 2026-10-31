@@ -36,7 +36,8 @@ export function videoIdFromUrl(url: string): string | null {
 }
 
 export async function fetchMeta(url: string, o: YtOpts = {}): Promise<VideoMeta> {
-  const { stdout } = await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", url]);
+  // a live stream's metadata lists every fragment, and can run far past the usual limit
+  const { stdout } = await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", url], { maxOutputBytes: 128 * 1024 * 1024 });
   const j = JSON.parse(stdout);
   return {
     id: j.id,

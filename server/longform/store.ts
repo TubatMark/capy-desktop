@@ -50,9 +50,10 @@ export function removeVideo(id: string) {
 
 export const loadSlots = (): UploadSlot[] => runtimeStore().get<UploadSlot[]>(CONFIG, "slots")?.value ?? DEFAULT_SLOTS;
 export const saveSlots = (slots: UploadSlot[]) => runtimeStore().put(CONFIG, "slots", slots);
-/** Moments the screening turned down, so they aren't offered again. */
-const skipped = () => runtimeStore().get<string[]>(CONFIG, "skipped")?.value ?? [];
-export const skipClips = (keys: string[]) => runtimeStore().put(CONFIG, "skipped", [...new Set([...skipped(), ...keys])]);
+/** Moments the screening turned down, so they aren't offered again. Named for the screening rules that decided it. */
+const SKIPPED = "skipped-v2";
+const skipped = () => runtimeStore().get<string[]>(CONFIG, SKIPPED)?.value ?? [];
+export const skipClips = (keys: string[]) => runtimeStore().put(CONFIG, SKIPPED, [...new Set([...skipped(), ...keys])]);
 export const loadAudience = () => runtimeStore().get<AudienceReport>(CONFIG, "audience")?.value;
 export const saveAudience = (a: AudienceReport) => runtimeStore().put(CONFIG, "audience", a);
 

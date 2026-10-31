@@ -441,6 +441,19 @@ function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo;
           </details>
         )}
 
+        {v.screenedOut?.length ? (
+          <details className="rounded-lg border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">{v.screenedOut.length} moments left out by the content check</summary>
+            <ul className="mt-2 space-y-1 text-muted-foreground">
+              {v.screenedOut.map((s) => (
+                <li key={s.title}>
+                  <span className="text-foreground">{s.title}</span>: {s.why}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
         {err && <p className="text-sm text-destructive">{err}</p>}
       </div>
     </Sheet>

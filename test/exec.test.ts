@@ -87,3 +87,11 @@ describe("withCancel", () => {
     expect(stdout.trim()).toBe("ok");
   });
 });
+
+describe("output limit", () => {
+  it("can be raised for a command known to print a lot", async () => {
+    const big = `process.stdout.write("x".repeat(17 * 1024 * 1024))`;
+    const { stdout } = await run(process.execPath, ["-e", big], { maxOutputBytes: 32 * 1024 * 1024 });
+    expect(stdout.length).toBe(17 * 1024 * 1024);
+  });
+});
