@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../server/accounts", () => ({ getAccessToken: vi.fn(), loadAccounts: () => ({ youtube: {} }) }));
 import { shortTestGroup } from "../server/shorts-test";
 import { SHORT_TEST_MIN_AGE_MS, SHORT_TEST_MIN_POSTS, shortTestSummary, type ShortTestResult } from "../lib/shorts-test";
-import { commentaryArgs, commentaryAss, outroLength } from "../src/shorts-commentary";
+import { commentaryArgs, commentaryAss, fitsLength, outroLength } from "../src/shorts-commentary";
 
 const NOW = 2_000_000_000_000;
 const old = NOW - SHORT_TEST_MIN_AGE_MS;
@@ -31,6 +31,15 @@ describe("reading the results", () => {
   it("counts a stray view as not reaching the feed, and takes the median", () => {
     const s = shortTestSummary(results("narrated", [1, 50, 1000, 3000]), NOW);
     expect(s.narrated).toMatchObject({ posts: 4, reachedFeed: 2, feedViews: 4051, medianFeedViews: 525 });
+  });
+});
+
+describe("line length", () => {
+  it("keeps the opening from talking over the clip", () => {
+    const n = (count: number) => Array.from({ length: count }, () => "word").join(" ");
+    expect(fitsLength({ opening: n(14), verdict: n(22) })).toBe(true);
+    expect(fitsLength({ opening: n(15), verdict: n(5) })).toBe(false);
+    expect(fitsLength({ opening: n(5), verdict: n(23) })).toBe(false);
   });
 });
 

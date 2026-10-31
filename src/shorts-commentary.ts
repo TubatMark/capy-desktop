@@ -34,19 +34,28 @@ Write what the host says. Give a real opinion that a viewer can agree or argue w
 
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
+const MAX_OPENING_WORDS = 14;
+const MAX_VERDICT_WORDS = 22;
+export const fitsLength = (c: ShortCommentary) => words(c.opening) <= MAX_OPENING_WORDS && words(c.verdict) <= MAX_VERDICT_WORDS;
+
 export async function writeCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts): Promise<ShortCommentary> {
-  const res = await askAgent(ai.agent, commentaryPrompt(o), {
-    task: "metadata",
-    model: ai.model,
-    maxTurns: 2,
-    effort: "low",
-    system: "You write short spoken commentary for a clips channel. Answer only with the requested JSON.",
-    schema: strip(z.toJSONSchema(Schema, { target: "draft-7" }) as Record<string, unknown>),
-  });
-  const out = Schema.parse(res.data);
-  // a long opening talks over too much of the clip
-  if (words(out.opening) > 18 || words(out.verdict) > 26) throw new Error("The commentary came out too long");
-  return { opening: out.opening.trim(), verdict: out.verdict.trim() };
+  let prompt = commentaryPrompt(o);
+  // a long opening talks over too much of the clip: ask once more before leaving the clip plain
+  for (let attempt = 0; ; attempt++) {
+    const res = await askAgent(ai.agent, prompt, {
+      task: "metadata",
+      model: ai.model,
+      maxTurns: 2,
+      effort: "low",
+      system: "You write short spoken commentary for a clips channel. Answer only with the requested JSON.",
+      schema: strip(z.toJSONSchema(Schema, { target: "draft-7" }) as Record<string, unknown>),
+    });
+    const out = Schema.parse(res.data);
+    const trimmed = { opening: out.opening.trim(), verdict: out.verdict.trim() };
+    if (fitsLength(trimmed)) return trimmed;
+    if (attempt >= 1) throw new Error("The commentary came out too long");
+    prompt = `${commentaryPrompt(o)}\n\nYour last try was too long. The opening must be at most ${MAX_OPENING_WORDS} words and the verdict at most ${MAX_VERDICT_WORDS}.`;
+  }
 }
 
 // ---------- the edit ----------
