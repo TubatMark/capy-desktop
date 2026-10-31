@@ -19,6 +19,7 @@ import { registerMediaWorkers } from "./media";
 import { admitResources } from "./budget";
 import { runJob } from "./runner";
 import { sweepScratch } from "./scratch";
+import { maybeObserveLongForm, registerLongFormWorkers } from "../longform/queue";
 const SERVICE_MS = 15_000;
 const recovered = new Set<string>();
 export function registerWorkers() {
@@ -26,6 +27,7 @@ export function registerWorkers() {
   registerStudioWorkers();
   registerThumbnailWorkers();
   registerSimilarityWorkers();
+  registerLongFormWorkers();
   registerWork("poster", () => [
     {
       name: "posting",
@@ -92,6 +94,7 @@ export async function workerOnce(
     await maybeSweepSimilarity();
     // clips that pass every check go to the schedule without waiting for approval (owner's setting)
     await maybeAutoSchedule();
+    await maybeObserveLongForm().catch(() => {});
     try {
       sweepScratch(OUTPUT_ROOT, (id) => q.get(id)?.status);
     } catch (e) {

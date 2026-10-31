@@ -397,7 +397,7 @@ export function admissionReasons(job: {
   if (job.kind === "similarity") return [];
   if (job.kind === "watcher")
     return c.monitorPaused ? ["Creator monitoring is paused"] : [];
-  if (job.kind === "poster")
+  if (job.kind === "poster" || job.kind === "longform-upload")
     return c.postPaused || s.postingPaused ? ["Posting is paused"] : [];
   if (c.renderPaused) return ["Media and rendering work is paused"];
   const automatic =

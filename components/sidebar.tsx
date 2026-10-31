@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { BookOpen, CalendarClock, LayoutDashboard, Clapperboard, ListChecks, Layers, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { BookOpen, CalendarClock, Film, LayoutDashboard, Clapperboard, ListChecks, Layers, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,7 @@ const GROUPS: { label?: string; items: Item[] }[] = [
       { href: "/automation", label: "Monitor", icon: Radar },
       { href: "/stories", label: "Stories", icon: BookOpen },
       { href: "/studio", label: "Studio", icon: Layers },
+      { href: "/longform", label: "Long-form", icon: Film },
       { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
     ],
   },

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 const ai = vi.hoisted(() => ({ assert: vi.fn() }));
 vi.mock("../server/ai-usage", () => ({ assertAiBudgetAvailable: ai.assert }));
-import { admitResources } from "../server/worker/budget";
+import { admitResources, freeMemoryPercent } from "../server/worker/budget";
 import { Store } from "../server/db";
 import { WorkQueue } from "../server/worker/leases";
 
@@ -48,5 +48,17 @@ describe("worker resource admission", () => {
       else process.env.CAPY_DISK_RESERVE_BYTES = previous;
       store.close();
     }
+  });
+});
+
+describe("memory check", () => {
+  it("reads macOS's free memory figure, and doesn't guess when it can't", () => {
+    expect(freeMemoryPercent(() => "The system has 123\nSystem-wide memory free percentage: 59%\n")).toBe(59);
+    expect(freeMemoryPercent(() => "nothing useful")).toBeUndefined();
+    expect(
+      freeMemoryPercent(() => {
+        throw Error("no such tool");
+      }),
+    ).toBeUndefined();
   });
 });
