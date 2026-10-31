@@ -169,7 +169,7 @@ function NavGroups({ path, counts, collapsed }: { path: string; counts: Record<s
       {/* on the folded rail the heading becomes a thin divider */}
       {g.label && (collapsed ? <hr className="mx-2 mb-1 border-border/60" /> : <p className="sb-label px-3 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">{g.label}</p>)}
       {g.items.map((item) => (
-        <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/short-form" || item.href === "/todo"} collapsed={collapsed} />
+        <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/todo"} collapsed={collapsed} />
       ))}
     </div>
   ));

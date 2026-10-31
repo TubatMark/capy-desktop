@@ -12,7 +12,7 @@ describe("trayMenuModel", () => {
   it("says when nothing is scheduled, counts reviews, and offers resume when paused", () => {
     const m = trayMenuModel({ activeCount: 0, review: 3 }, true, tz);
     expect(m[0]!.label).toBe("No posts scheduled");
-    expect(m.some((x) => x.label === "3 clips waiting for your OK")).toBe(true);
+    expect(m.some((x) => x.label === "3 clips waiting for a slot")).toBe(true);
     expect(m.find((x) => x.id === "pause")!.label).toBe("Resume posting");
     expect(m.find((x) => x.id === "quit")!.label).toBe("Quit capy");
   });
@@ -27,8 +27,8 @@ describe("tray: automation", () => {
   });
   it("notifies only when more clips are waiting than before", () => {
     expect(newReviewNotice(undefined, 3)).toBeUndefined(); // first look after start-up: no burst of old news
-    expect(newReviewNotice(1, 3)).toBe("2 new clips are waiting for your OK");
-    expect(newReviewNotice(0, 1)).toBe("1 new clip is waiting for your OK");
+    expect(newReviewNotice(1, 3)).toBe("2 new clips are waiting for a slot");
+    expect(newReviewNotice(0, 1)).toBe("1 new clip is waiting for a slot");
     expect(newReviewNotice(3, 3)).toBeUndefined();
     expect(newReviewNotice(3, 1)).toBeUndefined();
   });

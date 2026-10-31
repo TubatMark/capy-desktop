@@ -110,7 +110,7 @@ export function upsertForRender(
         createdAt: now.getTime(),
         updatedAt: now.getTime(),
       },
-      "Rendered, waiting for your OK",
+      "Rendered, waiting for a slot",
       now,
     );
   const media = {

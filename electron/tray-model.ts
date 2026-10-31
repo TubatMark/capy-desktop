@@ -22,7 +22,7 @@ export function trayMenuModel(s: TraySummary, paused: boolean, tz: string): Tray
   const when = s.nextPost ? new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(s.nextPost.at)).replace(",", "") : "";
   return [
     { label: s.nextPost ? `Next post: ${when} · ${s.nextPost.platforms.map((p) => NAMES[p]).join(", ")}` : "No posts scheduled", enabled: false },
-    ...(s.review ? [{ label: `${s.review} clip${s.review === 1 ? "" : "s"} waiting for your OK`, id: "queue" as const }] : []),
+    ...(s.review ? [{ label: `${s.review} clip${s.review === 1 ? "" : "s"} waiting for a slot`, id: "queue" as const }] : []),
     ...(s.watching ? [{ label: `Watching ${s.watching} creator${s.watching === 1 ? "" : "s"}`, id: "automation" as const }] : []),
     { label: "", separator: true },
     { label: "Open capy", id: "open" },
@@ -36,5 +36,5 @@ export function trayMenuModel(s: TraySummary, paused: boolean, tz: string): Tray
 export function newReviewNotice(prev: number | undefined, next: number): string | undefined {
   if (prev === undefined || next <= prev) return undefined;
   const n = next - prev;
-  return `${n} new clip${n === 1 ? " is" : "s are"} waiting for your OK`;
+  return `${n} new clip${n === 1 ? " is" : "s are"} waiting for a slot`;
 }
