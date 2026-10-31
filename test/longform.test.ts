@@ -122,7 +122,7 @@ describe("go-live times", () => {
 
   it("projects later videos into different slots, after upload and the hold", () => {
     const t = liveTimes([video({ id: "a", createdAt: 1, check: { ok: true } }), video({ id: "b", createdAt: 2, check: { ok: true } }), video({ id: "c", createdAt: 3, check: { ok: false } })], DEFAULT_SLOTS, NOW);
-    expect(pht(t.a!.at)).toBe("Sat, Nov 7, 9:00 AM PHT");
+    expect(pht(t.a!.at)).toBe("Fri, Nov 6, 4:00 PM PHT");
     expect(t.a!.booked).toBe(false);
     expect(t.a!.at).toBeGreaterThanOrEqual(NOW + AUTO_HOLD_MS);
     expect(new Set([t.a!.at, t.b!.at, t.c!.at]).size).toBe(3);

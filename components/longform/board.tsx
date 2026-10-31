@@ -19,6 +19,7 @@ import {
   type AutopilotSettings,
   type CreatorFootage,
   type LiveTime,
+  type LongColumn,
   type LongVideo,
   type SlotResult,
   type UploadSlot,
@@ -43,6 +44,19 @@ interface CleanupPlan {
   kept: { path: string; why: string }[];
   bytes: number;
 }
+
+/** One colour per column, repeated on its cards. The column's name always goes with it, so colour is never the only cue. */
+const TONE: Record<LongColumn, { top: string; dot: string; edge: string }> = {
+  draft: { top: "border-t-slate-400", dot: "bg-slate-400", edge: "border-l-slate-400" },
+  progress: { top: "border-t-blue-500", dot: "bg-blue-500", edge: "border-l-blue-500" },
+  review: { top: "border-t-amber-500", dot: "bg-amber-500", edge: "border-l-amber-500" },
+  uploading: { top: "border-t-violet-500", dot: "bg-violet-500", edge: "border-l-violet-500" },
+  scheduled: { top: "border-t-cyan-600", dot: "bg-cyan-600", edge: "border-l-cyan-600" },
+  public: { top: "border-t-emerald-600", dot: "bg-emerald-600", edge: "border-l-emerald-600" },
+  freed: { top: "border-t-stone-400", dot: "bg-stone-400", edge: "border-l-stone-400" },
+};
+/** Go-live time: green is booked, amber a projection, orange needs the owner. */
+const liveTone = (l: LiveTime) => (l.booked ? "bg-emerald-600/15 text-emerald-900" : l.needsOwner ? "bg-orange-500/15 text-orange-900" : "bg-amber-500/15 text-amber-900");
 
 const media = (rel: string) => `/api/media/${rel.split("/").map(encodeURIComponent).join("/")}`;
 const gb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
@@ -99,10 +113,13 @@ export function LongFormBoard() {
             {LONG_COLUMNS.map((col) => {
               const cards = board.videos.filter((v) => columnOf(v.status) === col.id);
               return (
-                <section key={col.id} aria-label={col.label} className="flex min-h-64 flex-col gap-2 rounded-xl bg-muted/50 p-2">
+                <section key={col.id} aria-label={col.label} className={cn("flex min-h-64 flex-col gap-2 rounded-xl border-t-4 bg-muted/50 p-2", TONE[col.id].top)}>
                   <header className="px-1 py-1">
                     <h2 className="flex items-center justify-between text-sm font-medium">
-                      {col.label} <span className="text-xs tabular-nums text-muted-foreground">{cards.length}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span aria-hidden className={cn("size-2 rounded-full", TONE[col.id].dot)} /> {col.label}
+                      </span>{" "}
+                      <span className="text-xs tabular-nums text-muted-foreground">{cards.length}</span>
                     </h2>
                     <p className="text-xs text-muted-foreground">{col.hint}</p>
                   </header>
@@ -133,7 +150,7 @@ export function LongFormBoard() {
 
 function VideoCard({ video: v, live, onOpen }: { video: LongVideo; live?: LiveTime; onOpen: () => void }) {
   return (
-    <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-lg border bg-card p-2 text-left shadow-sm transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-primary">
+    <button type="button" onClick={onOpen} className={cn("w-full space-y-2 rounded-lg border border-l-4 bg-card p-2 text-left shadow-sm transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-primary", v.error ? "border-l-red-600" : TONE[columnOf(v.status)].edge)}>
       {v.thumb ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={media(v.thumb)} alt="" className="aspect-video w-full rounded object-cover" />
@@ -157,7 +174,7 @@ function VideoCard({ video: v, live, onOpen }: { video: LongVideo; live?: LiveTi
         </div>
       )}
       {live && (
-        <p className={cn("text-xs", live.booked ? "font-medium" : "text-muted-foreground")}>
+        <p className={cn("rounded px-1.5 py-1 text-xs font-medium", liveTone(live))}>
           {v.youtube?.publishedAt ? "Went live" : live.booked ? "Goes live" : "Planned live"}: {philippineTime(live.at)}
         </p>
       )}
@@ -291,13 +308,13 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
         )}
 
         {live && (
-          <div className="rounded-lg border p-3 text-sm">
+          <div className={cn("rounded-lg p-3 text-sm", liveTone(live))}>
             <p className="flex items-center gap-1.5 font-medium">
               <CalendarClock className="size-4" /> {v.youtube?.publishedAt ? "Went live" : live.booked ? "Goes live" : "Planned live"}: {philippineTime(live.at)}
             </p>
-            <p className="text-xs text-muted-foreground">{easternTime(live.at)}</p>
+            <p className="text-xs">{easternTime(live.at)}</p>
             {!live.booked && (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-xs">
                 {live.needsOwner ? "Not booked yet. The script review had notes, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it after the 48-hour hold." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
               </p>
             )}
