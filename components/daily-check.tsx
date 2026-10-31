@@ -20,7 +20,7 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-/** What the daily check found on posted Shorts, what capy changed, and what only the owner can do. */
+/** What the daily check found on posted Shorts, what capy changed, and anything worth knowing. */
 export function DailyCheck({ onChecked }: { onChecked?: () => void }) {
   const [data, setData] = useState<{ report: DailyReport | null; tuning: Tuning } | null>(null);
   const [busy, setBusy] = useState(false);

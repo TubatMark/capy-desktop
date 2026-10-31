@@ -62,10 +62,23 @@ describe("autopilot", () => {
   const on = { draft: true, upload: true, publish: true, free: true };
   const kinds = (a: { kind: string }[]) => a.map((x) => x.kind);
 
-  it("goes public by itself, and leaves deleting off by default", () => {
-    expect(DEFAULT_AUTOPILOT).toEqual({ draft: true, upload: true, publish: true, free: false });
+  it("does everything by itself by default", () => {
+    expect(DEFAULT_AUTOPILOT).toEqual({ draft: true, upload: true, publish: true, free: true });
     const held = video({ status: "private", youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS - 1 } });
-    expect(autopilotActions([held], [], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "publish", id: "a" }]);
+    expect(autopilotActions([held], [], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "publish", id: "a" }, { kind: "free", id: "a" }]);
+  });
+
+  it("leaves a video the owner took over completely alone", () => {
+    const base = { manual: true };
+    expect(autopilotActions([video({ ...base, status: "private", youtube: { id: "y", processedAt: 1 } })], [], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+    expect(autopilotActions([video({ ...base, master: "m", check: { ok: true, warnings: [] } })], [], { ...DEFAULT_AUTOPILOT, draft: false }, NOW)).toEqual([]);
+    expect(autopilotActions([video({ ...base, status: "rendering", error: "x", failedStep: "render" })], [], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+    expect(autopilotActions([video({ ...base, master: "m", check: { ok: false, warnings: [] } })], [], { ...DEFAULT_AUTOPILOT, draft: false }, NOW)).toEqual([]);
+  });
+
+  it("drops a draft that ran out of footage instead of getting stuck, and carries on", () => {
+    const stuck = video({ status: "planning", error: "Kai has about 4 minutes of usable footage. A long video needs at least 8.", failedStep: "plan" });
+    expect(autopilotActions([stuck], [rakai], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "dismiss", id: "a" }, { kind: "draft", creator: "Rakai" }]);
   });
 
   it("drafts one video at a time, starting with the creator waited on longest", () => {
@@ -80,10 +93,10 @@ describe("autopilot", () => {
     expect(autopilotActions(many, [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
   });
 
-  it("retries a failure once, then waits for the owner and doesn't redraft that creator", () => {
+  it("retries a failure twice, then waits for the owner and doesn't redraft that creator", () => {
     const first = video({ status: "rendering", error: "x", failedStep: "render" });
     expect(kinds(autopilotActions([first], [ray], DEFAULT_AUTOPILOT, NOW))).toEqual(["retry"]);
-    const second = video({ status: "rendering", error: "x", failedStep: "render", autoRetries: 1 });
+    const second = video({ status: "rendering", error: "x", failedStep: "render", autoRetries: 2 });
     expect(autopilotActions([second], [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
     expect(autopilotActions([second], [ray, rakai], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "draft", creator: "Rakai" }]);
     expect(autopilotActions([second, { ...(second as object), id: "b", creator: "Rakai" } as never], [{ ...ray, creator: "DDG" }], DEFAULT_AUTOPILOT, NOW)).toEqual([]);

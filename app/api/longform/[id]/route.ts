@@ -27,6 +27,7 @@ const Body = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("schedule"), at: z.number().int().positive(), slotId: z.string().max(40).optional() }),
   z.strictObject({ action: z.literal("unschedule") }),
   z.strictObject({ action: z.literal("free") }),
+  z.strictObject({ action: z.literal("manual"), on: z.boolean() }),
 ]);
 
 export async function POST(req: Request, ctx: Ctx) {
@@ -38,6 +39,8 @@ export async function POST(req: Request, ctx: Ctx) {
   const body = parsed.data;
   try {
     switch (body.action) {
+      case "manual":
+        return NextResponse.json(patchVideo(id, { manual: body.on }));
       case "text":
         if (video.youtube?.id) return NextResponse.json({ error: "It's already on YouTube; edit it in YouTube Studio" }, { status: 409 });
         return NextResponse.json(patchVideo(id, { title: body.title, description: body.description }));
@@ -60,12 +63,13 @@ export async function POST(req: Request, ctx: Ctx) {
         if (video.youtube.publishedAt) return NextResponse.json({ error: "It's already public" }, { status: 409 });
         if (body.at < Date.now() + 15 * 60_000) return NextResponse.json({ error: "Pick a time at least 15 minutes away" }, { status: 400 });
         await setPublishTime(await ytDeps(), video.youtube.id, body.at);
-        return NextResponse.json(patchVideo(id, { status: video.status === "freed" ? "freed" : "scheduled", slotAt: body.at, slotId: body.slotId }));
+        return NextResponse.json(patchVideo(id, { status: video.status === "freed" ? "freed" : "scheduled", slotAt: body.at, slotId: body.slotId, manual: true }));
       }
       case "unschedule":
         if (!video.youtube?.id || video.youtube.publishedAt) return NextResponse.json({ error: "There's no schedule to cancel" }, { status: 409 });
         await setPublishTime(await ytDeps(), video.youtube.id, null);
-        return NextResponse.json(patchVideo(id, { status: video.status === "freed" ? "freed" : "private", slotAt: undefined, slotId: undefined }));
+        // the owner decided: the autopilot mustn't just book it again
+        return NextResponse.json(patchVideo(id, { status: video.status === "freed" ? "freed" : "private", slotAt: undefined, slotId: undefined, manual: true }));
       case "free":
         return NextResponse.json(freeSpace(id));
     }

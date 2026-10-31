@@ -19,10 +19,20 @@ const seconds = async (file: string) => {
   return d;
 };
 
-export const loadShortTest = (): ShortTestState => runtimeStore().get<ShortTestState>(CONFIG, "shorts-test")?.value ?? { on: false };
+/** On unless switched off. Tests run with CAPY_NARRATE=off, so rendering a clip there never calls an AI. */
+const narrationOnByDefault = () => process.env.CAPY_NARRATE !== "off";
+export const loadShortTest = (): ShortTestState => runtimeStore().get<ShortTestState>(CONFIG, "shorts-test")?.value ?? { on: narrationOnByDefault(), startedAt: 0 };
 export function setShortTest(on: boolean, now = Date.now()) {
   const cur = loadShortTest();
-  runtimeStore().put(CONFIG, "shorts-test", { on, startedAt: cur.startedAt ?? (on ? now : undefined) });
+  runtimeStore().put(CONFIG, "shorts-test", { on, startedAt: cur.startedAt || (on ? now : undefined) });
+}
+
+/** The owner's choice of who gets narrated. "auto" hands it back to the daily check. */
+export function setNarration(mode: "auto" | "all" | "half" | "off", now = Date.now()) {
+  setShortTest(mode !== "off", now);
+  const store = runtimeStore();
+  const tuning = store.get<Record<string, unknown>>(CONFIG, "tuning")?.value ?? {};
+  store.put(CONFIG, "tuning", mode === "all" || mode === "half" ? { ...tuning, narrate: mode, narrateManual: mode } : { ...tuning, narrateManual: undefined });
 }
 
 /** Set by the daily check once there's evidence either way. */
@@ -39,7 +49,7 @@ export const shortTestGroup = (jobId: string, n: number): "narrated" | "plain" =
  */
 export async function applyShortTest(job: JobState, c: ClipState, file: string, words: Word[]): Promise<number> {
   const test = loadShortTest();
-  if (!test.on || !test.startedAt || !job.automation || (job.createdAt ?? 0) < test.startedAt) return 0;
+  if (!test.on || test.startedAt === undefined || !job.automation || (job.createdAt ?? 0) < test.startedAt) return 0;
   const narrate = loadNarrateMode();
   const group = narrate === "all" ? "narrated" : narrate === "off" ? "plain" : shortTestGroup(job.id, c.n);
   if (group === "plain") {
@@ -102,5 +112,6 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
 export const SHORT_TEST_RESULTS = "shorts-test-results";
 export function shortTestReport(now = Date.now()) {
   const results = runtimeStore().get<ShortTestResult[]>(CONFIG, SHORT_TEST_RESULTS)?.value ?? [];
-  return { ...loadShortTest(), narrate: loadNarrateMode(), summary: shortTestSummary(results, now) };
+  const tuning = runtimeStore().get<{ narrateManual?: string }>(CONFIG, "tuning")?.value;
+  return { ...loadShortTest(), narrate: loadNarrateMode(), narrateManual: tuning?.narrateManual, summary: shortTestSummary(results, now) };
 }

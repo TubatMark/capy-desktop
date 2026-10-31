@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { removeOldShorts } from "../shorts-cleanup";
 import { freeSpace } from "./cleanup";
-import { availableClips, createVideo, footageByCreator, getVideo, listVideos, loadAutopilot, loadSlots, logAutopilot, patchVideo, videoDir } from "./store";
+import { availableClips, createVideo, footageByCreator, getVideo, listVideos, loadAutopilot, loadSlots, logAutopilot, patchVideo, removeVideo, videoDir } from "./store";
 import { viewsLookup, ytDeps, type Step } from "./worker";
 import { setPublishTime } from "./youtube";
 
@@ -20,6 +20,9 @@ async function act(a: AutopilotAction, queue: (s: Step) => Promise<unknown>, now
       patchVideo(a.id, { error: undefined, failedStep: undefined, failedIndex: undefined, step: "Trying again", autoRetries: (v.autoRetries ?? 0) + 1 });
       return;
     }
+    case "dismiss":
+      removeVideo(a.id);
+      return;
     case "fix": {
       const dir = videoDir(a.id);
       rmSync(path.join(dir, "sections"), { recursive: true, force: true });

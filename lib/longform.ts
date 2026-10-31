@@ -116,6 +116,8 @@ export interface LongVideo {
   failedIndex?: number;
   /** How many times the autopilot has retried a failure. */
   autoRetries?: number;
+  /** The owner took this video over: the autopilot leaves it alone until they hand it back. */
+  manual?: boolean;
   /** The script has had its one automatic rewrite. */
   fixTried?: boolean;
   uploadStartedAt?: number;
@@ -265,7 +267,7 @@ export interface AutopilotSettings {
   /** Delete local files once a video's hold has passed. */
   free: boolean;
 }
-export const DEFAULT_AUTOPILOT: AutopilotSettings = { draft: true, upload: true, publish: true, free: false };
+export const DEFAULT_AUTOPILOT: AutopilotSettings = { draft: true, upload: true, publish: true, free: true };
 
 /** Don't pile up more finished videos than anyone can watch. */
 export const MAX_WAITING_VIDEOS = 6;
@@ -275,7 +277,7 @@ export const AUTO_UPLOAD_GAP_MS = 20 * 3600_000;
 export const PUBLISH_HOLD_MS = 6 * 3600_000;
 /** Local files outlast that by far: they're the only way to fix and upload a video again. */
 export const AUTO_HOLD_MS = 48 * 3600_000;
-const MAX_AUTO_RETRIES = 1;
+const MAX_AUTO_RETRIES = 2;
 /** Several failures in a row usually share a cause: stop spending AI and wait for the owner. */
 const MAX_FAILED_VIDEOS = 2;
 
@@ -287,6 +289,7 @@ export interface AutopilotLogEntry {
 export type AutopilotAction =
   | { kind: "retry"; id: string }
   | { kind: "fix"; id: string }
+  | { kind: "dismiss"; id: string }
   | { kind: "draft"; creator: string }
   | { kind: "upload"; id: string }
   | { kind: "publish"; id: string }
@@ -295,17 +298,23 @@ export type AutopilotAction =
 const WORKING: LongStatus[] = ["draft", "planning", "narrating", "rendering", "checking"];
 
 /** What the autopilot should do now. Pure, so every rule is testable. */
-export function autopilotActions(videos: LongVideo[], footage: CreatorFootage[], s: AutopilotSettings, now: number): AutopilotAction[] {
+export function autopilotActions(all: LongVideo[], footage: CreatorFootage[], s: AutopilotSettings, now: number): AutopilotAction[] {
   const out: AutopilotAction[] = [];
-  const failed = videos.filter((v) => v.error && !v.youtube?.rejected);
+  // screening can leave too little footage: that isn't a failure, the moments go back and it tries again with new clips
+  const short = (v: LongVideo) => !v.youtube?.id && /usable footage/.test(v.error ?? "");
+  for (const v of all) if (short(v) && !v.manual) out.push({ kind: "dismiss", id: v.id });
+  // what the owner took over still counts for slots and limits, but gets no actions
+  const videos = all.filter((v) => !short(v));
+  const auto = videos.filter((v) => !v.manual);
+  const failed = auto.filter((v) => v.error && !v.youtube?.rejected);
   for (const v of failed) if (v.failedStep && (v.autoRetries ?? 0) < MAX_AUTO_RETRIES) out.push({ kind: "retry", id: v.id });
 
   const working = videos.some((v) => WORKING.includes(v.status) && !v.error);
   // made before the review could fix its own notes, or the review ran late: run the script again before it goes anywhere
   const unfixed = videos.filter((v) => v.status === "review" && v.check && !v.check.ok && !v.check.warnings?.length && !v.fixTried && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
-  if (unfixed && !working && !out.length) out.push({ kind: "fix", id: unfixed.id });
+  if (unfixed && !unfixed.manual && !working && !out.some((a) => a.kind !== "dismiss")) out.push({ kind: "fix", id: unfixed.id });
   const waiting = videos.filter((v) => v.status === "review").length;
-  if (s.draft && !working && !out.length && failed.length < MAX_FAILED_VIDEOS && waiting < MAX_WAITING_VIDEOS) {
+  if (s.draft && !working && !out.some((a) => a.kind !== "dismiss") && failed.length < MAX_FAILED_VIDEOS && waiting < MAX_WAITING_VIDEOS) {
     const blocked = new Set(failed.map((v) => v.creator));
     const lastVideo = (creator: string) => Math.max(0, ...videos.filter((v) => v.creator === creator).map((v) => v.createdAt));
     const next = footage
@@ -318,16 +327,16 @@ export function autopilotActions(videos: LongVideo[], footage: CreatorFootage[],
   const lastUpload = Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0));
   if (s.upload && !uploading && now - lastUpload >= AUTO_UPLOAD_GAP_MS) {
     // a script keeps the review's remaining notes after its one rewrite (reviewers rarely find nothing); a broken file waits for the owner
-    const ready = videos.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && (v.check.ok || v.fixTried) && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+    const ready = auto.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && (v.check.ok || v.fixTried) && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
     if (ready) out.push({ kind: "upload", id: ready.id });
   }
 
   const held = (v: LongVideo, ms: number) => !!v.youtube?.id && !v.youtube.rejected && !!v.youtube.processedAt && now - v.youtube.processedAt >= ms;
   if (s.publish) {
-    const next = videos.filter((v) => v.status === "private" && !v.slotAt && !v.check?.warnings?.length && held(v, PUBLISH_HOLD_MS)).sort((a, b) => a.createdAt - b.createdAt)[0];
+    const next = auto.filter((v) => v.status === "private" && !v.slotAt && !v.check?.warnings?.length && held(v, PUBLISH_HOLD_MS)).sort((a, b) => a.createdAt - b.createdAt)[0];
     if (next) out.push({ kind: "publish", id: next.id });
   }
-  if (s.free) for (const v of videos) if (v.status !== "freed" && held(v, AUTO_HOLD_MS) && !v.error) out.push({ kind: "free", id: v.id });
+  if (s.free) for (const v of auto) if (v.status !== "freed" && held(v, AUTO_HOLD_MS) && !v.error) out.push({ kind: "free", id: v.id });
   return out;
 }
 
@@ -335,6 +344,8 @@ export function describeAction(a: AutopilotAction, title?: string): string {
   switch (a.kind) {
     case "retry":
       return `Tried "${title}" again after a failure`;
+    case "dismiss":
+      return `Dropped "${title}": too little footage passed the content check, so it'll try again when new clips arrive`;
     case "fix":
       return `Rewriting the script of "${title}" to fix the review's notes`;
     case "draft":
@@ -374,7 +385,7 @@ export function liveTimes(videos: LongVideo[], slots: UploadSlot[], now: number)
   }
   let nextUpload = Math.max(now, Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0)) + AUTO_UPLOAD_GAP_MS);
   for (const v of [...videos].sort((a, b) => a.createdAt - b.createdAt)) {
-    if (out[v.id] || v.error || v.youtube?.rejected || v.status === "public") continue;
+    if (out[v.id] || v.error || v.manual || v.youtube?.rejected || v.status === "public") continue;
     let onYouTube = v.youtube?.processedAt ?? v.uploadStartedAt;
     if (!onYouTube) {
       onYouTube = nextUpload;

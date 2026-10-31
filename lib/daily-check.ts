@@ -15,6 +15,8 @@ export interface PostedRow {
 export interface Tuning {
   /** Who gets narrated. */
   narrate: "half" | "all" | "off";
+  /** The owner picked it: the daily check doesn't change it. */
+  narrateManual?: "all" | "half";
   clipMaxSec: number;
   /** When clip length last changed: it needs time to show results. */
   clipChangedAt?: number;
@@ -35,7 +37,7 @@ export interface DailyReport {
   bestCreators: { creator: string; feedViews: number; posts: number }[];
   /** What capy changed today. */
   actions: string[];
-  /** What only the owner can do. */
+  /** Worth knowing; nothing waits on it. */
   needsYou: string[];
 }
 
@@ -71,7 +73,9 @@ export function judge(rows: PostedRow[], tuning: Tuning, now: number): { report:
   const needsYou: string[] = [];
 
   // what to post: plain clips have had their chance once there are enough of them
-  if (plain.length >= MIN_POSTS && reachRate(plain) < 0.1 && tuning.narrate !== "all") {
+  if (tuning.narrateManual) {
+    // the owner's call stands
+  } else if (plain.length >= MIN_POSTS && reachRate(plain) < 0.1 && tuning.narrate !== "all") {
     next.narrate = "all";
     actions.push(`Narrating every new Short: ${plain.filter((r) => r.feedViews >= REACHED_FEED).length} of ${plain.length} plain Shorts reached the feed.`);
   } else if (narrated.length >= MIN_POSTS && plain.length >= MIN_POSTS && reachRate(plain) > reachRate(narrated) + 0.2 && tuning.narrate !== "off") {
@@ -79,7 +83,7 @@ export function judge(rows: PostedRow[], tuning: Tuning, now: number): { report:
     actions.push(`Stopped narrating: plain Shorts reach the feed more often (${Math.round(reachRate(plain) * 100)}% against ${Math.round(reachRate(narrated) * 100)}%).`);
   }
   if (narrated.length >= MIN_POSTS && reachRate(narrated) < 0.1) {
-    needsYou.push(`${narrated.length} narrated Shorts haven't reached the feed either, so AI commentary isn't enough. Try recording your own voice on a few clips, or test a new channel.`);
+    needsYou.push(`${narrated.length} narrated Shorts haven't reached the feed either, so AI commentary isn't enough on its own. Your own voice on a few clips, or a new channel, are the next things to try.`);
   }
 
   // how long clips are: only when enough people watched for retention to mean something
@@ -102,7 +106,6 @@ export function judge(rows: PostedRow[], tuning: Tuning, now: number): { report:
     weak: `Only ${reached.length} of ${judged.length} Shorts reached the feed.`,
     "not-reaching": `None of the last ${judged.length} Shorts reached the feed, so YouTube isn't showing them.`,
   }[health];
-  if (health === "not-reaching" && !narrated.length) needsYou.push("One Short uploaded by hand in YouTube Studio would show whether capy's uploads are part of the problem.");
 
   const byCreator = new Map<string, { feedViews: number; posts: number }>();
   for (const r of judged) {

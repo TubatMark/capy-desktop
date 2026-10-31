@@ -41,8 +41,13 @@ describe("acting on the numbers", () => {
     const out = judge([...many(10), ...many(10, { group: "narrated" })], { ...DEFAULT_TUNING, narrate: "all" }, NOW);
     expect(out.report.needsYou.join(" ")).toMatch(/AI commentary isn't enough/);
   });
-  it("suggests the hand-upload test while nothing else explains it", () => {
-    expect(judge(many(6), DEFAULT_TUNING, NOW).report.needsYou.join(" ")).toMatch(/by hand/);
+  it("never overrides the owner's choice", () => {
+    const out = judge(many(10), { ...DEFAULT_TUNING, narrate: "half", narrateManual: "half" }, NOW);
+    expect(out.tuning.narrate).toBe("half");
+    expect(out.report.actions).toEqual([]);
+  });
+  it("doesn't wait on anyone when nothing is reaching the feed", () => {
+    expect(judge(many(6), DEFAULT_TUNING, NOW).report.needsYou).toEqual([]);
   });
   it("tunes clip length only with enough viewers, within limits, and not too often", () => {
     const seen = (pct: number) => many(5, { views: 500, avgViewPct: pct, feedViews: 300 });

@@ -40,7 +40,7 @@ interface Board {
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
   live: Record<string, LiveTime>;
-  shortsTest: ShortTestState & { narrate: "half" | "all" | "off"; summary: ShortTestSummary };
+  shortsTest: ShortTestState & { narrate: "half" | "all" | "off"; narrateManual?: "all" | "half"; summary: ShortTestSummary };
   autopilot: AutopilotSettings;
   autopilotLog: AutopilotLogEntry[];
 }
@@ -101,7 +101,7 @@ export function LongFormBoard() {
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
             <Film className="size-6 text-primary" /> Long-form
           </h1>
-          <p className="text-sm text-muted-foreground">Ranked videos edited from the footage capy already saved, with original commentary.</p>
+          <p className="text-sm text-muted-foreground">Ranked videos made, reviewed, uploaded and published automatically. Open any video to step in.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ViewToggle view={mode} onChange={setMode} />
@@ -272,6 +272,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
   const [cleanup, setCleanup] = useState<CleanupPlan | null>(null);
   const [confirmFree, setConfirmFree] = useState(false);
   const [confirmPublic, setConfirmPublic] = useState(false);
+  const [ownTime, setOwnTime] = useState("");
 
   const action = useCallback(
     async (name: string, body: Record<string, unknown>) => {
@@ -330,7 +331,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
             <p className="text-xs">{easternTime(live.at)}</p>
             {!live.booked && (
               <p className="mt-1 text-xs">
-                {live.needsOwner ? "Not booked yet. The checks found a file problem, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it automatically, 6 hours or more after processing." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
+                {live.needsOwner ? "Not booked yet. The checks found a file problem, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it automatically, 6 hours or more after processing. You can pick a time yourself once it's on YouTube." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
               </p>
             )}
           </div>
@@ -376,7 +377,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
 
         <div className="flex flex-wrap gap-2">
           {v.status === "review" && (
-            <Button disabled={!!busy || !title.trim()} onClick={saveAndUpload}>
+            <Button variant="outline" disabled={!!busy || !title.trim()} onClick={saveAndUpload}>
               {busy === "upload" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Upload as Private now
             </Button>
           )}
@@ -400,6 +401,16 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
         </div>
         {v.youtube?.note && <p className="text-xs text-muted-foreground">{v.youtube.note}</p>}
 
+        {v.status !== "public" && v.status !== "freed" && (
+          <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+            <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={!v.manual} disabled={!!busy} onChange={(e) => action("manual", { action: "manual", on: !e.target.checked })} />
+            <span>
+              <span className="font-medium">Automatic</span>
+              <span className="block text-xs text-muted-foreground">{v.manual ? "You're handling this video. capy won't upload, schedule or delete it. Tick to hand it back." : "capy uploads, schedules and cleans up this video. Untick to handle it yourself."}</span>
+            </span>
+          </label>
+        )}
+
         {v.youtube?.processedAt && !v.youtube.publishedAt && (
           <div className="space-y-2 rounded-lg border p-3 text-sm">
             <h3 className="flex items-center gap-1.5 font-medium">
@@ -419,7 +430,18 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
                 <p>
                   Next open slot: {philippineTime(rec.at)} ({easternTime(rec.at)}).
                 </p>
-                <p className="text-muted-foreground">Check YouTube Studio for copyright claims first. Reused footage can bring claims or strikes even with commentary.</p>
+                <p className="text-muted-foreground">Or pick your own time. Doing either makes this video manual.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input type="datetime-local" aria-label="Go-live time" className="w-auto" value={ownTime} onChange={(e) => setOwnTime(e.target.value)} />
+                  <Button size="sm" variant="outline" disabled={!!busy || !ownTime} onClick={() => action("schedule", { action: "schedule", at: new Date(ownTime).getTime() })}>
+                    Use this time
+                  </Button>
+                  {!v.manual && (
+                    <Button size="sm" variant="outline" disabled={!!busy} onClick={() => action("manual", { action: "manual", on: true })}>
+                      Keep it Private
+                    </Button>
+                  )}
+                </div>
                 {confirmPublic ? (
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" disabled={!!busy} onClick={() => action("schedule", { action: "schedule", at: rec.at, slotId: rec.slot.id }).then(() => setConfirmPublic(false))}>
@@ -597,7 +619,7 @@ function LongCalendar({ board, onOpen }: { board: Board; onOpen: (id: string) =>
 const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; warn?: string }[] = [
   { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
   { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
-  { key: "publish", label: "Schedule going public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
+  { key: "publish", label: "Go public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
   { key: "free", label: "Delete local files", hint: "Removes long-form footage and masters 48 hours after processing, and rendered Shorts 48 hours after posting.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
 ];
 
@@ -669,10 +691,10 @@ function AutopilotPanel({ settings, log, onChange }: { settings: AutopilotSettin
 
 function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChange: () => void }) {
   const [err, setErr] = useState<string | null>(null);
-  async function set(on: boolean) {
+  async function choose(mode: string) {
     setErr(null);
     try {
-      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "shorts-test", on }) });
+      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "shorts-test", mode }) });
       onChange();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -691,15 +713,20 @@ function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChan
   return (
     <section className="space-y-3 rounded-xl border p-4">
       <h2 className="flex items-center gap-2 font-medium">
-        <Mic className="size-4" /> Narrated Shorts test
+        <Mic className="size-4" /> Narrated Shorts
       </h2>
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={test.on} onChange={(e) => set(e.target.checked)} />
-        <span>
-          <span className="font-medium">{test.narrate === "all" ? "Narrate every new Short" : test.narrate === "off" ? "Narration stopped by the daily check" : "Narrate half of new Shorts"}</span>
-          <span className="block text-xs text-muted-foreground">The host adds an opinion at the start, a comment partway through and a verdict at the end. Shorts already made or scheduled don't change.</span>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Label htmlFor="narrate-mode">Narration</Label>
+        <select id="narrate-mode" className="rounded-md border bg-background px-2 py-1 text-sm" value={!test.on ? "off" : test.narrateManual ?? "auto"} onChange={(e) => choose(e.target.value)}>
+          <option value="auto">Automatic: the daily check decides</option>
+          <option value="all">Every new Short</option>
+          <option value="half">Half of new Shorts</option>
+          <option value="off">None</option>
+        </select>
+        <span className="text-xs text-muted-foreground">
+          {!test.on ? "Not narrating." : `Now: ${test.narrate === "all" ? "every new Short" : test.narrate === "off" ? "no new Shorts" : "half of new Shorts"}.`} Shorts already made or scheduled don&apos;t change.
         </span>
-      </label>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {row("Narrated", test.summary.narrated, "bg-violet-500/10")}
         {row("Plain", test.summary.plain, "bg-slate-500/10")}
