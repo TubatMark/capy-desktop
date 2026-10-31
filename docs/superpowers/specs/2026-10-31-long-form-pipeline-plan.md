@@ -1,7 +1,13 @@
 # Long-form video pipeline: plan
 
-Status: waiting for the owner's go-ahead. Nothing is built yet.
-Updated 2026-10-31 with audience findings and upload timing (Stage 2).
+Status: built on `feat/long-form` and installed 2026-10-31. Not merged. One real video uploaded as Private (`TILzuWr7Z2g`). The manual test Short hasn't been done, so nothing should go public yet.
+
+## What changed while building
+- Voice: Piper with `en_US-joe-medium` (CC0). The `ryan` voice is non-commercial, so it was rejected. Run `node scripts/setup-voice.mjs` on a new computer; without it capy falls back to the macOS voice.
+- Added after checking real frames: clips are screened before use, the stream's chat corner is blurred, slurs are masked in captions, the AI picks the cover frame and its words, and descriptions include chapters.
+- The screening is cautious: it removed 9 or 10 of Kai Cenat's moments in two runs. Turned-down moments aren't offered again.
+- Memory: long-form work waits below 20% free memory, and ffmpeg's threads are capped. The lowest free memory seen during a real run was 46%.
+- A second GitHub search found nothing worth adding. Candidates to revisit: Chatterbox (MIT, last pushed 2026-07-21) for a more natural voice, untested and likely to use much more memory.
 
 ## Key findings
 
