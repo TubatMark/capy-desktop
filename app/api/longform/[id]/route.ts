@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { errorResponse } from "@/server/http";
+import { startUpload } from "@/server/longform/autopilot";
 import { cleanupPlan, freeSpace } from "@/server/longform/cleanup";
 import { queueStep } from "@/server/longform/queue";
 import { getVideo, patchVideo, removeVideo } from "@/server/longform/store";
@@ -42,7 +43,7 @@ export async function POST(req: Request, ctx: Ctx) {
       case "upload":
         // the owner's approval: nothing reaches YouTube without this
         if (video.status !== "review" || !video.master) return NextResponse.json({ error: "Only a finished video in review can be uploaded" }, { status: 409 });
-        patchVideo(id, { status: "uploading", step: "Starting the upload", progress: 0, error: undefined, failedStep: undefined });
+        startUpload(id);
         await queueStep({ id, step: "upload" });
         return NextResponse.json(getVideo(id));
       case "retry":

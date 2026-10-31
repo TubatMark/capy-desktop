@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
+import { AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
 import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
@@ -51,6 +51,62 @@ describe("upload slots", () => {
     ]);
     expect(results[0]).toMatchObject({ videos: 3, avgViews: 20, comparable: true });
     expect(results[1]).toMatchObject({ videos: 1, comparable: false });
+  });
+});
+
+describe("autopilot", () => {
+  const NOW = 2_000_000_000_000;
+  const video = (over: object) => ({ id: "a", creator: "Ray", status: "review", title: "t", clips: [], createdAt: 1, updatedAt: 1, ...over }) as never;
+  const ray = { creator: "Ray", clips: 20, rawSeconds: 1200, estimateSeconds: 700, enough: true };
+  const rakai = { creator: "Rakai", clips: 15, rawSeconds: 800, estimateSeconds: 700, enough: true };
+  const on = { draft: true, upload: true, publish: true, free: true };
+  const kinds = (a: { kind: string }[]) => a.map((x) => x.kind);
+
+  it("leaves going public and deleting off by default", () => {
+    expect(DEFAULT_AUTOPILOT).toEqual({ draft: true, upload: true, publish: false, free: false });
+    const held = video({ status: "private", youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS - 1 } });
+    expect(autopilotActions([held], [], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+  });
+
+  it("drafts one video at a time, starting with the creator waited on longest", () => {
+    expect(autopilotActions([], [ray, rakai], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "draft", creator: "Ray" }]);
+    expect(autopilotActions([video({ status: "private", createdAt: 5 })], [ray, rakai], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "draft", creator: "Rakai" }]);
+    expect(autopilotActions([video({ status: "rendering" })], [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+    expect(autopilotActions([], [{ ...ray, enough: false }], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+  });
+
+  it("stops drafting when too many wait for review", () => {
+    const many = Array.from({ length: MAX_WAITING_VIDEOS }, (_, i) => video({ id: String(i), check: { ok: false } }));
+    expect(autopilotActions(many, [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+  });
+
+  it("retries a failure once, then waits for the owner and doesn't redraft that creator", () => {
+    const first = video({ status: "rendering", error: "x", failedStep: "render" });
+    expect(kinds(autopilotActions([first], [ray], DEFAULT_AUTOPILOT, NOW))).toEqual(["retry"]);
+    const second = video({ status: "rendering", error: "x", failedStep: "render", autoRetries: 1 });
+    expect(autopilotActions([second], [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+    expect(autopilotActions([second], [ray, rakai], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "draft", creator: "Rakai" }]);
+    expect(autopilotActions([second, { ...(second as object), id: "b", creator: "Rakai" } as never], [{ ...ray, creator: "DDG" }], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+  });
+
+  it("uploads anything whose file checks pass, at most one a day", () => {
+    const good = video({ master: "m", check: { ok: false, warnings: [], script: { verdict: "caution", notes: ["n"] } } });
+    const off = { ...DEFAULT_AUTOPILOT, draft: false };
+    expect(autopilotActions([good], [], off, NOW)).toEqual([{ kind: "upload", id: "a" }]);
+    expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: ["no sound"] } })], [], off, NOW)).toEqual([]);
+    const recent = video({ id: "b", status: "private", uploadStartedAt: NOW - AUTO_UPLOAD_GAP_MS + 1 });
+    expect(autopilotActions([good, recent], [], off, NOW)).toEqual([]);
+    expect(autopilotActions([good, video({ id: "b", status: "uploading" })], [], off, NOW)).toEqual([]);
+  });
+
+  it("waits 48 hours, and never touches a rejected video, even when switched on", () => {
+    const fresh = video({ status: "private", youtube: { id: "y", processedAt: NOW - 1000 } });
+    const rejected = video({ status: "private", youtube: { id: "y", processedAt: 1, rejected: "copyright" } });
+    expect(autopilotActions([fresh, rejected], [], { ...on, draft: false }, NOW)).toEqual([]);
+    const held = video({ status: "private", check: { ok: true }, youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
+    expect(kinds(autopilotActions([held], [], { ...on, draft: false }, NOW))).toEqual(["publish", "free"]);
+    const noted = video({ status: "private", check: { ok: false }, youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
+    expect(kinds(autopilotActions([noted], [], { ...on, draft: false, free: false }, NOW))).toEqual([]);
   });
 });
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { recommendSlot, slotResults } from "@/lib/longform";
 import { errorResponse } from "@/server/http";
 import { queueStep } from "@/server/longform/queue";
-import { availableClips, createVideo, footageByCreator, listVideos, loadAudience, loadSlots, saveSlots } from "@/server/longform/store";
+import { availableClips, createVideo, footageByCreator, listVideos, loadAudience, loadAutopilot, loadAutopilotLog, loadSlots, saveAutopilot, saveSlots } from "@/server/longform/store";
 import { viewsLookup } from "@/server/longform/worker";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,8 @@ export async function GET() {
       slots,
       recommended: recommendSlot(slots, taken, Date.now()),
       results: slotResults(slots, videos),
+      autopilot: loadAutopilot(),
+      autopilotLog: loadAutopilotLog(),
     });
   } catch (e) {
     return errorResponse(e);
@@ -28,6 +30,10 @@ export async function GET() {
 }
 
 const Body = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("autopilot"),
+    settings: z.strictObject({ draft: z.boolean(), upload: z.boolean(), publish: z.boolean(), free: z.boolean() }),
+  }),
   z.strictObject({ action: z.literal("create"), creator: z.string().min(1).max(100) }),
   z.strictObject({
     action: z.literal("slots"),
@@ -51,6 +57,10 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
   try {
+    if (parsed.data.action === "autopilot") {
+      saveAutopilot(parsed.data.settings);
+      return NextResponse.json({ ok: true });
+    }
     if (parsed.data.action === "slots") {
       saveSlots(parsed.data.slots);
       return NextResponse.json({ ok: true });

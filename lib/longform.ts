@@ -92,6 +92,9 @@ export interface LongVideo {
   /** The step Retry runs again. */
   failedStep?: LongWorkStep;
   failedIndex?: number;
+  /** How many times the autopilot has retried a failure. */
+  autoRetries?: number;
+  uploadStartedAt?: number;
   clips: LongClip[];
   /** Moments the screening left out of this video, for the owner to see. */
   screenedOut?: { title: string; why: string }[];
@@ -220,6 +223,93 @@ const fmt = (at: number, timeZone: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(at);
 export const philippineTime = (at: number) => `${fmt(at, "Asia/Manila")} PHT`;
 export const easternTime = (at: number) => `${fmt(at, "America/New_York")} ET`;
+
+// ---------- autopilot ----------
+
+export interface AutopilotSettings {
+  /** Check footage and draft videos. */
+  draft: boolean;
+  /** Upload a video that passed every check, as Private. */
+  upload: boolean;
+  /** Give Private videos a public time. Off until the owner has read the feed test. */
+  publish: boolean;
+  /** Delete local files once a video's hold has passed. */
+  free: boolean;
+}
+export const DEFAULT_AUTOPILOT: AutopilotSettings = { draft: true, upload: true, publish: false, free: false };
+
+/** Don't pile up more finished videos than anyone can watch. */
+export const MAX_WAITING_VIDEOS = 6;
+/** A video upload costs about a sixth of YouTube's daily quota, and Shorts need the rest. */
+export const AUTO_UPLOAD_GAP_MS = 20 * 3600_000;
+/** Time for claims to appear before anything goes public or gets deleted. */
+export const AUTO_HOLD_MS = 48 * 3600_000;
+const MAX_AUTO_RETRIES = 1;
+/** Several failures in a row usually share a cause: stop spending AI and wait for the owner. */
+const MAX_FAILED_VIDEOS = 2;
+
+export interface AutopilotLogEntry {
+  at: number;
+  text: string;
+}
+
+export type AutopilotAction =
+  | { kind: "retry"; id: string }
+  | { kind: "draft"; creator: string }
+  | { kind: "upload"; id: string }
+  | { kind: "publish"; id: string }
+  | { kind: "free"; id: string };
+
+const WORKING: LongStatus[] = ["draft", "planning", "narrating", "rendering", "checking"];
+
+/** What the autopilot should do now. Pure, so every rule is testable. */
+export function autopilotActions(videos: LongVideo[], footage: CreatorFootage[], s: AutopilotSettings, now: number): AutopilotAction[] {
+  const out: AutopilotAction[] = [];
+  const failed = videos.filter((v) => v.error && !v.youtube?.rejected);
+  for (const v of failed) if (v.failedStep && (v.autoRetries ?? 0) < MAX_AUTO_RETRIES) out.push({ kind: "retry", id: v.id });
+
+  const working = videos.some((v) => WORKING.includes(v.status) && !v.error);
+  const waiting = videos.filter((v) => v.status === "review").length;
+  if (s.draft && !working && !out.length && failed.length < MAX_FAILED_VIDEOS && waiting < MAX_WAITING_VIDEOS) {
+    const blocked = new Set(failed.map((v) => v.creator));
+    const lastVideo = (creator: string) => Math.max(0, ...videos.filter((v) => v.creator === creator).map((v) => v.createdAt));
+    const next = footage
+      .filter((f) => f.enough && !blocked.has(f.creator))
+      .sort((a, b) => lastVideo(a.creator) - lastVideo(b.creator) || b.rawSeconds - a.rawSeconds)[0];
+    if (next) out.push({ kind: "draft", creator: next.creator });
+  }
+
+  const uploading = videos.some((v) => v.status === "uploading" && !v.error);
+  const lastUpload = Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0));
+  if (s.upload && !uploading && now - lastUpload >= AUTO_UPLOAD_GAP_MS) {
+    // Private is safe for a script the AI has notes on, which it often does; a broken file waits for the owner
+    const ready = videos.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (ready) out.push({ kind: "upload", id: ready.id });
+  }
+
+  const held = (v: LongVideo) => !!v.youtube?.id && !v.youtube.rejected && !!v.youtube.processedAt && now - v.youtube.processedAt >= AUTO_HOLD_MS;
+  if (s.publish) {
+    const next = videos.filter((v) => v.status === "private" && !v.slotAt && v.check?.ok && held(v)).sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (next) out.push({ kind: "publish", id: next.id });
+  }
+  if (s.free) for (const v of videos) if (v.status !== "freed" && held(v) && !v.error) out.push({ kind: "free", id: v.id });
+  return out;
+}
+
+export function describeAction(a: AutopilotAction, title?: string): string {
+  switch (a.kind) {
+    case "retry":
+      return `Tried "${title}" again after a failure`;
+    case "draft":
+      return `Started a new ${a.creator} video`;
+    case "upload":
+      return `Uploaded "${title}" as Private`;
+    case "publish":
+      return `Scheduled "${title}" to go public`;
+    case "free":
+      return `Freed the local files of "${title}"`;
+  }
+}
 
 // ---------- results per slot ----------
 

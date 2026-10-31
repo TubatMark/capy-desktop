@@ -1,3 +1,4 @@
+import { autopilotTick } from "./autopilot";
 import { LONG_FOLDER } from "./store";
 import { enqueueWork } from "../worker/api";
 import { registerWork } from "../worker/registry";
@@ -33,6 +34,7 @@ export function registerLongFormWorkers() {
           try {
             const next = await runStep(s);
             if (next) await queueStep(next);
+            if (s.step === "observe") await autopilotTick((step) => queueStep(step));
           } catch (e) {
             // an upload may just have lost the network: let the worker try it again first
             if (s.step === "upload" && lease.attempts < 3) throw e;

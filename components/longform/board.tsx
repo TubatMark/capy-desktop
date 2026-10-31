@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, CalendarClock, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
+import { AlertTriangle, Bot, CalendarClock, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,8 @@ import {
   formatLength,
   philippineTime,
   type AudienceReport,
+  type AutopilotLogEntry,
+  type AutopilotSettings,
   type CreatorFootage,
   type LongVideo,
   type SlotResult,
@@ -29,6 +31,8 @@ interface Board {
   slots: UploadSlot[];
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
+  autopilot: AutopilotSettings;
+  autopilotLog: AutopilotLogEntry[];
 }
 interface CleanupPlan {
   allowed: boolean;
@@ -73,7 +77,7 @@ export function LongFormBoard() {
           <h1 className="flex items-center gap-2 text-2xl font-semibold">
             <Film className="size-6 text-primary" /> Long-form
           </h1>
-          <p className="text-sm text-muted-foreground">Ranked videos edited from the footage capy already saved, with original commentary. Nothing uploads until you approve it.</p>
+          <p className="text-sm text-muted-foreground">Ranked videos edited from the footage capy already saved, with original commentary.</p>
         </div>
         <Button onClick={() => setPicking(true)} disabled={!board}>
           <Plus className="size-4" /> New video
@@ -109,6 +113,8 @@ export function LongFormBoard() {
           </div>
         </div>
       )}
+
+      {board && <AutopilotPanel settings={board.autopilot} log={board.autopilotLog} onChange={load} />}
 
       {board && (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -457,6 +463,79 @@ function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo;
         {err && <p className="text-sm text-destructive">{err}</p>}
       </div>
     </Sheet>
+  );
+}
+
+const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; warn?: string }[] = [
+  { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
+  { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
+  { key: "publish", label: "Schedule going public", hint: "Picks the next upload slot, 48 hours after processing. Only videos the script review had no notes on.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel, and it's best left off until the feed test is read." },
+  { key: "free", label: "Delete local files", hint: "Removes footage and masters 48 hours after processing.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
+];
+
+function AutopilotPanel({ settings, log, onChange }: { settings: AutopilotSettings; log: AutopilotLogEntry[]; onChange: () => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<keyof AutopilotSettings | null>(null);
+  async function set(key: keyof AutopilotSettings, value: boolean) {
+    setErr(null);
+    setConfirming(null);
+    try {
+      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "autopilot", settings: { ...settings, [key]: value } }) });
+      onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return (
+    <section className="space-y-3 rounded-xl border p-4">
+      <h2 className="flex items-center gap-2 font-medium">
+        <Bot className="size-4" /> Autopilot
+      </h2>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {SWITCHES.map((s) => (
+          <li key={s.key} className="space-y-1 text-sm">
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-[var(--primary)]"
+                checked={settings[s.key]}
+                onChange={(e) => (e.target.checked && s.warn ? setConfirming(s.key) : set(s.key, e.target.checked))}
+              />
+              <span>
+                <span className="font-medium">{s.label}</span>
+                <span className="block text-xs text-muted-foreground">{s.hint}</span>
+              </span>
+            </label>
+            {confirming === s.key && (
+              <div className="ml-6 space-y-2 rounded-lg border p-2 text-xs">
+                <p>{s.warn}</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => set(s.key, true)}>
+                    Turn on
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                    Keep off
+                  </Button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {err && <p className="text-sm text-destructive">{err}</p>}
+      {log.length > 0 && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer">Latest: {log[0]!.text}</summary>
+          <ul className="mt-1 space-y-0.5">
+            {log.map((l) => (
+              <li key={`${l.at}${l.text}`}>
+                {new Date(l.at).toLocaleString()}: {l.text}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
   );
 }
 

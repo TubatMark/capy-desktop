@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  DEFAULT_AUTOPILOT,
   DEFAULT_SLOTS,
   FINISHED_PER_RAW,
   MAX_LONG_CLIPS,
@@ -10,6 +11,8 @@ import {
   creatorName,
   rankValue,
   type AudienceReport,
+  type AutopilotLogEntry,
+  type AutopilotSettings,
   type CreatorFootage,
   type LongClip,
   type LongVideo,
@@ -54,6 +57,10 @@ export const saveSlots = (slots: UploadSlot[]) => runtimeStore().put(CONFIG, "sl
 const SKIPPED = "skipped-v2";
 const skipped = () => runtimeStore().get<string[]>(CONFIG, SKIPPED)?.value ?? [];
 export const skipClips = (keys: string[]) => runtimeStore().put(CONFIG, SKIPPED, [...new Set([...skipped(), ...keys])]);
+export const loadAutopilot = (): AutopilotSettings => ({ ...DEFAULT_AUTOPILOT, ...runtimeStore().get<Partial<AutopilotSettings>>(CONFIG, "autopilot")?.value });
+export const saveAutopilot = (s: AutopilotSettings) => runtimeStore().put(CONFIG, "autopilot", s);
+export const loadAutopilotLog = () => runtimeStore().get<AutopilotLogEntry[]>(CONFIG, "autopilot-log")?.value ?? [];
+export const logAutopilot = (text: string, at = Date.now()) => runtimeStore().put(CONFIG, "autopilot-log", [{ at, text }, ...loadAutopilotLog()].slice(0, 12));
 export const loadAudience = () => runtimeStore().get<AudienceReport>(CONFIG, "audience")?.value;
 export const saveAudience = (a: AudienceReport) => runtimeStore().put(CONFIG, "audience", a);
 
