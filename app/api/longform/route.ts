@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { recommendSlot, slotResults } from "@/lib/longform";
+import { liveTimes, recommendSlot, slotResults } from "@/lib/longform";
 import { errorResponse } from "@/server/http";
 import { queueStep } from "@/server/longform/queue";
 import { availableClips, createVideo, footageByCreator, listVideos, loadAudience, loadAutopilot, loadAutopilotLog, loadSlots, saveAutopilot, saveSlots } from "@/server/longform/store";
@@ -21,6 +21,7 @@ export async function GET() {
       slots,
       recommended: recommendSlot(slots, taken, Date.now()),
       results: slotResults(slots, videos),
+      live: liveTimes(videos, slots, Date.now()),
       autopilot: loadAutopilot(),
       autopilotLog: loadAutopilotLog(),
     });

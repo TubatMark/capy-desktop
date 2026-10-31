@@ -18,6 +18,7 @@ import {
   type AutopilotLogEntry,
   type AutopilotSettings,
   type CreatorFootage,
+  type LiveTime,
   type LongVideo,
   type SlotResult,
   type UploadSlot,
@@ -31,6 +32,7 @@ interface Board {
   slots: UploadSlot[];
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
+  live: Record<string, LiveTime>;
   autopilot: AutopilotSettings;
   autopilotLog: AutopilotLogEntry[];
 }
@@ -105,7 +107,7 @@ export function LongFormBoard() {
                     <p className="text-xs text-muted-foreground">{col.hint}</p>
                   </header>
                   {cards.map((v) => (
-                    <VideoCard key={v.id} video={v} onOpen={() => setOpenId(v.id)} />
+                    <VideoCard key={v.id} video={v} live={board.live[v.id]} onOpen={() => setOpenId(v.id)} />
                   ))}
                 </section>
               );
@@ -124,12 +126,12 @@ export function LongFormBoard() {
       )}
 
       {board && <NewVideoDialog open={picking} footage={board.footage} onClose={() => setPicking(false)} onCreated={load} />}
-      {open && board && <VideoDialog video={open} board={board} onClose={() => setOpenId(null)} onChange={load} />}
+      {open && board && <VideoDialog video={open} live={board.live[open.id]} publishOn={board.autopilot.publish} board={board} onClose={() => setOpenId(null)} onChange={load} />}
     </div>
   );
 }
 
-function VideoCard({ video: v, onOpen }: { video: LongVideo; onOpen: () => void }) {
+function VideoCard({ video: v, live, onOpen }: { video: LongVideo; live?: LiveTime; onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-lg border bg-card p-2 text-left shadow-sm transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-primary">
       {v.thumb ? (
@@ -154,8 +156,12 @@ function VideoCard({ video: v, onOpen }: { video: LongVideo; onOpen: () => void 
           <div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(v.progress * 100)}%` }} />
         </div>
       )}
-      {v.slotAt && !v.youtube?.publishedAt && <p className="text-xs">{philippineTime(v.slotAt)}</p>}
-      {v.status === "private" && <p className="text-xs text-muted-foreground">Private on YouTube, no publish time</p>}
+      {live && (
+        <p className={cn("text-xs", live.booked ? "font-medium" : "text-muted-foreground")}>
+          {v.youtube?.publishedAt ? "Went live" : live.booked ? "Goes live" : "Planned live"}: {philippineTime(live.at)}
+        </p>
+      )}
+      {v.status === "private" && <p className="text-xs text-muted-foreground">Private on YouTube</p>}
       {v.masterBytes && v.status !== "freed" ? <p className="text-xs text-muted-foreground">{gb(v.masterBytes)} master</p> : null}
       {v.freed && <p className="text-xs text-muted-foreground">Freed {gb(v.freed.bytes)}</p>}
       {v.error && (
@@ -226,7 +232,7 @@ function NewVideoDialog({ open, footage, onClose, onCreated }: { open: boolean; 
   );
 }
 
-function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo; board: Board; onClose: () => void; onChange: () => void }) {
+function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { video: LongVideo; live?: LiveTime; publishOn: boolean; board: Board; onClose: () => void; onChange: () => void }) {
   const [title, setTitle] = useState(v.title);
   const [description, setDescription] = useState(v.description ?? "");
   const [busy, setBusy] = useState<string | null>(null);
@@ -282,6 +288,20 @@ function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo;
         {v.master && (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={media(v.master)} poster={v.thumb ? media(v.thumb) : undefined} controls preload="metadata" className="aspect-video w-full rounded-lg bg-black" />
+        )}
+
+        {live && (
+          <div className="rounded-lg border p-3 text-sm">
+            <p className="flex items-center gap-1.5 font-medium">
+              <CalendarClock className="size-4" /> {v.youtube?.publishedAt ? "Went live" : live.booked ? "Goes live" : "Planned live"}: {philippineTime(live.at)}
+            </p>
+            <p className="text-xs text-muted-foreground">{easternTime(live.at)}</p>
+            {!live.booked && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {live.needsOwner ? "Not booked yet. The script review had notes, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it after the 48-hour hold." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
+              </p>
+            )}
+          </div>
         )}
 
         {v.error && (

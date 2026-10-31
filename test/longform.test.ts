@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
+import { liveTimes, philippineTime as pht, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
 import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
@@ -107,6 +107,32 @@ describe("autopilot", () => {
     expect(kinds(autopilotActions([held], [], { ...on, draft: false }, NOW))).toEqual(["publish", "free"]);
     const noted = video({ status: "private", check: { ok: false }, youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
     expect(kinds(autopilotActions([noted], [], { ...on, draft: false, free: false }, NOW))).toEqual([]);
+  });
+});
+
+describe("go-live times", () => {
+  // Monday Nov 2 2026, 12:00 PHT
+  const NOW = Date.UTC(2026, 10, 2, 4);
+  const video = (over: object) => ({ id: "a", creator: "Ray", status: "review", title: "t", clips: [], createdAt: 1, updatedAt: 1, ...over }) as never;
+
+  it("shows the real time once booked", () => {
+    const at = Date.UTC(2026, 10, 7, 1);
+    expect(liveTimes([video({ status: "scheduled", slotAt: at, slotId: "sat-am" })], DEFAULT_SLOTS, NOW).a).toEqual({ at, booked: true });
+  });
+
+  it("projects later videos into different slots, after upload and the hold", () => {
+    const t = liveTimes([video({ id: "a", createdAt: 1, check: { ok: true } }), video({ id: "b", createdAt: 2, check: { ok: true } }), video({ id: "c", createdAt: 3, check: { ok: false } })], DEFAULT_SLOTS, NOW);
+    expect(pht(t.a!.at)).toBe("Sat, Nov 7, 9:00 AM PHT");
+    expect(t.a!.booked).toBe(false);
+    expect(t.a!.at).toBeGreaterThanOrEqual(NOW + AUTO_HOLD_MS);
+    expect(new Set([t.a!.at, t.b!.at, t.c!.at]).size).toBe(3);
+    expect(t.c!.needsOwner).toBe(true);
+    expect(t.a!.needsOwner).toBe(false);
+  });
+
+  it("skips failed and rejected videos", () => {
+    const t = liveTimes([video({ id: "a", error: "x" }), video({ id: "b", status: "private", youtube: { id: "y", processedAt: 1, rejected: "copyright" } })], DEFAULT_SLOTS, NOW);
+    expect(t).toEqual({});
   });
 });
 

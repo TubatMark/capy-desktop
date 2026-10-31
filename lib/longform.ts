@@ -303,12 +303,52 @@ export function describeAction(a: AutopilotAction, title?: string): string {
     case "draft":
       return `Started a new ${a.creator} video`;
     case "upload":
-      return `Uploaded "${title}" as Private`;
+      return `Started uploading "${title}" as Private`;
     case "publish":
       return `Scheduled "${title}" to go public`;
     case "free":
       return `Freed the local files of "${title}"`;
   }
+}
+
+// ---------- when each video goes live ----------
+
+export interface LiveTime {
+  at: number;
+  /** Booked on YouTube, or live already. Otherwise it's capy's projection. */
+  booked: boolean;
+  /** A script the review had notes on doesn't go public on its own. */
+  needsOwner?: boolean;
+}
+
+/**
+ * When each video goes live: the real time once booked, otherwise a projection from the one-a-day uploads, the 48-hour
+ * hold and the next open slots, oldest video first so the dates don't overlap.
+ */
+export function liveTimes(videos: LongVideo[], slots: UploadSlot[], now: number): Record<string, LiveTime> {
+  const out: Record<string, LiveTime> = {};
+  const taken: { at: number; slotId?: string }[] = [];
+  for (const v of videos) {
+    const at = v.youtube?.publishedAt ?? v.slotAt;
+    if (at) {
+      out[v.id] = { at, booked: true };
+      if (v.slotAt) taken.push({ at: v.slotAt, slotId: v.slotId });
+    }
+  }
+  let nextUpload = Math.max(now, Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0)) + AUTO_UPLOAD_GAP_MS);
+  for (const v of [...videos].sort((a, b) => a.createdAt - b.createdAt)) {
+    if (out[v.id] || v.error || v.youtube?.rejected || v.status === "public") continue;
+    let onYouTube = v.youtube?.processedAt ?? v.uploadStartedAt;
+    if (!onYouTube) {
+      onYouTube = nextUpload;
+      nextUpload += AUTO_UPLOAD_GAP_MS;
+    }
+    const pick = recommendSlot(slots, taken, Math.max(now, onYouTube + AUTO_HOLD_MS));
+    if (!pick) continue;
+    taken.push({ at: pick.at, slotId: pick.slot.id });
+    out[v.id] = { at: pick.at, booked: false, needsOwner: !!v.check && !v.check.ok };
+  }
+  return out;
 }
 
 // ---------- results per slot ----------
