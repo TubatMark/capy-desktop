@@ -60,7 +60,7 @@ export async function autopilotTick(queue: (s: Step) => Promise<unknown>, now = 
   const settings = loadAutopilot();
   if (settings.free) {
     const old = removeOldShorts(now);
-    if (old.files) logAutopilot(`Deleted ${old.files} rendered Shorts posted over 48 hours ago (${(old.bytes / 1e9).toFixed(1)} GB)`, now);
+    if (old.files) logAutopilot(`Deleted ${old.files} rendered Shorts posted or expired over 48 hours ago (${(old.bytes / 1e9).toFixed(1)} GB)`, now);
     const footage = removeOldFootage(now);
     if (footage.files) logAutopilot(`Deleted ${footage.files} footage files nothing used for 14 days (${(footage.bytes / 1e9).toFixed(1)} GB)`, now);
   }

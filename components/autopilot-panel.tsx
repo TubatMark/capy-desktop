@@ -9,7 +9,7 @@ const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; war
   { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
   { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
   { key: "publish", label: "Go public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
-  { key: "free", label: "Delete local files", hint: "Removes long-form footage and masters 48 hours after processing, and rendered Shorts 48 hours after posting.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
+  { key: "free", label: "Delete local files", hint: "Removes long-form footage and masters 48 hours after processing, and rendered Shorts 48 hours after posting or expiring.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
 ];
 
 /** The long-form autopilot's switches, one per step, and what it did lately. */

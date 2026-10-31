@@ -3,7 +3,7 @@ import path from "node:path";
 import { runtimeStore } from "./db/runtime";
 import { OUTPUT_ROOT } from "./paths";
 
-/** Rendered Shorts are only needed until they're safely on YouTube. Footage, transcripts and thumbnails stay. */
+/** Rendered Shorts are only needed until they're safely on YouTube or have expired. Footage, transcripts and thumbnails stay. */
 export const SHORT_HOLD_MS = 48 * 3600_000;
 
 interface Entry {
@@ -13,6 +13,7 @@ interface Entry {
   slotAt?: number;
   updatedAt?: number;
   source?: unknown;
+  history?: { t: number; msg: string }[];
 }
 interface Job {
   id: string;
@@ -22,14 +23,26 @@ interface Job {
 const queueEntries = () => runtimeStore().get<Entry[]>("legacy-state", "queue")?.value ?? [];
 const key = (e: Entry) => `${e.jobId}:${e.n}`;
 
-/** Clips whose every post is finished, with at least one posted, and when the last one went out. */
+const EXPIRED = /^Expired:/;
+/** When capy expired this post, or undefined for any other rejection: rejecting by hand keeps the file. */
+const expiredAt = (e: Entry) => (e.status === "rejected" ? e.history?.findLast((h) => EXPIRED.test(h.msg))?.t : undefined);
+
+/**
+ * Clips that will never need their rendered file again, and when that became true: every post is done, with at least one
+ * posted or all of them expired. A clip rejected by hand and never posted stays, in case of a change of mind.
+ */
 function finished(entries: Entry[]): Map<string, number> {
   const groups = new Map<string, Entry[]>();
   for (const e of entries) if (e.jobId && e.n !== undefined && !e.source) groups.set(key(e), [...(groups.get(key(e)) ?? []), e]);
   const out = new Map<string, number>();
   for (const [k, es] of groups) {
     const posted = es.filter((e) => e.status === "posted");
-    if (posted.length && es.every((e) => e.status === "posted" || e.status === "rejected")) out.set(k, Math.max(...posted.map((e) => e.slotAt ?? e.updatedAt ?? Infinity)));
+    if (posted.length) {
+      if (es.every((e) => e.status === "posted" || e.status === "rejected")) out.set(k, Math.max(...posted.map((e) => e.slotAt ?? e.updatedAt ?? Infinity)));
+      continue;
+    }
+    const expired = es.map(expiredAt);
+    if (expired.every((t) => t !== undefined)) out.set(k, Math.max(...(expired as number[])));
   }
   return out;
 }
@@ -54,7 +67,7 @@ export function removableShorts(jobs: Job[], entries: Entry[], now: number, root
 }
 
 /** A missing file is expected for these, not an error to repair. */
-export const shortFinishedPosting = (jobId: string, n: number) => finished(queueEntries()).has(`${jobId}:${n}`);
+export const shortFinished = (jobId: string, n: number) => finished(queueEntries()).has(`${jobId}:${n}`);
 
 export function removeOldShorts(now = Date.now()): { files: number; bytes: number } {
   let files = 0;

@@ -20,6 +20,16 @@ describe("deleting rendered Shorts", () => {
     expect(run([])).toEqual([]);
   });
 
+  it("deletes an expired Short 48 hours after it expired, but keeps one rejected by hand", () => {
+    const run = (entries: object[]) => removableShorts([job("a", 1)], entries as never, NOW, "/out");
+    const expired = (t: number) => ({ jobId: "a", n: 1, status: "rejected", history: [{ t: 1, msg: "Rendered" }, { t, msg: "Expired: the original video is more than 3 days old" }] });
+    expect(run([expired(old)])).toEqual(["/out/a/01.mp4"]);
+    expect(run([expired(old + 1)])).toEqual([]);
+    expect(run([{ jobId: "a", n: 1, status: "rejected", history: [{ t: old, msg: "Rejected by you" }] }])).toEqual([]);
+    expect(run([expired(old), { jobId: "a", n: 1, status: "scheduled", slotAt: old }])).toEqual([]);
+    expect(run([expired(old), { jobId: "a", n: 1, status: "rejected", history: [] }])).toEqual([]);
+  });
+
   it("goes by the latest post of a clip", () => {
     const entries = [{ jobId: "a", n: 1, status: "posted", slotAt: old }, { jobId: "a", n: 1, status: "posted", slotAt: NOW - 1000 }];
     expect(removableShorts([job("a", 1)], entries as never, NOW, "/out")).toEqual([]);

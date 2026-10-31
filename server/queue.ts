@@ -872,8 +872,8 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
     link: e.link,
     videoTitle: e.videoTitle,
     sourceUploadedAt: sourceUploadedAt(e.jobId),
-    // a posted Short's file is deleted after 48 hours: the page shows its thumbnail instead of a dead player
-    videoUrl: e.status === "posted" && !mediaUrlExists(e.videoUrl) ? undefined : e.videoUrl,
+    // a finished Short's file is deleted after 48 hours: the page shows its thumbnail instead of a dead player
+    videoUrl: (e.status === "posted" || e.status === "rejected") && !mediaUrlExists(e.videoUrl) ? undefined : e.videoUrl,
     thumbUrl: designed.thumbnailDesignUrl ?? e.thumbUrl,
     thumbAt: e.thumbAt,
     slotAt: e.slotAt,
