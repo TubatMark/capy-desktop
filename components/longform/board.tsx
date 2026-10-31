@@ -315,7 +315,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
             <p className="text-xs">{easternTime(live.at)}</p>
             {!live.booked && (
               <p className="mt-1 text-xs">
-                {live.needsOwner ? "Not booked yet. The script review had notes, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it after the 48-hour hold." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
+                {live.needsOwner ? "Not booked yet. The checks found a file problem, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it automatically, 6 hours or more after processing." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
               </p>
             )}
           </div>
@@ -391,7 +391,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
                   Goes public {philippineTime(v.slotAt)} ({easternTime(v.slotAt)}).
                 </p>
                 <Button size="sm" variant="outline" disabled={!!busy} onClick={() => action("unschedule", { action: "unschedule" })}>
-                  Cancel the schedule
+                  Keep it Private
                 </Button>
               </>
             ) : rec ? (
@@ -399,7 +399,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
                 <p>
                   Next open slot: {philippineTime(rec.at)} ({easternTime(rec.at)}).
                 </p>
-                <p className="text-muted-foreground">Check YouTube Studio for copyright claims first. Reused footage can bring claims or strikes even with commentary, and your channel's Shorts have barely reached the feed since October.</p>
+                <p className="text-muted-foreground">Check YouTube Studio for copyright claims first. Reused footage can bring claims or strikes even with commentary.</p>
                 {confirmPublic ? (
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" disabled={!!busy} onClick={() => action("schedule", { action: "schedule", at: rec.at, slotId: rec.slot.id }).then(() => setConfirmPublic(false))}>
@@ -506,7 +506,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
 const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; warn?: string }[] = [
   { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
   { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
-  { key: "publish", label: "Schedule going public", hint: "Picks the next upload slot, 48 hours after processing. Only videos the script review had no notes on.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel, and it's best left off until the feed test is read." },
+  { key: "publish", label: "Schedule going public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
   { key: "free", label: "Delete local files", hint: "Removes footage and masters 48 hours after processing.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
 ];
 

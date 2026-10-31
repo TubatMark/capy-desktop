@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveTimes, philippineTime as pht, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
+import { liveTimes, philippineTime as pht, PUBLISH_HOLD_MS, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
 import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
@@ -62,10 +62,10 @@ describe("autopilot", () => {
   const on = { draft: true, upload: true, publish: true, free: true };
   const kinds = (a: { kind: string }[]) => a.map((x) => x.kind);
 
-  it("leaves going public and deleting off by default", () => {
-    expect(DEFAULT_AUTOPILOT).toEqual({ draft: true, upload: true, publish: false, free: false });
+  it("goes public by itself, and leaves deleting off by default", () => {
+    expect(DEFAULT_AUTOPILOT).toEqual({ draft: true, upload: true, publish: true, free: false });
     const held = video({ status: "private", youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS - 1 } });
-    expect(autopilotActions([held], [], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
+    expect(autopilotActions([held], [], DEFAULT_AUTOPILOT, NOW)).toEqual([{ kind: "publish", id: "a" }]);
   });
 
   it("drafts one video at a time, starting with the creator waited on longest", () => {
@@ -76,7 +76,7 @@ describe("autopilot", () => {
   });
 
   it("stops drafting when too many wait for review", () => {
-    const many = Array.from({ length: MAX_WAITING_VIDEOS }, (_, i) => video({ id: String(i), check: { ok: false } }));
+    const many = Array.from({ length: MAX_WAITING_VIDEOS }, (_, i) => video({ id: String(i), check: { ok: false, warnings: ["no sound"] } }));
     expect(autopilotActions(many, [ray], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
   });
 
@@ -89,9 +89,10 @@ describe("autopilot", () => {
     expect(autopilotActions([second, { ...(second as object), id: "b", creator: "Rakai" } as never], [{ ...ray, creator: "DDG" }], DEFAULT_AUTOPILOT, NOW)).toEqual([]);
   });
 
-  it("uploads anything whose file checks pass, at most one a day", () => {
-    const good = video({ master: "m", check: { ok: false, warnings: [], script: { verdict: "caution", notes: ["n"] } } });
+  it("fixes a script with notes once, then uploads it, at most one a day", () => {
+    const good = video({ master: "m", fixTried: true, check: { ok: false, warnings: [], script: { verdict: "caution", notes: ["n"] } } });
     const off = { ...DEFAULT_AUTOPILOT, draft: false };
+    expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: [] } })], [], off, NOW)).toEqual([{ kind: "fix", id: "a" }]);
     expect(autopilotActions([good], [], off, NOW)).toEqual([{ kind: "upload", id: "a" }]);
     expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: ["no sound"] } })], [], off, NOW)).toEqual([]);
     const recent = video({ id: "b", status: "private", uploadStartedAt: NOW - AUTO_UPLOAD_GAP_MS + 1 });
@@ -99,14 +100,16 @@ describe("autopilot", () => {
     expect(autopilotActions([good, video({ id: "b", status: "uploading" })], [], off, NOW)).toEqual([]);
   });
 
-  it("waits 48 hours, and never touches a rejected video, even when switched on", () => {
+  it("holds before going public, longer before deleting, and never touches a rejected or broken video", () => {
+    const off = { ...on, draft: false };
     const fresh = video({ status: "private", youtube: { id: "y", processedAt: NOW - 1000 } });
     const rejected = video({ status: "private", youtube: { id: "y", processedAt: 1, rejected: "copyright" } });
-    expect(autopilotActions([fresh, rejected], [], { ...on, draft: false }, NOW)).toEqual([]);
-    const held = video({ status: "private", check: { ok: true }, youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
-    expect(kinds(autopilotActions([held], [], { ...on, draft: false }, NOW))).toEqual(["publish", "free"]);
-    const noted = video({ status: "private", check: { ok: false }, youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
-    expect(kinds(autopilotActions([noted], [], { ...on, draft: false, free: false }, NOW))).toEqual([]);
+    const broken = video({ status: "private", check: { ok: false, warnings: ["no sound"] }, youtube: { id: "y", processedAt: NOW - PUBLISH_HOLD_MS } });
+    expect(autopilotActions([fresh, rejected, broken], [], { ...off, free: false }, NOW)).toEqual([]);
+    const sixHours = video({ status: "private", youtube: { id: "y", processedAt: NOW - PUBLISH_HOLD_MS } });
+    expect(kinds(autopilotActions([sixHours], [], off, NOW))).toEqual(["publish"]);
+    const twoDays = video({ status: "private", youtube: { id: "y", processedAt: NOW - AUTO_HOLD_MS } });
+    expect(kinds(autopilotActions([twoDays], [], off, NOW))).toEqual(["publish", "free"]);
   });
 });
 
@@ -124,10 +127,10 @@ describe("go-live times", () => {
     const t = liveTimes([video({ id: "a", createdAt: 1, check: { ok: true } }), video({ id: "b", createdAt: 2, check: { ok: true } }), video({ id: "c", createdAt: 3, check: { ok: false } })], DEFAULT_SLOTS, NOW);
     expect(pht(t.a!.at)).toBe("Fri, Nov 6, 4:00 PM PHT");
     expect(t.a!.booked).toBe(false);
-    expect(t.a!.at).toBeGreaterThanOrEqual(NOW + AUTO_HOLD_MS);
-    expect(new Set([t.a!.at, t.b!.at, t.c!.at]).size).toBe(3);
-    expect(t.c!.needsOwner).toBe(true);
-    expect(t.a!.needsOwner).toBe(false);
+    expect(t.a!.at).toBeGreaterThanOrEqual(NOW + PUBLISH_HOLD_MS);
+    expect(pht(t.b!.at)).toBe("Sat, Nov 7, 9:00 AM PHT");
+    expect(pht(t.c!.at)).toBe("Sun, Nov 8, 9:00 AM PHT");
+    expect(t.c!.needsOwner).toBe(false);
   });
 
   it("skips failed and rejected videos", () => {

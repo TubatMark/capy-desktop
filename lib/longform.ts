@@ -94,6 +94,8 @@ export interface LongVideo {
   failedIndex?: number;
   /** How many times the autopilot has retried a failure. */
   autoRetries?: number;
+  /** The script has had its one automatic rewrite. */
+  fixTried?: boolean;
   uploadStartedAt?: number;
   clips: LongClip[];
   /** Moments the screening left out of this video, for the owner to see. */
@@ -169,7 +171,8 @@ export const DEFAULT_SLOTS: UploadSlot[] = [
 const PHT_MS = 8 * 3600_000;
 /** Enough time to upload and process before a video goes public. */
 export const SLOT_LEAD_MS = 3 * 3600_000;
-export const MAX_PER_WEEKEND = 2;
+/** Every slot can be used: stream moments lose interest, so videos shouldn't queue for weeks. */
+export const MAX_PER_WEEKEND = 3;
 /** A slot isn't compared until it has this many results. */
 export const RESULTS_TO_COMPARE = 3;
 
@@ -231,18 +234,20 @@ export interface AutopilotSettings {
   draft: boolean;
   /** Upload a video that passed every check, as Private. */
   upload: boolean;
-  /** Give Private videos a public time. Off until the owner has read the feed test. */
+  /** Give Private videos a public time. */
   publish: boolean;
   /** Delete local files once a video's hold has passed. */
   free: boolean;
 }
-export const DEFAULT_AUTOPILOT: AutopilotSettings = { draft: true, upload: true, publish: false, free: false };
+export const DEFAULT_AUTOPILOT: AutopilotSettings = { draft: true, upload: true, publish: true, free: false };
 
 /** Don't pile up more finished videos than anyone can watch. */
 export const MAX_WAITING_VIDEOS = 6;
 /** A video upload costs about a sixth of YouTube's daily quota, and Shorts need the rest. */
 export const AUTO_UPLOAD_GAP_MS = 20 * 3600_000;
-/** Time for claims to appear before anything goes public or gets deleted. */
+/** Time for claims to appear after processing, and for the owner to look, before a video goes public. */
+export const PUBLISH_HOLD_MS = 6 * 3600_000;
+/** Local files outlast that by far: they're the only way to fix and upload a video again. */
 export const AUTO_HOLD_MS = 48 * 3600_000;
 const MAX_AUTO_RETRIES = 1;
 /** Several failures in a row usually share a cause: stop spending AI and wait for the owner. */
@@ -255,6 +260,7 @@ export interface AutopilotLogEntry {
 
 export type AutopilotAction =
   | { kind: "retry"; id: string }
+  | { kind: "fix"; id: string }
   | { kind: "draft"; creator: string }
   | { kind: "upload"; id: string }
   | { kind: "publish"; id: string }
@@ -269,6 +275,9 @@ export function autopilotActions(videos: LongVideo[], footage: CreatorFootage[],
   for (const v of failed) if (v.failedStep && (v.autoRetries ?? 0) < MAX_AUTO_RETRIES) out.push({ kind: "retry", id: v.id });
 
   const working = videos.some((v) => WORKING.includes(v.status) && !v.error);
+  // made before the review could fix its own notes, or the review ran late: run the script again before it goes anywhere
+  const unfixed = videos.filter((v) => v.status === "review" && v.check && !v.check.ok && !v.check.warnings?.length && !v.fixTried && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+  if (unfixed && !working && !out.length) out.push({ kind: "fix", id: unfixed.id });
   const waiting = videos.filter((v) => v.status === "review").length;
   if (s.draft && !working && !out.length && failed.length < MAX_FAILED_VIDEOS && waiting < MAX_WAITING_VIDEOS) {
     const blocked = new Set(failed.map((v) => v.creator));
@@ -282,17 +291,17 @@ export function autopilotActions(videos: LongVideo[], footage: CreatorFootage[],
   const uploading = videos.some((v) => v.status === "uploading" && !v.error);
   const lastUpload = Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0));
   if (s.upload && !uploading && now - lastUpload >= AUTO_UPLOAD_GAP_MS) {
-    // Private is safe for a script the AI has notes on, which it often does; a broken file waits for the owner
-    const ready = videos.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+    // a script keeps the review's remaining notes after its one rewrite (reviewers rarely find nothing); a broken file waits for the owner
+    const ready = videos.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && (v.check.ok || v.fixTried) && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
     if (ready) out.push({ kind: "upload", id: ready.id });
   }
 
-  const held = (v: LongVideo) => !!v.youtube?.id && !v.youtube.rejected && !!v.youtube.processedAt && now - v.youtube.processedAt >= AUTO_HOLD_MS;
+  const held = (v: LongVideo, ms: number) => !!v.youtube?.id && !v.youtube.rejected && !!v.youtube.processedAt && now - v.youtube.processedAt >= ms;
   if (s.publish) {
-    const next = videos.filter((v) => v.status === "private" && !v.slotAt && v.check?.ok && held(v)).sort((a, b) => a.createdAt - b.createdAt)[0];
+    const next = videos.filter((v) => v.status === "private" && !v.slotAt && !v.check?.warnings?.length && held(v, PUBLISH_HOLD_MS)).sort((a, b) => a.createdAt - b.createdAt)[0];
     if (next) out.push({ kind: "publish", id: next.id });
   }
-  if (s.free) for (const v of videos) if (v.status !== "freed" && held(v) && !v.error) out.push({ kind: "free", id: v.id });
+  if (s.free) for (const v of videos) if (v.status !== "freed" && held(v, AUTO_HOLD_MS) && !v.error) out.push({ kind: "free", id: v.id });
   return out;
 }
 
@@ -300,6 +309,8 @@ export function describeAction(a: AutopilotAction, title?: string): string {
   switch (a.kind) {
     case "retry":
       return `Tried "${title}" again after a failure`;
+    case "fix":
+      return `Rewriting the script of "${title}" to fix the review's notes`;
     case "draft":
       return `Started a new ${a.creator} video`;
     case "upload":
@@ -317,7 +328,7 @@ export interface LiveTime {
   at: number;
   /** Booked on YouTube, or live already. Otherwise it's capy's projection. */
   booked: boolean;
-  /** A script the review had notes on doesn't go public on its own. */
+  /** A file problem (black frames, no sound) keeps a video back until the owner looks. */
   needsOwner?: boolean;
 }
 
@@ -343,10 +354,10 @@ export function liveTimes(videos: LongVideo[], slots: UploadSlot[], now: number)
       onYouTube = nextUpload;
       nextUpload += AUTO_UPLOAD_GAP_MS;
     }
-    const pick = recommendSlot(slots, taken, Math.max(now, onYouTube + AUTO_HOLD_MS));
+    const pick = recommendSlot(slots, taken, Math.max(now, onYouTube + PUBLISH_HOLD_MS));
     if (!pick) continue;
     taken.push({ at: pick.at, slotId: pick.slot.id });
-    out[v.id] = { at: pick.at, booked: false, needsOwner: !!v.check && !v.check.ok };
+    out[v.id] = { at: pick.at, booked: false, needsOwner: !!v.check?.warnings?.length };
   }
   return out;
 }

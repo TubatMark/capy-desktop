@@ -1,6 +1,8 @@
 import { autopilotActions, describeAction, recommendSlot, type AutopilotAction } from "../../lib/longform";
+import { rmSync } from "node:fs";
+import path from "node:path";
 import { freeSpace } from "./cleanup";
-import { availableClips, createVideo, footageByCreator, getVideo, listVideos, loadAutopilot, loadSlots, logAutopilot, patchVideo } from "./store";
+import { availableClips, createVideo, footageByCreator, getVideo, listVideos, loadAutopilot, loadSlots, logAutopilot, patchVideo, videoDir } from "./store";
 import { viewsLookup, ytDeps, type Step } from "./worker";
 import { setPublishTime } from "./youtube";
 
@@ -15,6 +17,14 @@ async function act(a: AutopilotAction, queue: (s: Step) => Promise<unknown>, now
       const v = getVideo(a.id)!;
       await queue({ id: a.id, step: v.failedStep!, index: v.failedIndex });
       patchVideo(a.id, { error: undefined, failedStep: undefined, failedIndex: undefined, step: "Trying again", autoRetries: (v.autoRetries ?? 0) + 1 });
+      return;
+    }
+    case "fix": {
+      const dir = videoDir(a.id);
+      rmSync(path.join(dir, "sections"), { recursive: true, force: true });
+      rmSync(path.join(dir, "master.mp4"), { force: true });
+      patchVideo(a.id, { status: "planning", step: "Rewriting the script", master: undefined, thumb: undefined, masterBytes: undefined, check: undefined });
+      await queue({ id: a.id, step: "plan" });
       return;
     }
     case "draft": {

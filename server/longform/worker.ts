@@ -105,7 +105,9 @@ async function plan(v: LongVideo): Promise<Step> {
   let script: LongScript = await writeScript(v.creator, withWords, ai());
   const reviewFailed = { verdict: "caution" as const, notes: ["The automatic script review couldn't run"] };
   let review = await reviewScript(script, ai()).catch(() => reviewFailed);
+  let fixTried = v.fixTried;
   if (review.verdict === "caution" && review !== reviewFailed) {
+    fixTried = true;
     patchVideo(v.id, { step: "Fixing the review's notes" });
     script = await reviseScript(v.creator, withWords, script, review.notes, ai());
     review = await reviewScript(script, ai()).catch(() => reviewFailed);
@@ -119,6 +121,7 @@ async function plan(v: LongVideo): Promise<Step> {
     tags: script.tags,
     clips,
     screenedOut,
+    fixTried,
     check: { ok: review.verdict === "ok", duration: 0, warnings: [], script: review },
   };
   next.description = descriptionFor({ ...v, ...next }, script.description.trim());
