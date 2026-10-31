@@ -9,6 +9,7 @@ import {
   recipeSettings,
 } from "./automation-policy";
 import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
+import { shortFinishedPosting } from "./shorts-cleanup";
 import { applyShortTest } from "./shorts-test";
 import {
   captureRenderInputs,
@@ -178,6 +179,8 @@ class JobManager extends EventEmitter {
           ) {
             const local = renderedFile(job, c);
             if (local) c.render.file = local;
+            // deleted on purpose after it posted
+            else if (shortFinishedPosting(job.id, c.n)) continue;
             else {
               c.render = {
                 ...c.render,

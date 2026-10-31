@@ -135,7 +135,7 @@ test("calendar opens on today in the audience zone and lists that day's posts", 
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   const day = page.getByRole("region", { name: "Posts on Saturday, October 10" });
   await expect(day).toBeVisible();
   await expect(day.getByRole("article")).toHaveCount(2);
@@ -156,7 +156,7 @@ test("calendar opens on today in the audience zone and lists that day's posts", 
 
 test("clicking a day shows its posted clips with their numbers", async ({ page }) => {
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   await page
     .getByRole("button", { name: "Friday, October 9: 1 posted" })
     .click();
@@ -175,7 +175,7 @@ test("clicking a day shows its posted clips with their numbers", async ({ page }
 
 test("arrow keys move the selected day and Today comes back", async ({ page }) => {
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   const today = page.getByRole("button", { name: /^Saturday, October 10, today/ });
   await today.focus();
   await page.keyboard.press("ArrowLeft");
@@ -203,7 +203,7 @@ test("arrow keys move the selected day and Today comes back", async ({ page }) =
 
 test("post details show the text, AI review, results and refresh", async ({ page }) => {
   const m = await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   await page.getByRole("button", { name: "Friday, October 9: 1 posted" }).click();
   await page
     .getByRole("button", { name: "The calmest animal on earth meets a crocodile" })
@@ -232,7 +232,7 @@ test("post details show the text, AI review, results and refresh", async ({ page
 test("narrow window stacks the calendar above the day list", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   const cal = page.getByRole("grid");
   const list = page.getByRole("region", { name: "Posts on Saturday, October 10" });
   await expect(list).toBeVisible();

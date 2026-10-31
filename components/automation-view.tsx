@@ -97,7 +97,7 @@ export function AutomationView() {
         <p className="text-pretty text-sm text-muted-foreground">
           Add YouTube channels to keep an eye on. When one posts a new video,
           capy makes clips from it and puts them in{" "}
-          <Link href="/queue" className="underline underline-offset-2">
+          <Link href="/short-form" className="underline underline-offset-2">
             Queue
           </Link>
           . Nothing is posted until you approve it.

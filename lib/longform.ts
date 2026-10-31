@@ -388,6 +388,27 @@ export function liveTimes(videos: LongVideo[], slots: UploadSlot[], now: number)
   return out;
 }
 
+// ---------- calendar ----------
+
+export type LongDayKind = "posted" | "scheduled" | "attention";
+export interface LongDayItem {
+  id: string;
+  at: number;
+  kind: LongDayKind;
+  /** Booked on YouTube, or live; otherwise capy's projection. */
+  booked: boolean;
+}
+
+/** Every video with a date, for a calendar: went live, goes live, or a problem to look at. */
+export function longDayItems(videos: LongVideo[], live: Record<string, LiveTime>): LongDayItem[] {
+  return videos.flatMap((v): LongDayItem[] => {
+    if (v.youtube?.publishedAt) return [{ id: v.id, at: v.youtube.publishedAt, kind: "posted", booked: true }];
+    if (v.error || v.youtube?.rejected) return [{ id: v.id, at: v.updatedAt, kind: "attention", booked: false }];
+    const t = live[v.id];
+    return t ? [{ id: v.id, at: t.at, kind: t.needsOwner ? "attention" : "scheduled", booked: t.booked }] : [];
+  });
+}
+
 // ---------- results per slot ----------
 
 export interface SlotResult {

@@ -1,3 +1,6 @@
+import { entrySourceAt, sourceUploadedAt } from "./source-age";
+import { safeMediaPath } from "./paths";
+import { existsSync } from "node:fs";
 import {
   deliveryForPackage,
   deliveryProjection,
@@ -427,6 +430,47 @@ export function recentPost(entries: QueueEntry[], e: QueueEntry, now: Date): Que
  * the next AUTO_HORIZON_DAYS days; the rest go back to "review" and the auto-scheduler offers them again as days
  * free up. Manual approvals, moves and remote schedules are the owner's call and stay put (but still count as taken).
  */
+function mediaUrlExists(url?: string): boolean {
+  if (!url) return false;
+  try {
+    return existsSync(safeMediaPath(decodeURIComponent(url.replace(/^\/api\/media\//, "").split("?")[0]!)));
+  } catch {
+    return false;
+  }
+}
+
+/** A scheduled post capy can still move: not uploaded ahead, not touched by hand. */
+const canBump = (e: QueueEntry) =>
+  e.status === "scheduled" &&
+  !!e.autoScheduledAt &&
+  !e.remoteSchedule &&
+  !deliveryMutationReason(e) &&
+  !e.history.some((h) => h.msg === "Post now" || h.msg.startsWith("Moved to "));
+
+/**
+ * The schedule is full and a clip of a newer original is waiting: the post of the oldest original goes back to waiting,
+ * if it's older. Returns null when there's nothing older to move.
+ */
+export function bumpOlderPost(entries: QueueEntry[], newerThan: number, now: Date): QueueEntry[] | null {
+  const victim = entries.filter(canBump).sort((a, b) => entrySourceAt(a) - entrySourceAt(b))[0];
+  if (!victim || entrySourceAt(victim) >= newerThan) return null;
+  const group = queueGroup(victim);
+  return entries.map((x) =>
+    canBump(x) && queueGroup(x) === group ? note({ ...x, status: "review", slotAt: undefined, nextTryAt: undefined }, "Back to waiting: a clip of a newer video took its slot", now) : x,
+  );
+}
+
+/**
+ * Posts that would go out too long after their original. Nobody's still looking for it by then.
+ */
+export function expireLatePosts(entries: QueueEntry[], maxAgeMs: number, now: Date): QueueEntry[] {
+  return entries.map((x) =>
+    canBump(x) && x.slotAt !== undefined && x.slotAt - entrySourceAt(x) > maxAgeMs
+      ? note({ ...x, status: "rejected", slotAt: undefined, nextTryAt: undefined }, "Expired: it would post too long after the original video", now)
+      : x,
+  );
+}
+
 export function respace(
   entries: QueueEntry[],
   audienceTz: string,
@@ -444,7 +488,21 @@ export function respace(
   const mine = entries.filter(movable);
   if (!mine.length) return entries;
   const horizon = now.getTime() + AUTO_HORIZON_DAYS * 86_400_000;
-  const breaks = mine.some((e) => {
+  // a clip of an older original can't sit a day ahead of a clip of a newer one
+  const outOfOrder = (() => {
+    const byDay = [...mine].sort((a, b) => a.slotAt! - b.slotAt!);
+    let newestLater = -Infinity;
+    for (let i = byDay.length - 1; i >= 0; i--) {
+      const e = byDay[i]!;
+      if (entrySourceAt(e) < newestLater) return true;
+      const next = byDay[i - 1];
+      if (next && localDay(next.slotAt!, audienceTz) !== localDay(e.slotAt!, audienceTz)) {
+        for (let k = i; k < byDay.length && localDay(byDay[k]!.slotAt!, audienceTz) === localDay(e.slotAt!, audienceTz); k++) newestLater = Math.max(newestLater, entrySourceAt(byDay[k]!));
+      }
+    }
+    return false;
+  })();
+  const breaks = outOfOrder || mine.some((e) => {
     const others = taken(entries, now, (x) => x.key === e.key).filter((x) => x.platform === e.platform);
     return (
       e.slotAt! > horizon ||
@@ -457,7 +515,7 @@ export function respace(
   const groups = new Map<string, QueueEntry[]>();
   for (const e of mine) groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
   const order = [...groups.values()].sort(
-    (a, b) => Math.max(...b.map((e) => e.createdAt)) - Math.max(...a.map((e) => e.createdAt)),
+    (a, b) => Math.max(...b.map(entrySourceAt)) - Math.max(...a.map(entrySourceAt)),
   );
   const slots = [...fixed];
   let out = entries;
@@ -813,7 +871,9 @@ export function publicQueueEntry(e: QueueEntry): QueueEntry {
     madeForKids: e.madeForKids,
     link: e.link,
     videoTitle: e.videoTitle,
-    videoUrl: e.videoUrl,
+    sourceUploadedAt: sourceUploadedAt(e.jobId),
+    // a posted Short's file is deleted after 48 hours: the page shows its thumbnail instead of a dead player
+    videoUrl: e.status === "posted" && !mediaUrlExists(e.videoUrl) ? undefined : e.videoUrl,
     thumbUrl: designed.thumbnailDesignUrl ?? e.thumbUrl,
     thumbAt: e.thumbAt,
     slotAt: e.slotAt,

@@ -258,3 +258,26 @@ export function missingReason(m: MetricObservation | undefined): string {
       return "Couldn't check right now";
   }
 }
+
+
+/** Where a clip sits on the Short form board. */
+export type ShortColumn = "waiting" | "scheduled" | "posting" | "posted" | "attention" | "skipped";
+export const SHORT_COLUMNS: { id: ShortColumn; label: string; hint: string }[] = [
+  { id: "waiting", label: "Waiting", hint: "Being checked for a slot" },
+  { id: "scheduled", label: "Scheduled", hint: "Has a time to post" },
+  { id: "posting", label: "Posting", hint: "Going to YouTube now" },
+  { id: "posted", label: "Posted", hint: "Live" },
+  { id: "attention", label: "Needs attention", hint: "Something went wrong" },
+  { id: "skipped", label: "Skipped", hint: "Rejected or expired" },
+];
+
+/** One clip can have a post per platform: the one that most needs looking at decides its column. */
+export function shortColumn(entries: Pick<QueueEntry, "status">[]): ShortColumn {
+  const has = (...s: QueueEntry["status"][]) => entries.some((e) => s.includes(e.status));
+  if (has("failed", "needs_action")) return "attention";
+  if (has("posting")) return "posting";
+  if (has("review")) return "waiting";
+  if (has("scheduled")) return "scheduled";
+  if (has("posted")) return "posted";
+  return "skipped";
+}

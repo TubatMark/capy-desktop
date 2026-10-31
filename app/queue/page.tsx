@@ -1,13 +1,6 @@
-import type { Metadata } from "next";
-import { QueueView } from "@/components/queue-view";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Queue · capy" };
-
+/** The page was renamed: old links still work. */
 export default function QueuePage() {
-  return (
-    <div className="mx-auto w-full max-w-6xl">
-      <QueueView />
-    </div>
-  );
+  redirect("/short-form");
 }

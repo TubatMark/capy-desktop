@@ -6,7 +6,8 @@ import type { QueueEntry } from "../lib/types";
 import { DEFAULT_CONTROLS } from "../lib/creator-policy";
 import { runtimeStore } from "./db/runtime";
 import { resolvePublicationFiles } from "./poster";
-import { approve, note, queue } from "./queue";
+import { approve, bumpOlderPost, expireLatePosts, note, queue } from "./queue";
+import { entrySourceAt } from "./source-age";
 import { effective, loadSettings } from "./settings";
 
 /**
@@ -49,8 +50,9 @@ export function similarClear(s: ClipSimilarity): boolean {
   return s.verdict.level !== "near-duplicate" && !s.opinions.some((o) => o.level === "near-duplicate");
 }
 
-const STALE_MS = 3 * 86_400_000;
-const newest = (entries: QueueEntry[]) => Math.max(...entries.map((e) => e.createdAt));
+/** Interest in a clip fades with its original: past this, it isn't worth a slot. */
+export const STALE_MS = 3 * 86_400_000;
+const newest = (entries: QueueEntry[]) => Math.max(...entries.map(entrySourceAt));
 
 /** Which side of the narrated Shorts test a post's clip is on, if any. */
 function shortTestGroupOf(e: QueueEntry): string | undefined {
@@ -74,19 +76,20 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
     if (e.status === "review" && automated(e))
       groups.set(queueGroup(e), [...(groups.get(queueGroup(e)) ?? []), e]);
   const done: string[] = [];
-  // the freshest clip gets the next free slot; a moment older than 3 days isn't worth a slot,
-  // and leaving it waiting would hold the backlog full so no new upload gets clipped
+  // the clip of the newest original gets the next free slot; once an original is over 3 days old its clips aren't worth
+  // a slot, and leaving them waiting would hold the backlog full so no new upload gets clipped
   const stale = [...groups].filter(([, entries]) => now.getTime() - newest(entries) >= STALE_MS);
   if (stale.length) {
     const keys = new Set(stale.flatMap(([, entries]) => entries.map((e) => e.key)));
     queue().mutate((all) =>
       all.map((x) =>
         keys.has(x.key) && x.status === "review"
-          ? note({ ...x, status: "rejected" }, "Expired: more than 3 days old and no free day came up", now)
+          ? note({ ...x, status: "rejected" }, "Expired: the original video is more than 3 days old and no free day came up", now)
           : x,
       ),
     );
   }
+  queue().mutate((all) => expireLatePosts(all, STALE_MS, now));
   const fresh = [...groups].filter(([, entries]) => now.getTime() - newest(entries) < STALE_MS);
   fresh.sort(([, a], [, b]) => newest(b) - newest(a));
   const groupOf = (entries: QueueEntry[]) => (shortTestGroupOf(entries[0]!) === "narrated" ? ("narrated" as const) : ("plain" as const));
@@ -114,14 +117,16 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
       )
         return all;
       const ready = all.map((x) => prepared.find((p) => p.key === x.key) ?? x);
-      const r = approve(ready, "", undefined, {
-        group,
-        automatic: true,
-        audienceTz: audienceTz(effective().postingAudience),
-        now,
-      });
+      const options = { group, automatic: true, audienceTz: audienceTz(effective().postingAudience), now };
+      const r = approve(ready, "", undefined, options);
       scheduled = r.scheduled;
-      return r.scheduled.length ? r.entries : all;
+      if (r.scheduled.length) return r.entries;
+      // the schedule is full: a newer original takes the slot of an older one
+      const bumped = bumpOlderPost(ready, newest(entries), now);
+      if (!bumped) return all;
+      const second = approve(bumped, "", undefined, options);
+      scheduled = second.scheduled;
+      return second.scheduled.length ? second.entries : all;
     });
     if (scheduled.length) done.push(scheduled[0]!.clipTitle);
   }

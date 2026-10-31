@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { BookOpen, CalendarClock, Film, LayoutDashboard, Clapperboard, ListChecks, Layers, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, X } from "lucide-react";
+import { Film, LayoutDashboard, Clapperboard, ListChecks, Menu, PanelLeftClose, PanelLeftOpen, Radar, Settings, Smartphone, X } from "lucide-react";
 import { Mark, Wordmark } from "@/components/logo";
 import { useQueueSummary } from "@/hooks/use-queue";
 import { cn } from "@/lib/utils";
@@ -36,13 +36,16 @@ const GROUPS: { label?: string; items: Item[] }[] = [
     label: "Make",
     items: [
       { href: "/automation", label: "Monitor", icon: Radar },
-      { href: "/stories", label: "Stories", icon: BookOpen },
-      { href: "/studio", label: "Studio", icon: Layers },
-      { href: "/longform", label: "Long-form", icon: Film },
       { href: "/", label: "Library", icon: Clapperboard, also: (p) => p.startsWith("/v/") },
     ],
   },
-  { label: "Publish", items: [{ href: "/queue", label: "Queue", icon: CalendarClock }] },
+  {
+    label: "Publish",
+    items: [
+      { href: "/short-form", label: "Short form", icon: Smartphone },
+      { href: "/longform", label: "Long-form", icon: Film },
+    ],
+  },
 ];
 const SETTINGS: Item = { href: "/settings", label: "Settings", icon: Settings };
 
@@ -90,7 +93,7 @@ export function AppSidebar() {
   useEffect(() => setShortcut(isMac() ? "⌘B" : "Ctrl B"), []);
   useEffect(() => setDrawer(false), [path]);
 
-  const counts: Record<string, number | undefined> = { "/todo": summary?.todo || undefined, "/queue": summary?.review || undefined, "/automation": summary?.watching || undefined };
+  const counts: Record<string, number | undefined> = { "/todo": summary?.todo || undefined, "/short-form": summary?.review || undefined, "/automation": summary?.watching || undefined };
 
   return (
     <Tooltip.Provider delayDuration={300} skipDelayDuration={0}>
@@ -129,8 +132,8 @@ export function AppSidebar() {
             <Mark className="size-7" />
             <Wordmark className="h-6" />
           </Link>
-          <Link href="/queue" className="no-drag relative ml-auto grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-accent" aria-label={summary?.review ? `Queue: ${summary.review} waiting for your OK` : "Queue"}>
-            <CalendarClock className="size-5" />
+          <Link href="/short-form" className="no-drag relative ml-auto grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-accent" aria-label={summary?.review ? `Queue: ${summary.review} waiting for your OK` : "Queue"}>
+            <Smartphone className="size-5" />
             {!!summary?.review && <Count n={summary.review} urgent dot />}
           </Link>
         </header>

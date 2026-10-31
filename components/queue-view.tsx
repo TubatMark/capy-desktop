@@ -2,11 +2,15 @@
 import { queueGroup, queueCollection, queueLink } from "@/lib/queue-source";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Copy, ListChecks, Loader2 } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Copy, Loader2, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReviewCard } from "@/components/review-card";
 import { QueueCalendar } from "@/components/queue/queue-calendar";
 import { DayPosts } from "@/components/queue/day-posts";
+import { ShortKanban } from "@/components/queue/short-kanban";
+import { ViewToggle, useBoardView } from "@/components/view-toggle";
+import { GAP_MS, POSTS_PER_DAY } from "@/lib/post-time";
 import { PostDetail } from "@/components/queue/post-detail";
 import { api } from "@/hooks/use-job";
 import { useQueue } from "@/hooks/use-queue";
@@ -25,8 +29,10 @@ const group = <T,>(xs: T[], key: (x: T) => string) => {
 const zoneCity = (tz: string) =>
   (tz.split("/").pop() ?? tz).replace(/_/g, " ");
 
-/** The posting queue: clips waiting for review, then a calendar of everything scheduled or posted. */
+/** Every Short on its way out or already posted, as a board or as a calendar. */
 export function QueueView() {
+  const [mode, setMode] = useBoardView("short-form");
+  const [reviewing, setReviewing] = useState<string | null>(null);
   const { data, refresh } = useQueue();
   const results = usePostResults();
   const channels = useSourceChannels();
@@ -100,6 +106,7 @@ export function QueueView() {
     const es = clips.get(id) ?? [];
     if (es.some((e) => e.status === "review")) {
       setOpen(null);
+      if (mode === "kanban") return setReviewing(id);
       const el = document.getElementById(`review-${id}`);
       el?.scrollIntoView({ behavior: "smooth", block: "start" });
       el?.animate?.(
@@ -123,7 +130,7 @@ export function QueueView() {
   if (!data)
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> Loading the queue…
+        <Loader2 className="size-4 animate-spin" /> Loading your Shorts…
       </p>
     );
 
@@ -138,21 +145,23 @@ export function QueueView() {
 
   return (
     <div className="space-y-10">
-      <div className="space-y-1">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          <ListChecks className="size-6 text-primary" /> Queue
-        </h1>
-        <p className="max-w-prose text-pretty text-sm text-muted-foreground">
-          New clips wait here for your OK. Once approved they post on their own
-          at spread-out times (3 a day per app, at least 5 hours apart), in{" "}
-          {tzLabel} time.{" "}
-          <Link
-            href="/settings#accounts"
-            className="underline underline-offset-2"
-          >
-            Accounts
-          </Link>
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+            <Smartphone className="size-6 text-primary" /> Short form
+          </h1>
+          <p className="max-w-prose text-pretty text-sm text-muted-foreground">
+            New clips are checked and scheduled on their own, {POSTS_PER_DAY} a
+            day, at least {GAP_MS / 3_600_000} hours apart, in {tzLabel} time.{" "}
+            <Link
+              href="/settings#accounts"
+              className="underline underline-offset-2"
+            >
+              Accounts
+            </Link>
+          </p>
+        </div>
+        <ViewToggle view={mode} onChange={setMode} />
       </div>
       {toast && (
         <p
@@ -163,9 +172,59 @@ export function QueueView() {
         </p>
       )}
 
-      <section className="space-y-3">
+      {mode === "kanban" && (
+        <ShortKanban
+          entries={data.entries}
+          tz={tz}
+          onOpen={(id, column) => {
+            if (column === "waiting") setReviewing(id);
+            else openClip(id);
+          }}
+        />
+      )}
+
+      {mode === "calendar" && <section className="@container space-y-3" aria-label="Posting calendar">
+        <div className="space-y-0.5">
+          <h2 className="text-lg font-semibold">Scheduled &amp; posted</h2>
+          <p className="text-sm text-muted-foreground">
+            Pick a day to see what went out or is coming up, and how it&apos;s
+            doing.
+          </p>
+        </div>
+        <div className="grid items-start gap-5 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+          <div className="@3xl:sticky @3xl:top-4">
+            <QueueCalendar
+              days={days}
+              view={month}
+              selected={day}
+              today={today}
+              tzLabel={tzLabel}
+              onView={setView}
+              onSelect={setSelected}
+            />
+          </div>
+          <DayPosts
+            day={day}
+            today={today}
+            posts={days.get(day) ?? []}
+            tz={tz}
+            channels={channels}
+            publications={results.data?.publications ?? []}
+            resultsState={results.state}
+            prevDay={nearestDay(days.keys(), day, -1)}
+            nextDay={nearestDay(days.keys(), day, 1)}
+            onJump={(d) => {
+              setView(d);
+              setSelected(d);
+            }}
+            onOpen={setOpen}
+          />
+        </div>
+      </section>}
+
+      {mode === "calendar" && <section className="space-y-3">
         <h2 className="text-lg font-semibold">
-          Waiting for your OK ({review.size})
+          Waiting ({review.size})
         </h2>
         {dupes.map((ids) => {
           const firsts = ids.map((id) => review.get(id)![0]!);
@@ -272,46 +331,37 @@ export function QueueView() {
             ))}
           </div>
         ))}
-      </section>
+      </section>}
 
-      <section className="@container space-y-3" aria-label="Posting calendar">
-        <div className="space-y-0.5">
-          <h2 className="text-lg font-semibold">Scheduled &amp; posted</h2>
-          <p className="text-sm text-muted-foreground">
-            Pick a day to see what went out or is coming up, and how it&apos;s
-            doing.
-          </p>
-        </div>
-        <div className="grid items-start gap-5 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
-          <div className="@3xl:sticky @3xl:top-4">
-            <QueueCalendar
-              days={days}
-              view={month}
-              selected={day}
-              today={today}
-              tzLabel={tzLabel}
-              onView={setView}
-              onSelect={setSelected}
-            />
-          </div>
-          <DayPosts
-            day={day}
-            today={today}
-            posts={days.get(day) ?? []}
-            tz={tz}
-            channels={channels}
-            publications={results.data?.publications ?? []}
-            resultsState={results.state}
-            prevDay={nearestDay(days.keys(), day, -1)}
-            nextDay={nearestDay(days.keys(), day, 1)}
-            onJump={(d) => {
-              setView(d);
-              setSelected(d);
-            }}
-            onOpen={setOpen}
-          />
-        </div>
-      </section>
+      {reviewing && review.get(reviewing) && (
+        <Dialog.Root open onOpenChange={(o) => !o && setReviewing(null)}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+            <Dialog.Content aria-describedby={undefined} className="fixed top-1/2 left-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border bg-background p-5 shadow-xl">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <Dialog.Title className="text-lg font-semibold">Waiting for a slot</Dialog.Title>
+                <Dialog.Close aria-label="Close" className="rounded p-1 text-muted-foreground hover:bg-muted">
+                  <X className="size-4" />
+                </Dialog.Close>
+              </div>
+              <ReviewCard
+                entries={review.get(reviewing)!}
+                nextFree={data.nextFree}
+                tz={tz}
+                onDone={(msg) => {
+                  setReviewing(null);
+                  done(msg);
+                }}
+                clips={clips}
+                onOpenClip={(id) => {
+                  setReviewing(null);
+                  openClip(id);
+                }}
+              />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      )}
 
       {open && openEntries.length > 0 && (
         <PostDetail

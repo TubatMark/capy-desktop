@@ -2,13 +2,18 @@
 import { useCallback, useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AlertTriangle, Bot, CalendarClock, Mic, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
+import { QueueCalendar } from "@/components/queue/queue-calendar";
+import { KIND, KindMark } from "@/components/queue/post-bits";
 import { Button } from "@/components/ui/button";
+import { ViewToggle, useBoardView } from "@/components/view-toggle";
+import { dayKey, fmtDay, type DayPost } from "@/lib/queue-calendar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/hooks/use-job";
 import {
   LONG_COLUMNS,
+  longDayItems,
   RESULTS_TO_COMPARE,
   columnOf,
   easternTime,
@@ -71,6 +76,7 @@ export function LongFormBoard() {
   const [err, setErr] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [mode, setMode] = useBoardView("long-form");
 
   const load = useCallback(() => {
     return api<Board>("/api/longform")
@@ -97,9 +103,12 @@ export function LongFormBoard() {
           </h1>
           <p className="text-sm text-muted-foreground">Ranked videos edited from the footage capy already saved, with original commentary.</p>
         </div>
-        <Button onClick={() => setPicking(true)} disabled={!board}>
-          <Plus className="size-4" /> New video
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ViewToggle view={mode} onChange={setMode} />
+          <Button onClick={() => setPicking(true)} disabled={!board}>
+            <Plus className="size-4" /> New video
+          </Button>
+        </div>
       </div>
 
       {err && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
@@ -109,7 +118,9 @@ export function LongFormBoard() {
         </p>
       )}
 
-      {board && (
+      {board && mode === "calendar" && <LongCalendar board={board} onOpen={setOpenId} />}
+
+      {board && mode === "kanban" && (
         <div className="-mx-1 overflow-x-auto px-1 pb-2">
           <div className="grid min-w-[1260px] grid-cols-7 gap-3">
             {LONG_COLUMNS.map((col) => {
@@ -529,11 +540,65 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
   );
 }
 
+const TZ = "Asia/Manila";
+const clock = (at: number) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(at);
+
+/** Long videos by day, in Philippine time: numbers on the month, the day's list on the right. */
+function LongCalendar({ board, onOpen }: { board: Board; onOpen: (id: string) => void }) {
+  const today = dayKey(Date.now(), TZ);
+  const [selected, setSelected] = useState(today);
+  const [month, setMonth] = useState(today);
+  const items = longDayItems(board.videos, board.live);
+  const days = new Map<string, DayPost[]>();
+  for (const it of items) {
+    const key = dayKey(it.at, TZ);
+    days.set(key, [...(days.get(key) ?? []), { group: it.id, entries: [], at: it.at, kind: it.kind }]);
+  }
+  const list = items.filter((it) => dayKey(it.at, TZ) === selected).sort((a, b) => a.at - b.at);
+  return (
+    <section className="@container" aria-label="Long-form calendar">
+      <div className="grid items-start gap-5 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+        <QueueCalendar days={days} view={month} selected={selected} today={today} tzLabel="Philippine" onView={setMonth} onSelect={setSelected} />
+        <div className="space-y-3 rounded-xl border bg-card p-4">
+          <h2 className="font-semibold">{fmtDay(selected)}</h2>
+          {!list.length && <p className="text-sm text-muted-foreground">Nothing posted or scheduled on this day.</p>}
+          <ul className="space-y-2">
+            {list.map((it) => {
+              const v = board.videos.find((x) => x.id === it.id)!;
+              return (
+                <li key={it.id}>
+                  <button type="button" onClick={() => onOpen(it.id)} className="flex w-full items-start gap-3 rounded-lg border p-2 text-left transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-primary">
+                    {v.thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={media(v.thumb)} alt="" className="aspect-video w-32 shrink-0 rounded object-cover" />
+                    ) : (
+                      <span className="grid aspect-video w-32 shrink-0 place-items-center rounded bg-muted text-muted-foreground">
+                        <Film className="size-5" />
+                      </span>
+                    )}
+                    <span className="min-w-0 space-y-1 text-sm">
+                      <span className="line-clamp-2 block font-medium">{v.title}</span>
+                      <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                        <KindMark kind={it.kind} className="size-2" />
+                        {it.kind === "scheduled" && !it.booked ? "Planned" : KIND[it.kind].label} · {clock(it.at)} PHT · {v.creator}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; warn?: string }[] = [
   { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
   { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
   { key: "publish", label: "Schedule going public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
-  { key: "free", label: "Delete local files", hint: "Removes footage and masters 48 hours after processing.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
+  { key: "free", label: "Delete local files", hint: "Removes long-form footage and masters 48 hours after processing, and rendered Shorts 48 hours after posting.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
 ];
 
 function AutopilotPanel({ settings, log, onChange }: { settings: AutopilotSettings; log: AutopilotLogEntry[]; onChange: () => void }) {

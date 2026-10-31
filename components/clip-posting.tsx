@@ -48,7 +48,7 @@ export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; re
         <>
           <p className="text-sm text-muted-foreground">
             Approve to schedule{data.nextFree ? ` (next free: ${fmtSlot(data.nextFree, tz)})` : ""}. Edit the text per platform in{" "}
-            <Link href="/queue" className="underline underline-offset-2">
+            <Link href="/short-form" className="underline underline-offset-2">
               Queue
             </Link>
             .

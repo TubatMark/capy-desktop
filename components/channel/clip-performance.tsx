@@ -67,9 +67,7 @@ function Publication({
   const a = row.attribution,
     recipe = a.recipe,
     source = a.source;
-  const editor = source.projectId
-    ? `/studio/${encodeURIComponent(source.projectId)}`
-    : source.jobId
+  const editor = source.jobId
       ? `/v/${encodeURIComponent(source.jobId)}${source.clipN ? `/clip/${source.clipN}` : ""}`
       : undefined;
   return (

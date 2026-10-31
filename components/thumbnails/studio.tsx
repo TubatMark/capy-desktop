@@ -242,8 +242,8 @@ export function ThumbnailStudio({
   return (
     <main className="mx-auto max-w-7xl space-y-6 p-6">
       <header>
-        <a href="/studio" className="text-sm underline">
-          Video Studio
+        <a href="/short-form" className="text-sm underline">
+          Short form
         </a>
         <h1 className="mt-2 text-3xl font-semibold">Thumbnail Studio</h1>
         <p className="text-muted-foreground">

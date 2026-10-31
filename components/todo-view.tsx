@@ -91,11 +91,7 @@ export function TodoView() {
             <div className="rounded-xl border bg-card px-5 py-8 text-center">
               <p className="font-medium">Nothing needs you right now</p>
               <p className="mx-auto mt-1 max-w-md text-pretty text-sm text-muted-foreground">
-                Write a story in{" "}
-                <Link href="/stories" className="underline underline-offset-2">
-                  Stories
-                </Link>{" "}
-                or add a channel in{" "}
+                Add a channel in{" "}
                 <Link href="/automation" className="underline underline-offset-2">
                   Monitor
                 </Link>
@@ -111,9 +107,7 @@ export function TodoView() {
                 {data.assessing.map((a) => (
                   <li key={a.id} className="flex items-center gap-2 text-muted-foreground">
                     <Loader2 className="size-3.5 animate-spin text-primary" />
-                    <Link href={`/stories/${a.seriesId}/${a.id}`} className="hover:text-foreground hover:underline">
-                      “{a.title}”
-                    </Link>
+                    <span>“{a.title}”</span>
                     <span className="text-xs">({a.stage === "script" ? "script" : "video"})</span>
                   </li>
                 ))}

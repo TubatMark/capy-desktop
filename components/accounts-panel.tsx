@@ -95,7 +95,7 @@ export function AccountsPanel({ initial }: { initial: AppSettings }) {
         <CardDescription>
           Connect YouTube, Instagram and TikTok with your own free developer
           apps. Rendered clips wait in{" "}
-          <Link href="/queue" className="underline underline-offset-2">
+          <Link href="/short-form" className="underline underline-offset-2">
             Queue
           </Link>{" "}
           until you approve them, then post at staggered times (at most 2 a day

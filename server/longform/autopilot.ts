@@ -1,6 +1,7 @@
 import { autopilotActions, describeAction, recommendSlot, type AutopilotAction } from "../../lib/longform";
 import { rmSync } from "node:fs";
 import path from "node:path";
+import { removeOldShorts } from "../shorts-cleanup";
 import { freeSpace } from "./cleanup";
 import { availableClips, createVideo, footageByCreator, getVideo, listVideos, loadAutopilot, loadSlots, logAutopilot, patchVideo, videoDir } from "./store";
 import { viewsLookup, ytDeps, type Step } from "./worker";
@@ -54,6 +55,10 @@ async function act(a: AutopilotAction, queue: (s: Step) => Promise<unknown>, now
 /** Runs on the worker's regular check. One failing action doesn't stop the others. */
 export async function autopilotTick(queue: (s: Step) => Promise<unknown>, now = Date.now()) {
   const settings = loadAutopilot();
+  if (settings.free) {
+    const old = removeOldShorts(now);
+    if (old.files) logAutopilot(`Deleted ${old.files} rendered Shorts posted over 48 hours ago (${(old.bytes / 1e9).toFixed(1)} GB)`, now);
+  }
   if (!settings.draft && !settings.upload && !settings.publish && !settings.free && !listVideos().some((v) => v.error)) return;
   const footage = settings.draft ? footageByCreator(availableClips(await viewsLookup())) : [];
   for (const a of autopilotActions(listVideos(), footage, settings, now)) {

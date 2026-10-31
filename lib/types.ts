@@ -84,6 +84,8 @@ export interface QueueEntry {
   seo?: SeoReport;
   videoTitle?: string;
   videoUrl?: string;
+  /** When the original video went up (public entries only). */
+  sourceUploadedAt?: number;
   /** The picture to show for this post: the attached designed thumbnail when there is one, else the raw frame. */
   thumbUrl?: string;
   /** The raw frame grab (publicQueueEntry only; set when thumbUrl shows a design instead). */
