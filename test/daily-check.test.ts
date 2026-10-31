@@ -21,15 +21,15 @@ describe("judging posted Shorts", () => {
 
 describe("acting on the numbers", () => {
   it("narrates everything once plain Shorts have clearly failed, once", () => {
-    const first = judge(many(10), DEFAULT_TUNING, NOW);
+    const first = judge(many(10), { ...DEFAULT_TUNING, narrate: "half" }, NOW);
     expect(first.tuning.narrate).toBe("all");
     expect(first.report.actions[0]).toMatch(/Narrating every new Short: 0 of 10/);
     const again = judge(many(10), first.tuning, NOW);
     expect(again.report.actions).toEqual([]);
-    expect(judge(many(9), DEFAULT_TUNING, NOW).tuning.narrate).toBe("half");
+    expect(judge(many(9), { ...DEFAULT_TUNING, narrate: "half" }, NOW).tuning.narrate).toBe("half");
   });
   it("leaves things alone when plain Shorts are working", () => {
-    expect(judge(many(10, { feedViews: 2000 }), DEFAULT_TUNING, NOW).tuning.narrate).toBe("half");
+    expect(judge(many(10, { feedViews: 2000 }), { ...DEFAULT_TUNING, narrate: "half" }, NOW).tuning.narrate).toBe("half");
   });
   it("stops narrating when it clearly does worse", () => {
     const rows = [...many(10, { feedViews: 2000 }), ...many(10, { group: "narrated" })];

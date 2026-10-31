@@ -68,6 +68,11 @@ export class Store {
       ? { id, revision: r.revision, value: JSON.parse(r.body) as T }
       : undefined;
   }
+  /** Each document's revision, without parsing any of them. */
+  revisions(kind: string): Map<string, number> {
+    const rows = this.db.prepare("SELECT id,revision FROM documents WHERE kind=?").all(kind) as { id: string; revision: number }[];
+    return new Map(rows.map((r) => [r.id, r.revision]));
+  }
   list<T = unknown>(kind: string): Stored<T>[] {
     return (
       this.db
@@ -107,6 +112,8 @@ export class Store {
     return this.transaction(() => {
       const old = this.get<T>(kind, id);
       const value = fn(old?.value ?? initial());
+      // nothing changed: skip the write, which for a big document runs to gigabytes a day
+      if (old && JSON.stringify(old.value) === JSON.stringify(value)) return value;
       this.put(kind, id, value, (old?.revision ?? 0) + 1);
       return value;
     });

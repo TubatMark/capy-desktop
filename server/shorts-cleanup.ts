@@ -68,3 +68,49 @@ export function removeOldShorts(now = Date.now()): { files: number; bytes: numbe
   }
   return { files, bytes };
 }
+
+/** Footage nothing is using is kept this long for long-form to draw on; a stale moment makes a stale compilation anyway. */
+export const FOOTAGE_KEEP_MS = 14 * 86400_000;
+
+interface FootageJob extends Job {
+  dir?: string;
+  createdAt?: number;
+  clips?: { n: number; render?: { status?: string; file?: string }; segment?: { url?: string } }[];
+}
+
+/** Old footage of clips no Short is waiting on and no unfinished long video has claimed. */
+export function removableFootage(jobs: FootageJob[], entries: Entry[], claimed: Set<string>, now: number): string[] {
+  const active = new Set(entries.filter((e) => e.status !== "posted" && e.status !== "rejected").map(key));
+  const out: string[] = [];
+  for (const job of jobs) {
+    if (!job.createdAt || now - job.createdAt < FOOTAGE_KEEP_MS) continue;
+    for (const c of job.clips ?? []) {
+      const url = c.segment?.url;
+      if (!url || active.has(`${job.id}:${c.n}`) || claimed.has(`${job.id}:${c.n}`)) continue;
+      const rel = decodeURIComponent(url.replace(/^\/api\/media\//, "").split("?")[0]!);
+      const parts = rel.split("/");
+      if (parts.length === 3 && parts[1] === "work" && !parts[0]!.startsWith(".") && parts[2]!.endsWith(".src.mp4")) out.push(rel);
+    }
+  }
+  return out;
+}
+
+export function removeOldFootage(now = Date.now()): { files: number; bytes: number } {
+  const store = runtimeStore();
+  const claimed = new Set(
+    store
+      .list<{ status: string; clips?: { jobId: string; n: number }[] }>("longform-videos")
+      .filter((r) => r.value.status !== "freed")
+      .flatMap((r) => (r.value.clips ?? []).map((c) => `${c.jobId}:${c.n}`)),
+  );
+  let files = 0;
+  let bytes = 0;
+  for (const rel of removableFootage(store.list<FootageJob>("legacy-jobs").map((r) => r.value), queueEntries(), claimed, now)) {
+    const abs = path.join(OUTPUT_ROOT, rel);
+    if (!existsSync(abs)) continue;
+    bytes += statSync(abs).size;
+    rmSync(abs, { force: true });
+    files++;
+  }
+  return { files, bytes };
+}

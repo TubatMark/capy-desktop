@@ -311,7 +311,8 @@ async function upload(v: LongVideo): Promise<Step | null> {
 
 /** Follow every uploaded video: processing done, gone public, views after 48 hours and a week. */
 export async function observe(now = Date.now()): Promise<null> {
-  const active = listVideos().filter((v) => v.youtube?.id && !v.youtube.rejected);
+  // once a video has its week-old numbers there's nothing left to watch for
+  const active = listVideos().filter((v) => v.youtube?.id && !v.youtube.rejected && !v.metrics?.some((m) => m.ageHours === 168));
   const audienceOld = (loadAudience()?.fetchedAt ?? 0) < now - 7 * 86400_000;
   if (!active.length && !audienceOld) return null;
   if (!loadAccounts().youtube.tokens?.accessToken) return null;

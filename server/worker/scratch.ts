@@ -62,3 +62,19 @@ export function sweepScratch(
   for (const id of ids) removeWorkspace(root, id);
   return ids.length;
 }
+
+/** How long routine tick records are kept. Nothing reads them once finished, and they pile up by the thousand a day. */
+export const KEEP_TICKS_MS = 3600_000;
+const PRUNE_EVERY_MS = 600_000;
+let lastPrune = 0;
+
+/** Only finished poster and watcher ticks and long-form observes: job history is what recovery relies on. */
+export function pruneTicks(db: { prepare(sql: string): { run(...args: unknown[]): unknown } }, now = Date.now(), force = false) {
+  if (!force && now - lastPrune < PRUNE_EVERY_MS) return;
+  lastPrune = now;
+  db.prepare(
+    `DELETE FROM documents WHERE kind='work' AND json_extract(body,'$.status')='complete'
+     AND (json_extract(body,'$.kind') IN ('poster','watcher') OR json_extract(body,'$.workKey')='longform:observe')
+     AND json_extract(body,'$.createdAt') < ?`,
+  ).run(now - KEEP_TICKS_MS);
+}

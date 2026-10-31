@@ -35,6 +35,8 @@ export function videoIdFromUrl(url: string): string | null {
   return /^[A-Za-z0-9_-]{11}$/.test(url) ? url : null;
 }
 
+export const ytCommonArgs = common;
+
 export async function fetchMeta(url: string, o: YtOpts = {}): Promise<VideoMeta> {
   // a live stream's metadata lists every fragment, and can run far past the usual limit
   const { stdout } = await run("yt-dlp", [...common(o), "--dump-single-json", "--skip-download", url], { maxOutputBytes: 128 * 1024 * 1024 });
@@ -141,7 +143,7 @@ export async function fetchSection(
   const ffmpeg = resolveBin("ffmpeg");
   const intermediate =
     process.platform === "darwin"
-      ? "-c:v h264_videotoolbox -b:v 80M -profile:v high -pix_fmt yuv420p -c:a aac -b:a 256k"
+      ? "-c:v h264_videotoolbox -b:v 30M -profile:v high -pix_fmt yuv420p -c:a aac -b:a 256k"
       : "-c:v libx264 -preset ultrafast -crf 12 -pix_fmt yuv420p -c:a aac -b:a 256k";
   await run("yt-dlp", [
     ...common(o),

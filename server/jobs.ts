@@ -1,3 +1,4 @@
+import { AUTO_HORIZON_DAYS } from "./queue";
 import {
   creatorPolicy,
   existingAutomationIntakeReason,
@@ -7,6 +8,7 @@ import {
   type CreatorJobAdmission,
   creatorRecipe,
   recipeSettings,
+  unpublishedAutomatedClips,
 } from "./automation-policy";
 import { recordMediaQuality, recordSupplementaryReview } from "./media-quality";
 import { loadTuning } from "./daily-check";
@@ -56,6 +58,9 @@ import { thumbnail } from "../src/render";
 import { pickCaptionLang, videoIdFromUrl } from "../src/youtube";
 import { snapToWords, wordsInRange } from "../src/captions";
 import { generatePublish, pickClips, rewriteTitleHook } from "../src/pick";
+import { fetchChatPeaks } from "../src/chat-peaks";
+import { POSTS_PER_DAY } from "../lib/post-time";
+import { ytCommonArgs } from "../src/youtube";
 import { peakFor, replayPeaks } from "../src/heatmap";
 import { applyReview, reviewPicks } from "../src/review";
 import {
@@ -294,17 +299,19 @@ class JobManager extends EventEmitter {
 
   private refresh() {
     if (currentWork()) return;
-    for (const row of runtimeStore().list<JobState>("legacy-jobs")) {
-      validateLegacy("legacy-jobs", row.id, row.value);
-      const known = this.revisions.get(row.id);
-      if (known !== row.revision) {
-        this.jobs.set(row.id, row.value);
-        this.revisions.set(row.id, row.revision);
-        this.words.delete(row.id);
-        this.captionWords.delete(row.id);
-        this.captionLoads.delete(row.id);
-        this.metas.delete(row.id);
-      }
+    // revisions first: pages poll this, and parsing every job twice a second adds up
+    const store = runtimeStore();
+    for (const [id, revision] of store.revisions("legacy-jobs")) {
+      if (this.revisions.get(id) === revision) continue;
+      const row = store.get<JobState>("legacy-jobs", id);
+      if (!row) continue;
+      validateLegacy("legacy-jobs", id, row.value);
+      this.jobs.set(id, row.value);
+      this.revisions.set(id, row.revision);
+      this.words.delete(id);
+      this.captionWords.delete(id);
+      this.captionLoads.delete(id);
+      this.metas.delete(id);
     }
   }
   private revisions = new Map<string, number>();
@@ -1003,10 +1010,17 @@ class JobManager extends EventEmitter {
             "pick",
             `${peaks.length} "Most replayed" peaks sent to the picker`,
           );
+        // automated picks only: a long chat replay takes minutes that a manual run shouldn't wait for
+        const chat =
+          job.automation && (job.duration ?? 0) >= 1200
+            ? await fetchChatPeaks(job.url, path.join(workRoot(), job.dir, "work"), ytCommonArgs(this.yt(job)))
+            : [];
+        if (chat.length) this.log(job, "pick", `${chat.length} live chat spikes sent to the picker`);
         const res = await stagePick(words, meta, {
           // two extra candidates so the reviewer can flag weak ones and still leave `count`
           count: job.settings.count + 2,
           peaks,
+          chatPeaks: chat,
           audience: job.settings.audience,
           minSec: job.settings.minSec,
           maxSec: job.settings.maxSec,
@@ -1971,6 +1985,14 @@ class JobManager extends EventEmitter {
         });
         return;
       }
+    }
+    // don't render what can't post before its original goes stale; the spares stay as long-form footage
+    const room = Math.max(1, POSTS_PER_DAY * AUTO_HORIZON_DAYS - unpublishedAutomatedClips(job.id));
+    const wanted = job.clips.filter((c) => c.selected);
+    const spare = wanted.filter((c) => c.render.status === "none").slice(Math.max(0, room - wanted.filter((c) => c.render.status !== "none").length));
+    if (spare.length) {
+      for (const c of spare) c.selected = false;
+      this.log(job, "render", `automation: ${spare.length} clip${spare.length === 1 ? "" : "s"} left unrendered, the schedule has room for ${room}`);
     }
     const picked = job.clips.filter((c) => c.selected);
     if (!picked.length) {

@@ -7,7 +7,7 @@ import { shortTestSummary, type ShortTestResult, type ShortTestState } from "../
 import { run } from "../src/exec";
 import { speak } from "../src/longform/narrate";
 import { detectEncoder } from "../src/render";
-import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCommentary } from "../src/shorts-commentary";
+import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCheckedCommentary } from "../src/shorts-commentary";
 import { runtimeStore } from "./db/runtime";
 import { dataDir, effective } from "./settings";
 
@@ -61,8 +61,16 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
   try {
     const app = effective();
     const excerpt = words.filter((w) => w.end > c.start && w.start < c.end).map((w) => w.text).join(" ").slice(0, 500);
-    const lines = await writeCommentary(
-      { creator: job.channel ?? "this creator", title: c.title, reason: c.reason, excerpt },
+    const others = runtimeStore()
+      .list<JobState>("legacy-jobs")
+      .map((r) => r.value)
+      .filter((j) => j.id !== job.id && j.channel === job.channel)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 5)
+      .flatMap((j) => (j.clips ?? []).filter((x) => x.selected).map((x) => x.title))
+      .slice(0, 6);
+    const lines = await writeCheckedCommentary(
+      { creator: job.channel ?? "this creator", title: c.title, reason: c.reason, excerpt, others },
       { agent: app.agent, model: app.agent === "claude" ? app.model : app.models[app.agent] },
     );
     const opening = await speak(lines.opening, `${base}.opening`, dataDir());

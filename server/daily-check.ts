@@ -11,7 +11,12 @@ const MANILA_MS = 8 * 3600_000;
 const MAX_REFRESH_BATCHES = 8;
 
 export const loadTuning = (): Tuning => ({ ...DEFAULT_TUNING, ...runtimeStore().get<Partial<Tuning>>(CONFIG, "tuning")?.value });
+export function saveFocusCreators(focusCreators: string[]) {
+  runtimeStore().put(CONFIG, "tuning", { ...loadTuning(), focusCreators });
+}
 export const loadDailyReport = () => runtimeStore().get<DailyReport>(CONFIG, "daily-report")?.value;
+const RETRY_MS = 3600_000;
+let lastAttempt = 0;
 const dayOf = (at: number) => Math.floor((at + MANILA_MS) / 86400_000);
 
 interface QueueRow {
@@ -42,10 +47,19 @@ async function readRows(f: typeof fetch): Promise<PostedRow[]> {
   const token = await getAccessToken("youtube", f, account);
   const posted = (store.get<QueueRow[]>("legacy-state", "queue")?.value ?? []).filter((e) => e.status === "posted" && e.result?.id);
   const rows: PostedRow[] = [];
+  let failed = 0;
   for (const e of posted) {
     const filters = `video==${e.result!.id}`;
-    const sources = await report(f, token, { metrics: "views", dimensions: "insightTrafficSourceType", filters }).catch(() => []);
-    const totals = (await report(f, token, { metrics: "views,engagedViews,averageViewPercentage", filters }).catch(() => []))[0];
+    // a failed read isn't zero views: that post just sits this check out
+    let sources: (string | number)[][];
+    let totals: (string | number)[] | undefined;
+    try {
+      sources = await report(f, token, { metrics: "views", dimensions: "insightTrafficSourceType", filters });
+      totals = (await report(f, token, { metrics: "views,engagedViews,averageViewPercentage", filters }))[0];
+    } catch {
+      failed++;
+      continue;
+    }
     const job = e.jobId ? store.get<RawJob>("legacy-jobs", e.jobId)?.value : undefined;
     const group = job?.clips?.find((c) => c.n === e.n)?.shortTest?.group;
     const views = Number(totals?.[0] ?? 0);
@@ -61,6 +75,8 @@ async function readRows(f: typeof fetch): Promise<PostedRow[]> {
       creator: job?.channel,
     });
   }
+  // too patchy to act on: try again later rather than judging from a few rows
+  if (failed > posted.length / 2) throw Error(`Analytics failed for ${failed} of ${posted.length} posts`);
   return rows;
 }
 
@@ -88,5 +104,7 @@ export async function runDailyCheck(now = Date.now(), f: typeof fetch = fetch): 
 export async function maybeRunDailyCheck(now = Date.now()) {
   const last = loadDailyReport()?.at;
   if (last !== undefined && dayOf(last) === dayOf(now)) return undefined;
+  if (now - lastAttempt < RETRY_MS) return undefined;
+  lastAttempt = now;
   return runDailyCheck(now);
 }

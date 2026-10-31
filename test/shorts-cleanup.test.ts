@@ -98,3 +98,25 @@ describe("newest original first", () => {
     expect(out.find((e) => e.key === "ok")!.status).toBe("scheduled");
   });
 });
+
+describe("old footage", () => {
+  it("removes only stale footage nothing is using", async () => {
+    const { removableFootage, FOOTAGE_KEEP_MS } = await import("../server/shorts-cleanup");
+    const old = NOW - FOOTAGE_KEEP_MS - 1;
+    const clip = (n: number, url = `/api/media/a/work/0${n}.src.mp4`) => ({ n, segment: { url } });
+    const job = { id: "j", createdAt: old, clips: [clip(1), clip(2), clip(3), clip(4), clip(5, "/api/media/a/01.mp4")] };
+    const entries = [{ jobId: "j", n: 1, status: "posted" }, { jobId: "j", n: 2, status: "scheduled" }] as never;
+    expect(removableFootage([job], entries, new Set(["j:3"]), NOW)).toEqual(["a/work/01.src.mp4", "a/work/04.src.mp4"]);
+    expect(removableFootage([{ ...job, createdAt: NOW - 1000 }], entries, new Set(), NOW)).toEqual([]);
+  });
+});
+
+describe("worker retries", () => {
+  it("retries rate limits and server errors, with growing waits", async () => {
+    const { permanentStatus, retryDelayMs } = await import("../server/worker/runner");
+    expect([429, 500, 503, undefined].map(permanentStatus)).toEqual([false, false, false, false]);
+    expect([400, 403, 404].map(permanentStatus)).toEqual([true, true, true]);
+    expect([1, 2, 3].map(retryDelayMs)).toEqual([5000, 20000, 80000]);
+    expect(retryDelayMs(20)).toBe(600000);
+  });
+});

@@ -101,7 +101,13 @@ export async function stageWords(
   let captionErr: string | undefined;
   if (!o.forceWhisper) {
     try {
-      words = await fetchCaptions(url, workDir, o.lang, yt, meta);
+      // a rate limit passes: don't spend 20 minutes transcribing over it
+      words = await fetchCaptions(url, workDir, o.lang, yt, meta).catch(async (e) => {
+        if (isCancelled(e) || !/429|Too Many Requests/i.test(String((e as Error).message))) throw e;
+        o.log?.("captions rate-limited, trying again shortly");
+        await new Promise((r) => setTimeout(r, 30_000));
+        return fetchCaptions(url, workDir, o.lang, yt, meta);
+      });
       if (!words) o.log?.("this video has no captions");
     } catch (e) {
       if (isCancelled(e)) throw e;
@@ -119,6 +125,9 @@ export async function stageWords(
       o.log?.("transcribing locally (the slow part)");
       words = await transcribe(audio, workDir, { language: o.lang });
       source = "whisper";
+      // the transcript is all that's needed from here: these run to hundreds of MB
+      await rm(audio, { force: true }).catch(() => {});
+      await rm(path.join(workDir, "audio16k.wav"), { force: true }).catch(() => {});
     } catch (e) {
       if (isCancelled(e)) throw e;
       const hint = captionErr

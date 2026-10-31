@@ -17,7 +17,7 @@ const strip = (s: Record<string, unknown>) => {
 const schemaOf = (t: z.ZodType) => strip(z.toJSONSchema(t, { target: "draft-7" }) as Record<string, unknown>);
 
 const ScriptSchema = z.object({
-  title: z.string().describe("YouTube title, under 70 characters. Names the creator and promises the ranking. No hashtags"),
+  title: z.string().describe("YouTube title, under 70 characters. Starts with the creator's name and uses the words people would search for what's in it. Promises only what the video delivers. No hashtags"),
   thumbnailText: z.string().describe("2-4 punchy words for the thumbnail, true of the whole video rather than one moment"),
   intro: z.string().describe("Spoken intro, 35-60 words: why these moments and what makes this ranking worth watching"),
   otherTitles: z.array(z.string()).describe("2 other honest titles for the same video, each taking a different angle"),
@@ -46,6 +46,7 @@ ${moments}
 
 The host has to add something a viewer can't get from the clips alone, because a pile of clips with no story isn't worth watching and YouTube won't reward it:
 - Give a real opinion: compare moments to each other, say why one beats another, and connect them into one thread about ${creator}.
+- Every line needs a verdict you could defend: why this beats the one below it. If someone could write the line just by watching the clip, rewrite it.
 - Never just describe what's about to happen, and don't spoil the punchline.
 - Say only what the clips support. Don't invent facts, motives, quotes or background about real people.
 - Sound like a person talking: short sentences, no hype words like "insane" or "you won't believe".

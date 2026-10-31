@@ -49,3 +49,22 @@ describe("worker scratch cleanup", () => {
     expect(existsSync(path.join(root, ".worker"))).toBe(true);
   });
 });
+
+describe("old tick records", () => {
+  it("removes finished ticks only, keeping job history and anything recent or unfinished", async () => {
+    const { Store } = await import("../server/db");
+    const { pruneTicks, KEEP_TICKS_MS } = await import("../server/worker/scratch");
+    const store = new Store(path.join(mkdtempSync(path.join(tmpdir(), "capy-prune-")), "s.sqlite"));
+    const old = NOW - KEEP_TICKS_MS - 1;
+    const put = (id: string, kind: string, status: string, createdAt: number, workKey = "k") => store.put("work", id, { kind, status, createdAt, workKey });
+    put("old-poster", "poster", "complete", old);
+    put("old-watcher", "watcher", "complete", old);
+    put("old-observe", "longform-upload", "complete", old, "longform:observe");
+    put("old-upload", "longform-upload", "complete", old, "longform:a:upload:0");
+    put("old-media", "media", "complete", old);
+    put("new-poster", "poster", "complete", NOW);
+    put("stuck-poster", "poster", "queued", old);
+    pruneTicks(store.db as never, NOW, true);
+    expect(store.list("work").map((r) => r.id).sort()).toEqual(["new-poster", "old-media", "old-upload", "stuck-poster"]);
+  });
+});

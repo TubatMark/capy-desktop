@@ -1,3 +1,5 @@
+import { creatorName } from "./longform";
+
 /** The daily check on posted videos: what counts as working, and what to do when it isn't. No node imports here. */
 
 export interface PostedRow {
@@ -20,8 +22,10 @@ export interface Tuning {
   clipMaxSec: number;
   /** When clip length last changed: it needs time to show results. */
   clipChangedAt?: number;
+  /** A test of going deep on fewer creators: their clips go first among similar ages. Empty means no focus. */
+  focusCreators: string[];
 }
-export const DEFAULT_TUNING: Tuning = { narrate: "half", clipMaxSec: 40 };
+export const DEFAULT_TUNING: Tuning = { narrate: "all", clipMaxSec: 40, focusCreators: ["Kai Cenat", "IShowSpeed"] };
 
 export type Health = "too-early" | "working" | "weak" | "not-reaching";
 
@@ -35,6 +39,8 @@ export interface DailyReport {
   medianViews: number;
   stayedToWatch?: number;
   bestCreators: { creator: string; feedViews: number; posts: number }[];
+  /** How the focus creators are doing against the rest, once there's enough to compare. */
+  focus?: string;
   /** What capy changed today. */
   actions: string[];
   /** Worth knowing; nothing waits on it. */
@@ -126,6 +132,12 @@ export function judge(rows: PostedRow[], tuning: Tuning, now: number): { report:
       medianViews: median(judged.map((r) => r.views)),
       stayedToWatch: stayedViews ? stayedRows.reduce((a, r) => a + r.stayed! * r.views, 0) / stayedViews : undefined,
       bestCreators: [...byCreator].map(([creator, c]) => ({ creator, ...c })).sort((a, b) => b.feedViews - a.feedViews).slice(0, 3),
+      focus: (() => {
+        const mine = judged.filter((r) => r.creator && tuning.focusCreators?.includes(creatorName(r.creator)));
+        const rest = judged.filter((r) => !mine.includes(r));
+        if (mine.length < 5 || rest.length < 5) return undefined;
+        return `Focus creators: ${mine.filter((r) => r.feedViews >= REACHED_FEED).length} of ${mine.length} reached the feed. Everyone else: ${rest.filter((r) => r.feedViews >= REACHED_FEED).length} of ${rest.length}.`;
+      })(),
       actions,
       needsYou,
     },

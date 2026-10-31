@@ -1,4 +1,5 @@
 import { audienceTz } from "../lib/post-time";
+import { creatorName } from "../lib/longform";
 import { alternateByTest } from "../lib/shorts-test";
 import { queueGroup } from "../lib/queue-source";
 import { SIMILARITY_STORE, type ClipSimilarity } from "../lib/similarity";
@@ -7,6 +8,7 @@ import { DEFAULT_CONTROLS } from "../lib/creator-policy";
 import { runtimeStore } from "./db/runtime";
 import { resolvePublicationFiles } from "./poster";
 import { approve, bumpOlderPost, expireLatePosts, note, queue } from "./queue";
+import { loadTuning } from "./daily-check";
 import { entrySourceAt } from "./source-age";
 import { effective, loadSettings } from "./settings";
 
@@ -91,7 +93,14 @@ export async function autoScheduleSweep(now = new Date()): Promise<string[]> {
   }
   queue().mutate((all) => expireLatePosts(all, STALE_MS, now));
   const fresh = [...groups].filter(([, entries]) => now.getTime() - newest(entries) < STALE_MS);
-  fresh.sort(([, a], [, b]) => newest(b) - newest(a));
+  // focus creators count as if a day newer, so they win among similar ages without beating something truly fresher
+  const focus = loadTuning().focusCreators;
+  const channelOf = (e: QueueEntry) => (e.jobId ? runtimeStore().get<{ channel?: string }>("legacy-jobs", e.jobId)?.value.channel : undefined);
+  const rank = (entries: QueueEntry[]) => {
+    const channel = channelOf(entries[0]!);
+    return newest(entries) + (channel && focus.includes(creatorName(channel)) ? 86_400_000 : 0);
+  };
+  fresh.sort(([, a], [, b]) => rank(b) - rank(a));
   const groupOf = (entries: QueueEntry[]) => (shortTestGroupOf(entries[0]!) === "narrated" ? ("narrated" as const) : ("plain" as const));
   const lastPost = queue()
     .list()

@@ -7,6 +7,11 @@ import { removeWorkspace } from "./scratch";
 import { creatorPolicy } from "../automation-policy";
 import { runtimeStore } from "../db/runtime";
 import { withAiContext } from "../ai-router";
+/** Rate limits and server errors pass; other 4xx answers won't change by trying again. */
+export const permanentStatus = (status?: number) => Number(status) >= 400 && Number(status) < 500 && Number(status) !== 429;
+/** 5s, 20s, 80s... */
+export const retryDelayMs = (attempts: number) => Math.min(600_000, 5_000 * 4 ** Math.max(0, attempts - 1));
+
 export interface StageContext {
   workspace: string;
   signal: AbortSignal;
@@ -169,12 +174,12 @@ export async function runJob(
         : isCancelled(error)
           ? "cancelled"
           : (error as { retryable?: boolean })?.retryable === false ||
-              Number((error as { status?: number })?.status) >= 400 ||
+              permanentStatus((error as { status?: number })?.status) ||
               lease.attempts >= 3
             ? "needs_action"
             : "retryable",
       message,
-      Date.now() + (budget ? 60_000 : 5_000),
+      Date.now() + (budget ? 60_000 : retryDelayMs(lease.attempts)),
     );
   } finally {
     clearInterval(heartbeat);

@@ -20,14 +20,14 @@ const Schema = z.object({
 });
 export type ShortCommentary = z.infer<typeof Schema>;
 
-export function commentaryPrompt(o: { creator: string; title: string; reason?: string; excerpt: string }): string {
+export function commentaryPrompt(o: { creator: string; title: string; reason?: string; excerpt: string; others?: string[] }): string {
   return `You are the host of a clips channel, adding your own take to this moment from ${o.creator}'s stream.
 
 Moment: "${o.title}"
 Why it stood out: ${o.reason ?? "n/a"}
 What is said: ${o.excerpt}
-
-Write what the host says. Take a real side that a viewer could argue with in the comments, not a safe observation. YouTube doesn't count a voice-over that describes the screen as original, so never narrate what's happening.
+${o.others?.length ? `\nOther recent moments from ${o.creator}, to compare with if it helps:\n${o.others.map((t) => `- ${t}`).join("\n")}\n` : ""}
+Write what the host says. Take a real side that a viewer could argue with in the comments, not a safe observation. YouTube doesn't count a voice-over that describes the screen as original, so never narrate what's happening. Argue something, predict something, rank it against other moments, or say what it shows about ${o.creator}. If someone could write your line just by watching this clip, it isn't good enough.
 - Say only what the clip supports. Don't invent facts, motives or background about real people, and don't state what someone privately feels as fact.
 - Don't spoil the punchline in the opening.
 - Sound like a person talking: short, plain, no hype words like "insane" or "you won't believe".`;
@@ -40,8 +40,35 @@ const MAX_MIDDLE_WORDS = 14;
 const MAX_VERDICT_WORDS = 26;
 export const fitsLength = (c: ShortCommentary) => words(c.opening) <= MAX_OPENING_WORDS && words(c.middle) <= MAX_MIDDLE_WORDS && words(c.verdict) <= MAX_VERDICT_WORDS;
 
-export async function writeCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts): Promise<ShortCommentary> {
-  let prompt = commentaryPrompt(o);
+const GateSchema = z.object({
+  adds: z.boolean().describe("True if the lines give an opinion, comparison or prediction, not just a description of the clip"),
+  why: z.string().describe("If not, what's missing, in one sentence"),
+});
+
+/** A second read: would YouTube's "not just describing the screen" test pass? */
+export async function commentaryAdds(c: ShortCommentary, title: string, ai: AiOpts): Promise<{ adds: boolean; why: string }> {
+  const res = await askAgent(ai.agent, `A clips channel's host says these lines about "${title}". Do they add a real opinion, comparison or prediction, or could anyone write them just by watching the clip?\n\nOpening: ${c.opening}\nMiddle: ${c.middle}\nVerdict: ${c.verdict}`, {
+    task: "review",
+    model: ai.model,
+    maxTurns: 2,
+    effort: "low",
+    system: "You are a tough editor. Answer only with the requested JSON.",
+    schema: strip(z.toJSONSchema(GateSchema, { target: "draft-7" }) as Record<string, unknown>),
+  });
+  return GateSchema.parse(res.data);
+}
+
+/** Write the lines; if they only describe the clip, once more with the editor's note. */
+export async function writeCheckedCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts): Promise<ShortCommentary> {
+  const first = await writeCommentary(o, ai);
+  const gate = await commentaryAdds(first, o.title, ai).catch(() => ({ adds: true, why: "" }));
+  if (gate.adds) return first;
+  return writeCommentary(o, ai, `An editor rejected your last try: ${gate.why}`).catch(() => first);
+}
+
+export async function writeCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts, note?: string): Promise<ShortCommentary> {
+  const base = note ? `${commentaryPrompt(o)}\n\n${note}` : commentaryPrompt(o);
+  let prompt = base;
   // a long opening talks over too much of the clip: ask once more before leaving the clip plain
   for (let attempt = 0; ; attempt++) {
     const res = await askAgent(ai.agent, prompt, {
@@ -56,7 +83,7 @@ export async function writeCommentary(o: Parameters<typeof commentaryPrompt>[0],
     const trimmed = { opening: out.opening.trim(), middle: out.middle.trim(), verdict: out.verdict.trim() };
     if (fitsLength(trimmed)) return trimmed;
     if (attempt >= 2) throw new Error(`The commentary came out too long (${words(trimmed.opening)}, ${words(trimmed.middle)} and ${words(trimmed.verdict)} words)`);
-    prompt = `${commentaryPrompt(o)}\n\nYour last try was too long. The opening must be at most ${MAX_OPENING_WORDS} words, the middle ${MAX_MIDDLE_WORDS} and the verdict ${MAX_VERDICT_WORDS}.`;
+    prompt = `${base}\n\nYour last try was too long. The opening must be at most ${MAX_OPENING_WORDS} words, the middle ${MAX_MIDDLE_WORDS} and the verdict ${MAX_VERDICT_WORDS}.`;
   }
 }
 

@@ -144,7 +144,8 @@ export function rankCreatorWork(inputs: CreatorWorkInput[]): WorkDecision[] {
     .sort(
       (a, b) =>
         (b.candidate.priority ?? 0) - (a.candidate.priority ?? 0) ||
-        a.candidate.foundAt - b.candidate.foundAt ||
+        // newest original first: a clip of an older one is worth less every hour
+        (b.candidate.publishedAt ?? b.candidate.foundAt) - (a.candidate.publishedAt ?? a.candidate.foundAt) ||
         a.candidate.id.localeCompare(b.candidate.id),
     )
     .map((i) => {

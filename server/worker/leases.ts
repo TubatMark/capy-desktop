@@ -107,7 +107,8 @@ export class WorkQueue {
               (x.retryAt ?? 0) <= now) ||
               (x.status === "running" && x.expiresAt <= now)),
         )
-        .sort((a, b) => a.createdAt - b.createdAt)[0];
+        // posting first: a post has a time to meet, and everything else can wait a turn
+        .sort((a, b) => Number(b.kind === "poster") - Number(a.kind === "poster") || a.createdAt - b.createdAt)[0];
       if (!job) return null;
       const lease: JobLease = {
         ...job,
@@ -218,6 +219,8 @@ export class WorkQueue {
     this.fenced(lease, () =>
       this.store.put("work", lease.id, {
         ...this.get(lease.id)!,
+        // waiting its turn isn't a failed attempt
+        ...(status === "blocked" ? { attempts: Math.max(0, lease.attempts - 1) } : {}),
         status,
         error,
         retryAt,

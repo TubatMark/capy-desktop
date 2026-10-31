@@ -18,10 +18,12 @@ import { registerWork, stagesFor } from "./registry";
 import { registerMediaWorkers } from "./media";
 import { admitResources } from "./budget";
 import { runJob } from "./runner";
-import { sweepScratch } from "./scratch";
+import { pruneTicks, sweepScratch } from "./scratch";
 import { maybeObserveLongForm, registerLongFormWorkers } from "../longform/queue";
 const SERVICE_MS = 15_000;
 const recovered = new Set<string>();
+const serviceAt = new Map<string, number>();
+let lastBucket = -1;
 export function registerWorkers() {
   registerMediaWorkers();
   registerStudioWorkers();
@@ -64,26 +66,23 @@ export function takeService(owner: string, now = Date.now()): boolean {
     return true;
   });
 }
-export async function workerOnce(
-  owner: string,
-  signal: AbortSignal,
-  options: { maintenance?: boolean } = {},
-): Promise<boolean> {
-  if (!takeService(owner)) return false;
-  const q = workQueue();
-  if (!recovered.has(owner)) {
-    await jobs().recoverDurable();
-    recovered.add(owner);
-  }
-  if (options.maintenance) {
+/** Routine upkeep. Runs on its own timer too, so a long job doesn't stop scheduling or cleanup. */
+let maintaining = false;
+async function maintain() {
+  if (maintaining) return;
+  maintaining = true;
+  try {
+    const q = workQueue();
     const bucket = Math.floor(Date.now() / 30_000);
-    await enqueueWork({
+    const fresh = bucket !== lastBucket;
+    lastBucket = bucket;
+    if (fresh) await enqueueWork({
       kind: "poster",
       workKey: "poster:tick",
       inputRevision: bucket,
       payload: {},
     }).catch(() => {});
-    if (bucket % 2 === 0)
+    if (fresh && bucket % 2 === 0)
       await enqueueWork({
         kind: "watcher",
         workKey: "watcher:tick",
@@ -97,10 +96,30 @@ export async function workerOnce(
     await maybeObserveLongForm().catch(() => {});
     try {
       sweepScratch(OUTPUT_ROOT, (id) => q.get(id)?.status);
+      pruneTicks(runtimeStore().db);
     } catch (e) {
       console.error("[worker] scratch sweep failed", e);
     }
+  } finally {
+    maintaining = false;
   }
+}
+export async function workerOnce(
+  owner: string,
+  signal: AbortSignal,
+  options: { maintenance?: boolean } = {},
+): Promise<boolean> {
+  // the beat in startWorker keeps the claim alive; committing it every loop is wasted disk writes
+  if (Date.now() - serviceAt.get(owner)! < SERVICE_MS / 3) {
+    /* still ours */
+  } else if (!takeService(owner)) return false;
+  else serviceAt.set(owner, Date.now());
+  const q = workQueue();
+  if (!recovered.has(owner)) {
+    await jobs().recoverDurable();
+    recovered.add(owner);
+  }
+  if (options.maintenance) await maintain();
   const lease = await q.claim(owner);
   if (!lease) return false;
   let stages;
@@ -133,6 +152,10 @@ export async function startWorker(
   if (signal.aborted) ac.abort();
   const beat = setInterval(() => {
     if (!takeService(owner)) ac.abort();
+    else {
+      serviceAt.set(owner, Date.now());
+      void maintain().catch((e) => console.error("[worker] upkeep", e));
+    }
   }, SERVICE_MS / 3);
   try {
     while (!signal.aborted) {

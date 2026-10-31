@@ -62,6 +62,8 @@ export interface PickOpts {
   onRetry?: (msg: string) => void;
   /** "Most replayed" ranges to steer the picker toward. */
   peaks?: HeatPoint[];
+  /** Where live chat spiked: what viewers reacted to while it happened. */
+  chatPeaks?: HeatPoint[];
   /** Who the clips are for; en-us writes all text in US English. */
   audience?: Audience;
   /** Replacing one rejected pick: avoid its problem and every range already taken. */
@@ -205,7 +207,7 @@ Rules:
 - For each clip also write the YouTube Shorts upload text: ytTitle (start with the creator's name, then what happens in plain words, under 60 chars before the hashtags, e.g. "Kai Cenat eats SHEEP BALLS in Iceland 🐑 #kaicenat #iceland #shorts"; one CAPS payoff word and one emoji are fine; no "Keyword: description" colon style; end with 2-3 #hashtags like "#${(meta.channel ?? "creator").replace(/[^a-z0-9]/gi, "").toLowerCase()} #shorts"), a description (2-4 short lines: what happens, a hook question or CTA, "Credit: ${meta.channel ?? "original creator"}", hashtags last), and 4-8 hashtags (no # sign; include creator names, the topic, and shorts).
 - start and end are in seconds from the start of the video. Each transcript line starts at the [seconds] marker; estimate positions within a line proportionally.
 ${o.replace ? `- Find a different moment. The previous pick at ${mmss(o.replace.start)}–${mmss(o.replace.end)} was rejected because: ${o.replace.reason}. Avoid that problem. Do not overlap these ranges: ${[o.replace, ...o.replace.avoid].map((r) => `${mmss(r.start)}–${mmss(r.end)}`).join(", ")}.\n` : ""}${o.focus ? `- Editor's focus: ${o.focus}\n` : ""}
-${o.peaks?.length ? `Viewer replay peaks (the parts viewers rewound to most: a strong signal of a great moment; prefer clips that contain one, but each clip must still be self-contained):\n${fmtPeaks(o.peaks)}\n\n` : ""}Transcript:
+${o.peaks?.length ? `Viewer replay peaks (the parts viewers rewound to most: a strong signal of a great moment; prefer clips that contain one, but each clip must still be self-contained):\n${fmtPeaks(o.peaks)}\n\n` : ""}${o.chatPeaks?.length ? `Live chat spikes (where the stream's viewers reacted most at the time; the same signal as replay peaks, and strongest where the two agree):\n${fmtPeaks(o.chatPeaks)}\n\n` : ""}Transcript:
 ${transcript}`;
 }
 
