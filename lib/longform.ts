@@ -19,7 +19,7 @@ export type LongColumn = "draft" | "progress" | "review" | "uploading" | "schedu
 export const LONG_COLUMNS: { id: LongColumn; label: string; hint: string }[] = [
   { id: "draft", label: "Draft", hint: "Clips picked, not started" },
   { id: "progress", label: "In progress", hint: "Script, voice and edit" },
-  { id: "review", label: "Ready for review", hint: "Waiting for you" },
+  { id: "review", label: "Reviewed", hint: "AI checks done, next upload is automatic" },
   { id: "uploading", label: "Uploading", hint: "Sending to YouTube" },
   { id: "scheduled", label: "Scheduled", hint: "Private, or waiting for its slot" },
   { id: "public", label: "Public", hint: "Live on YouTube" },

@@ -45,8 +45,8 @@ The host has to add something a viewer can't get from the clips alone, because a
 - Write one line for every rank.`;
 }
 
-export async function writeScript(creator: string, clips: (LongClip & { excerpt: string })[], o: AiOpts): Promise<LongScript> {
-  const res = await askAgent(o.agent, scriptPrompt(creator, clips), {
+async function askScript(prompt: string, ranks: number, o: AiOpts): Promise<LongScript> {
+  const res = await askAgent(o.agent, prompt, {
     // the same allowance as picking clips: it reads a whole video's worth of transcript
     task: "selection",
     model: o.model,
@@ -56,9 +56,23 @@ export async function writeScript(creator: string, clips: (LongClip & { excerpt:
     schema: schemaOf(ScriptSchema),
   });
   const script = ScriptSchema.parse(res.data);
-  const missing = clips.map((_, i) => clips.length - i).filter((rank) => !script.lines.some((l) => l.rank === rank && l.line.trim()));
+  const missing = Array.from({ length: ranks }, (_, i) => i + 1).filter((rank) => !script.lines.some((l) => l.rank === rank && l.line.trim()));
   if (missing.length) throw new Error(`The script has no line for rank ${missing.join(", ")}`);
   return script;
+}
+
+export const writeScript = (creator: string, clips: (LongClip & { excerpt: string })[], o: AiOpts) => askScript(scriptPrompt(creator, clips), clips.length, o);
+
+/** The review's notes, acted on: nobody has to read them for the script to get better. */
+export function reviseScript(creator: string, clips: (LongClip & { excerpt: string })[], script: LongScript, notes: string[], o: AiOpts): Promise<LongScript> {
+  const prompt = `${scriptPrompt(creator, clips)}
+
+Here is the current script as JSON:
+${JSON.stringify(script)}
+
+An editor left these notes. Change only what they ask for, and keep the same ranks, title and voice. Anything you can't confirm from "What is said" above should become an opinion or be removed:
+${notes.map((n) => `- ${n}`).join("\n")}`;
+  return askScript(prompt, clips.length, o);
 }
 
 const ScreenSchema = z.object({

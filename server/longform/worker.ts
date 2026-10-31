@@ -6,7 +6,7 @@ import { detectEncoder } from "../../src/render";
 import { run } from "../../src/exec";
 import { assembleArgs, candidateArgs, cardArgs, cardAss, chapterLines, clipArgs, clipAss, concatList, keepRanges, rangesLength, readProblems, thumbArgs, thumbAss, wordsInCut, type Range } from "../../src/longform/edit";
 import { speak } from "../../src/longform/narrate";
-import { pickCover, reviewScript, screenClips, writeScript } from "../../src/longform/script";
+import { pickCover, reviewScript, reviseScript, screenClips, writeScript, type LongScript } from "../../src/longform/script";
 import { getAccessToken, loadAccounts } from "../accounts";
 import { loadSnapshot } from "../channel";
 import { OUTPUT_ROOT } from "../paths";
@@ -102,9 +102,15 @@ async function plan(v: LongVideo): Promise<Step> {
   const screenedOut: NonNullable<LongVideo["screenedOut"]> = [];
   const screened = await screenPicks(v, screenedOut);
   const withWords = screened.map(excerpt);
-  const script = await writeScript(v.creator, withWords, ai());
+  let script: LongScript = await writeScript(v.creator, withWords, ai());
+  const reviewFailed = { verdict: "caution" as const, notes: ["The automatic script review couldn't run"] };
+  let review = await reviewScript(script, ai()).catch(() => reviewFailed);
+  if (review.verdict === "caution" && review !== reviewFailed) {
+    patchVideo(v.id, { step: "Fixing the review's notes" });
+    script = await reviseScript(v.creator, withWords, script, review.notes, ai());
+    review = await reviewScript(script, ai()).catch(() => reviewFailed);
+  }
   const clips = screened.map((c, i) => ({ ...c, line: script.lines.find((l) => l.rank === screened.length - i)!.line.trim() }));
-  const review = await reviewScript(script, ai()).catch(() => ({ verdict: "caution" as const, notes: ["The script review couldn't run; read it yourself"] }));
   const next: Partial<LongVideo> = {
     title: script.title.trim(),
     thumbnailText: script.thumbnailText.trim(),

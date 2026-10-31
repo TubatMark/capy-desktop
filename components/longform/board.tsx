@@ -299,7 +299,7 @@ function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo;
           <div className="space-y-1 rounded-lg border p-3 text-sm">
             <p className="flex items-center gap-1.5 font-medium">
               {v.check.ok ? <CheckCircle2 className="size-4 text-primary" /> : <AlertTriangle className="size-4 text-amber-600" />}
-              {v.check.ok ? "The checks found nothing" : "Look at these before approving"}
+              {v.check.ok ? "The automatic review found nothing" : "The automatic review left these notes"}
             </p>
             <ul className="list-disc pl-5 text-muted-foreground">
               {v.check.warnings.map((w) => <li key={w}>{w}</li>)}
@@ -325,7 +325,7 @@ function VideoDialog({ video: v, board, onClose, onChange }: { video: LongVideo;
         <div className="flex flex-wrap gap-2">
           {v.status === "review" && (
             <Button disabled={!!busy || !title.trim()} onClick={saveAndUpload}>
-              {busy === "upload" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Approve and upload as Private
+              {busy === "upload" ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Upload as Private now
             </Button>
           )}
           {editable && (["draft", "review"].includes(v.status) || v.error) && (
