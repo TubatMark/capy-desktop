@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 const LAYOUT = { original: "Original", bold: "Bold", editorial: "Editorial", minimal: "Minimal" } as const;
 
 /** The designed thumbnails for a clip's YouTube post: the one that uploads with the video is ticked; picking
- *  another swaps it (a scheduled post goes back to waiting for your OK). */
+ *  another swaps it (a scheduled post goes back to waiting, and auto-schedule's sweep picks a watched channel's clip up again). */
 export function ThumbnailChoices({
   entries,
   onChange,
@@ -26,7 +26,7 @@ export function ThumbnailChoices({
     if (!yt) return;
     if (
       yt.status === "scheduled" &&
-      !window.confirm("Changing the thumbnail takes this clip off the schedule until you approve it again. Change it?")
+      !window.confirm("Changing the thumbnail takes this clip off its time slot. If it came from a watched channel and automatic scheduling is on, capy finds it a new slot by itself. Otherwise approve it again. Change it?")
     )
       return;
     setBusy(designId);
@@ -36,7 +36,7 @@ export function ThumbnailChoices({
         method: "POST",
         body: JSON.stringify({ designId }),
       });
-      onChange(yt.status === "scheduled" ? "Thumbnail changed; approve the clip again to schedule it" : "Thumbnail changed");
+      onChange(yt.status === "scheduled" ? "Thumbnail changed; the clip is waiting for a new slot" : "Thumbnail changed");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

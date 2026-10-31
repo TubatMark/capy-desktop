@@ -17,11 +17,9 @@ export function queueCollection(e: QueueEntry) {
     ? `studio:${e.source.projectId}`
     : (e.jobId ?? e.key);
 }
+/** Stories and Studio no longer have pages, and older queue entries may still have their links saved. */
+const REMOVED_PAGE = /^\/(stories|studio)(\/|$)/;
 export function queueLink(e: QueueEntry) {
-  return (
-    e.link ??
-    (e.source?.kind === "studio"
-      ? `/studio/${e.source.projectId}`
-      : `/v/${e.jobId}/clip/${e.n}`)
-  );
+  if (e.link && !REMOVED_PAGE.test(e.link)) return e.link;
+  return e.link || e.source?.kind === "studio" ? "/short-form" : `/v/${e.jobId}/clip/${e.n}`;
 }

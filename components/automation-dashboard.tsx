@@ -108,7 +108,6 @@ export function AutomationDashboard({
                 ["monitorPaused", "checking channels"],
                 ["renderPaused", "making clips"],
                 ["postPaused", "posting"],
-                ["globalStop", "everything"],
               ] as const
             ).map(([key, label]) => (
               <Button
@@ -123,9 +122,10 @@ export function AutomationDashboard({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Clips that pass every check are scheduled on their own while that
-          switch is on; everything else waits in Queue for your OK. Nothing
-          posts before its time slot.
+          Clips from watched channels that pass every check are scheduled on
+          their own while that switch is on in Settings; the rest wait in Short
+          form, where you can approve or skip them. Nothing posts before its time
+          slot.
         </p>
         <div className="text-xs">
           {health.accounts.map((a) => (

@@ -471,13 +471,11 @@ export interface StoryAssessment {
 /** Something waiting for the user, derived from the stories and the queue. */
 export interface TodoTask {
   id: string;
-  kind: "script" | "pictures" | "video" | "send" | "fix" | "queue" | "error";
+  kind: "post" | "video" | "account" | "work" | "queue";
   title: string;
   detail?: string;
   href: string;
   tone: "action" | "warn" | "block";
-  /** For gauges on the card. */
-  overall?: number;
   at: number;
 }
 

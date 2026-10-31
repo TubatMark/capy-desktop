@@ -17,18 +17,6 @@ export function Backdrop() {
 
       {stickers && (
         <div className="backdrop-stickers">
-          {/* top left, beside the sidebar (below the top bar on narrow screens) */}
-          <div className="absolute left-[var(--sidebar-w)] top-14 size-[320px] origin-top-left max-md:scale-[.55] md:top-4">
-            <Squiggle className="absolute -left-[70px] top-2 w-[300px] -rotate-6" />
-            <Plus className="absolute left-[92px] top-[38px] w-9" />
-            <Zigzags className="absolute -left-3.5 top-[176px] w-[128px]" />
-          </div>
-          {/* top right */}
-          <div className="absolute right-0 top-14 size-[340px] origin-top-right max-md:scale-[.55] md:top-4">
-            <div className="sticker-sun absolute -right-[90px] -top-[130px] size-[260px] rounded-full" />
-            <Cloud className="absolute right-8 top-10 w-[170px]" />
-            <Dashes className="absolute right-[228px] top-2 w-12" />
-          </div>
           {/* bottom corners: skipped on phones, content covers the whole width */}
           {/* bottom left */}
           <div className="absolute bottom-0 left-0 size-[340px] origin-bottom-left max-md:hidden">
@@ -102,17 +90,6 @@ function Play({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 64 64" className={"sticker " + (className ?? "")}>
       <path d="M18 10 L54 32 L18 54 Z" fill="var(--sticker-orange)" stroke={ink} strokeWidth={6} strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** The three "!" strokes next to the capy in the logo. */
-function Dashes({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 48 48" className={className} fill="none" stroke={ink} strokeWidth={6} strokeLinecap="round">
-      <path d="M8 6 L16 18" />
-      <path d="M26 4 L26 18" />
-      <path d="M42 10 L34 20" />
     </svg>
   );
 }

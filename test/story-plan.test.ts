@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { normalizePlan, planPrompt, storyName } from "../src/story/plan";
 import { storyWriterPrompt } from "../src/story/write";
 import { combineScores, normalizeAssessment, productionScore, safetyScore, searchScore } from "../src/story/assess";
-import { tasksFrom } from "../server/tasks";
 import type { QueueEntry, StoryAssessment, StorySeries, StoryState } from "../lib/types";
 
 const series: StorySeries = {
@@ -132,36 +131,5 @@ describe("assessor scoring", () => {
   it("clamps the AI's judgement and drops empty notes", () => {
     const a = normalizeAssessment({ hook: { score: 130 }, retention: { score: "x" }, strengths: ["Great refrain", ""], fixes: [{ area: "hook", note: "Open on the sled" }, { area: "x" }] });
     expect(a).toEqual({ hook: 100, retention: 50, strengths: ["Great refrain"], fixes: [{ area: "hook", note: "Open on the sled" }] });
-  });
-});
-
-describe("To do", () => {
-  const entry = (n: number, status: QueueEntry["status"]): QueueEntry => ({ key: `j:${n}:youtube`, jobId: "j", n, platform: "youtube", status, clipTitle: "c", text: {}, attempts: 0, history: [], createdAt: 0, updatedAt: 0 });
-
-  it("hands a script over only once the assessor has looked at it", () => {
-    expect(tasksFrom([story()], [series], [])).toEqual([]);
-    const t = tasksFrom([story({ assessments: { script: assessment() } })], [series], []);
-    expect(t).toMatchObject([{ kind: "script", href: "/stories/ser1/st1", tone: "action", overall: 82 }]);
-    expect(t[0]!.title).toMatch(/Review the script/);
-    const blocked = tasksFrom([story({ assessments: { script: assessment({ verdict: "block", fixes: [{ area: "safety", note: "Sledding alone" }] }) } })], [series], []);
-    expect(blocked[0]).toMatchObject({ kind: "fix", tone: "block" });
-    expect(blocked[0]!.detail).toContain("Sledding alone");
-  });
-
-  it("covers pictures, finished videos, errors and the queue", () => {
-    const t = tasksFrom(
-      [
-        story({ id: "a", status: "pages" }),
-        story({ id: "b", status: "done", video: { url: "", file: "", duration: 40 }, assessments: { video: assessment({ stage: "video" }) } }),
-        story({ id: "c", status: "done", video: { url: "", file: "", duration: 40 }, assessments: { video: assessment({ stage: "video", verdict: "fix", fixes: [{ area: "search", note: "No keyword in title" }] }) } }),
-        story({ id: "d", status: "done", queuedAt: 1, video: { url: "", file: "", duration: 40 }, assessments: { video: assessment({ stage: "video" }) } }),
-        story({ id: "e", status: "error", error: "Interrupted" }),
-      ],
-      [series],
-      [entry(1, "review"), entry(2, "review"), entry(3, "scheduled")],
-    );
-    expect(t.map((x) => x.kind).sort()).toEqual(["error", "fix", "pictures", "queue", "send"]);
-    expect(t.find((x) => x.kind === "queue")!.title).toMatch(/2 videos/);
-    expect(t.find((x) => x.kind === "send")!.title).toMatch(/send it to Queue/);
   });
 });

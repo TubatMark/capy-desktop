@@ -37,6 +37,15 @@ describe("queue routes", () => {
     const r = await getQueue();
     expect(await r.json()).toMatchObject({ entries: [], summary: { review: 0, activeCount: 0 } });
   });
+  it("filters to one clip's posts, keeping the summary for the whole queue", async () => {
+    seed();
+    queue().mutate((e) => upsertForRender(e, { publicationFiles: fixture, jobId: "J", n: 2, start: 0, end: 30, clipTitle: "d", publish: { ytTitle: "t", description: "d", hashtags: [] } }, ["youtube"], new Date()));
+    const r = await (await getQueue(req("/api/queue?jobId=J&n=2"))).json();
+    expect(r.entries.map((e: { n: number }) => e.n)).toEqual([2]);
+    expect(r.summary.review).toBe(2);
+    expect((await (await getQueue(req("/api/queue?jobId=other"))).json()).entries).toEqual([]);
+    expect((await (await getQueue(req("/api/queue"))).json()).entries).toHaveLength(3);
+  });
   it("approves a clip into a slot, and 404s an unknown video", async () => {
     seed();
     const ok = await approveRoute(req("/api/queue/approve", "POST", { jobId: "J", n: 1, platforms: ["youtube"] }));

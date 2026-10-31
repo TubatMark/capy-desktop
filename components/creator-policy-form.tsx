@@ -79,9 +79,6 @@ export function CreatorPolicyForm({
               <option value="disabled">Ignore them</option>
               <option value="manual">Only when I ask</option>
               <option value="automatic_drafts">Make clips automatically</option>
-              <option value="automatic_publish" disabled>
-                Post automatically (coming later)
-              </option>
             </Select>
           </label>
           <label className="text-xs">
@@ -250,7 +247,7 @@ export function CreatorPolicyForm({
             {toggle("allowShortSources", "Use videos 3 minutes or shorter")}
             {toggle("expireFreshness", "Drop videos that get too old while waiting")}
             {toggle("requireAudio", "Skip videos with no sound")}
-            {toggle("requireModelReview", "Have AI double-check clips before they reach Queue")}
+            {toggle("requireModelReview", "Have AI double-check clips before they reach Short form")}
             {toggle("thumbnailRequired", "Don't post a clip until its thumbnail is approved")}
           </div>
         </details>

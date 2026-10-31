@@ -116,10 +116,5 @@ export async function automationHealth(): Promise<AutomationHealth> {
         },
       ]),
     ),
-    publication: {
-      enabled: false,
-      reason:
-        "Automatic publication is disabled pending a real 72-hour fault soak and separately authorized controlled upload",
-    },
   };
 }

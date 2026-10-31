@@ -530,7 +530,7 @@ export class StoryManager {
           start: 0,
           end: st.video!.duration,
           fp: storyFp(st),
-          link: `/stories/${st.seriesId}/${st.id}`,
+          link: "/short-form",
           clipTitle: st.title,
           videoTitle: s.title,
           videoUrl: st.video!.url,

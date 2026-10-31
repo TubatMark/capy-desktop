@@ -23,7 +23,7 @@ import { GET as listRoute, POST as createSeriesRoute } from "../app/api/stories/
 import { GET as storyGet } from "../app/api/stories/story/[id]/route";
 import { POST as storyAction } from "../app/api/stories/story/[id]/[action]/route";
 import { GET as todoGet } from "../app/api/todo/route";
-vi.mock("../server/todo", () => ({ currentTasks: async () => [{ id: "st1:script", kind: "script", title: "Review the script", href: "/stories/ser1/st1", tone: "action", at: 1 }] }));
+vi.mock("../server/todo", () => ({ currentTasks: async () => [{ id: "post:a", kind: "post", title: "A clip couldn't post", href: "/short-form", tone: "block", at: 1 }] }));
 
 const req = (url: string, method = "GET", body?: unknown) => new Request(`http://localhost${url}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { "content-type": "application/json" } });
 const params = <T>(p: T) => ({ params: Promise.resolve(p) });
@@ -45,11 +45,9 @@ describe("story routes", () => {
     const r = await storyAction(req("/x", "POST", { voice: "Samantha" }), params({ id: "st1", action: "render" }));
     expect(await r.json()).toMatchObject({ voice: "Samantha" });
   });
-  it("assess asks the assessor again; To do lists tasks and what the assessor is looking at", async () => {
+  it("assess asks the assessor again; To do lists tasks without loading stories", async () => {
     expect(await (await storyAction(req("/x", "POST", {}), params({ id: "st1", action: "assess" }))).json()).toEqual({ id: "st1", assessing: "script" });
     const t = await (await todoGet()).json();
-    expect(t.tasks[0].kind).toBe("script");
-    expect(t.assessing).toEqual([{ id: "st1", seriesId: "ser1", title: "Pip", stage: "script" }]);
-    expect(t.waiting).toBe(2);
+    expect(t).toEqual({ tasks: [expect.objectContaining({ kind: "post" })] });
   });
 });

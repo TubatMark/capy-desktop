@@ -25,6 +25,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api } from "@/hooks/use-job";
+import { POSTS_PER_DAY } from "@/lib/post-time";
 import { AUDIENCES } from "@/lib/post-time";
 import type { AccountPublic, AppSettings, Platform } from "@/lib/types";
 
@@ -94,12 +95,13 @@ export function AccountsPanel({ initial }: { initial: AppSettings }) {
         <CardTitle>Reading and publishing accounts</CardTitle>
         <CardDescription>
           Connect YouTube, Instagram and TikTok with your own free developer
-          apps. Rendered clips wait in{" "}
+          apps. Clips from channels you watch are checked and scheduled by
+          themselves, at most {POSTS_PER_DAY} a day per platform. Clips you make
+          from a pasted link wait in{" "}
           <Link href="/short-form" className="underline underline-offset-2">
-            Queue
+            Short form
           </Link>{" "}
-          until you approve them, then post at staggered times (at most 2 a day
-          per platform).{" "}
+          for you to approve them.{" "}
           <Link
             href="/settings/posting-setup"
             className="inline-flex items-center gap-1 underline underline-offset-2"
@@ -158,7 +160,7 @@ export function AccountsPanel({ initial }: { initial: AppSettings }) {
               {paused ? "Paused: resume posting" : "On: pause posting"}
             </Button>
             <p className="text-xs text-muted-foreground">
-              Pausing keeps the queue; nothing posts until you resume.
+              Pausing keeps everything scheduled; nothing posts until you resume.
             </p>
           </div>
         </div>
@@ -352,7 +354,6 @@ function AccountCard({
             Remote scheduling: {a.capabilities.scheduling}. Custom thumbnail:{" "}
             {a.capabilities.customThumbnail}.
           </p>
-          <p>{a.capabilities.reason}.</p>
           <p>
             Capability documentation checked {a.capabilities.docsCheckedAt};
             this is not account verification.
@@ -461,7 +462,7 @@ function AccountCard({
                 )
               }
             />
-            Queue rendered clips here
+            Send finished clips here
           </label>
         )}
       </div>

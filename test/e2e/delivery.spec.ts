@@ -44,7 +44,7 @@ test("durable outcome and thumbnail are distinct; unknown offers status check in
     checks++;
     return route.fulfill({ json: base });
   });
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   // the day list shows the plain-language outcome; details open in a side sheet
   await expect(
     page.getByText("YouTube · Not sure it went through").first(),
@@ -79,25 +79,25 @@ test("remote schedule requires verified capability and explicit acknowledgement"
       },
     }),
   );
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   await page.getByRole("button", { name: "Delivery fixture" }).click();
   await page
-    .getByText("YouTube upload ahead and remote schedule", { exact: true })
+    .getByText("Upload early and let YouTube publish it", { exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Approve new remote schedule" }),
+    page.getByRole("button", { name: "Approve this time" }),
   ).toBeDisabled();
   verified = true;
   await page.reload();
   await page.getByRole("button", { name: "Delivery fixture" }).click();
   await page
-    .getByText("YouTube upload ahead and remote schedule", { exact: true })
+    .getByText("Upload early and let YouTube publish it", { exact: true })
     .click();
   await page
-    .getByLabel("Publish at (this computer’s time zone)")
+    .getByLabel("Goes public at (this computer’s time zone)")
     .fill("2026-11-01T12:00");
   await expect(
-    page.getByRole("button", { name: "Approve new remote schedule" }),
+    page.getByRole("button", { name: "Approve this time" }),
   ).toBeDisabled();
   await page.getByRole("dialog").getByRole("checkbox").check();
   let payload: unknown;
@@ -106,10 +106,10 @@ test("remote schedule requires verified capability and explicit acknowledgement"
     return route.fulfill({ json: entry });
   });
   await page
-    .getByRole("button", { name: "Approve new remote schedule" })
+    .getByRole("button", { name: "Approve this time" })
     .click();
   await expect(
-    page.getByText("Remote schedule explicitly approved", { exact: true }),
+    page.getByText("Approved. YouTube will make it public at that time", { exact: true }),
   ).toBeVisible();
   expect(payload).toMatchObject({
     acknowledgeRemoteSchedule: true,
@@ -143,7 +143,7 @@ test("post now never fires without an explicit confirmation naming the skipped t
     posts++;
     return route.fulfill({ json: entry });
   });
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   // no post-now control on the list itself
   await expect(page.getByRole("button", { name: /post now/i })).toHaveCount(0);
   await page.getByRole("button", { name: "Delivery fixture" }).click();

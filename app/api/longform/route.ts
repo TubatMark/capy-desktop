@@ -9,23 +9,27 @@ import { viewsLookup } from "@/server/longform/worker";
 
 export const dynamic = "force-dynamic";
 
-/** GET = the board: every long video, footage per creator, who watches, upload slots and how they're doing. */
-export async function GET() {
+/**
+ * GET = the board: every long video, who watches, upload slots and how they're doing. The board polls this, so the rest
+ * has its own params: ?footage=1 for footage per creator (walks every clip), ?automation=1 for the switches and the
+ * narrated Shorts results.
+ */
+export async function GET(req: Request) {
   try {
+    const params = new URL(req.url).searchParams;
+    if (params.has("footage")) return NextResponse.json({ footage: footageByCreator(availableClips(await viewsLookup())) });
+    if (params.has("automation")) return NextResponse.json({ shortsTest: shortTestReport(), autopilot: loadAutopilot(), autopilotLog: loadAutopilotLog() });
     const videos = listVideos();
     const slots = loadSlots();
     const taken = videos.filter((v) => v.slotAt).map((v) => ({ at: v.slotAt!, slotId: v.slotId }));
     return NextResponse.json({
       videos,
-      footage: footageByCreator(availableClips(await viewsLookup())),
       audience: loadAudience() ?? null,
       slots,
       recommended: recommendSlot(slots, taken, Date.now()),
       results: slotResults(slots, videos),
       live: liveTimes(videos, slots, Date.now()),
-      shortsTest: shortTestReport(),
       autopilot: loadAutopilot(),
-      autopilotLog: loadAutopilotLog(),
     });
   } catch (e) {
     return errorResponse(e);

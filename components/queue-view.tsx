@@ -7,7 +7,8 @@ import { Copy, Loader2, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReviewCard } from "@/components/review-card";
 import { QueueCalendar } from "@/components/queue/queue-calendar";
-import { DailyCheck } from "@/components/daily-check";
+import { DailyCheckLine } from "@/components/daily-check";
+import { NarrationResults } from "@/components/queue/narration-results";
 import { DayPosts } from "@/components/queue/day-posts";
 import { ShortKanban } from "@/components/queue/short-kanban";
 import { ViewToggle, useBoardView } from "@/components/view-toggle";
@@ -30,10 +31,14 @@ const group = <T,>(xs: T[], key: (x: T) => string) => {
 const zoneCity = (tz: string) =>
   (tz.split("/").pop() ?? tz).replace(/_/g, " ");
 
+/** Enough to look through without a hundred players slowing the page. */
+const WAITING_PAGE = 24;
+
 /** Every Short on its way out or already posted, as a board or as a calendar. */
 export function QueueView() {
   const [mode, setMode] = useBoardView("short-form");
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [waitingShown, setWaitingShown] = useState(WAITING_PAGE);
   const { data, refresh } = useQueue();
   const results = usePostResults();
   const channels = useSourceChannels();
@@ -109,8 +114,10 @@ export function QueueView() {
       setOpen(null);
       if (mode === "kanban") return setReviewing(id);
       const el = document.getElementById(`review-${id}`);
-      el?.scrollIntoView({ behavior: "smooth", block: "start" });
-      el?.animate?.(
+      // further down the list than "Show more" has reached
+      if (!el) return setReviewing(id);
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.animate?.(
         [{ boxShadow: "0 0 0 3px var(--primary)" }, { boxShadow: "0 0 0 0 transparent" }],
         { duration: 1600, easing: "ease-out" },
       );
@@ -144,6 +151,13 @@ export function QueueView() {
         c.scheduling === "verified",
     ) ?? false;
 
+  let left = waitingShown;
+  const waitingPage = [...byVideo].map(([jobId, firsts]) => {
+    const shown = firsts.slice(0, Math.max(0, left));
+    left -= shown.length;
+    return { jobId, firsts, shown };
+  });
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -173,7 +187,47 @@ export function QueueView() {
         </p>
       )}
 
-      <DailyCheck onChecked={() => void results.refresh()} />
+      <DailyCheckLine />
+
+      {dupes.map((ids) => {
+        const firsts = ids.map((id) => review.get(id)![0]!);
+        const rec = ids
+          .map((id) => review.get(id)!.find((e) => e.similarity)?.similarity)
+          .flatMap((x) => x?.opinions ?? [])
+          .find((o) => o.level === "near-duplicate")?.recommendation;
+        return (
+          <div
+            key={ids.join("|")}
+            role="note"
+            className="space-y-1 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-950"
+          >
+            <p className="flex items-center gap-1.5 font-medium">
+              <Copy className="size-4 shrink-0" /> {ids.length} clips
+              waiting look nearly the same
+            </p>
+            <p className="text-pretty">
+              {firsts.map((f, i) => (
+                <span key={queueGroup(f)}>
+                  {i > 0 && (i === firsts.length - 1 ? " and " : ", ")}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2"
+                    onClick={() => openClip(queueGroup(f))}
+                  >
+                    “{f.clipTitle}”
+                  </button>
+                </span>
+              ))}
+              . Posting all of them makes the channel look repetitive.
+            </p>
+            {rec && (
+              <p className="text-pretty">
+                <span className="font-medium">AI recommends:</span> {rec}
+              </p>
+            )}
+          </div>
+        );
+      })}
 
       {mode === "kanban" && (
         <ShortKanban
@@ -226,55 +280,19 @@ export function QueueView() {
       </section>}
 
       {mode === "calendar" && <section className="space-y-3">
-        <h2 className="text-lg font-semibold">
-          Waiting ({review.size})
-        </h2>
-        {dupes.map((ids) => {
-          const firsts = ids.map((id) => review.get(id)![0]!);
-          const rec = ids
-            .map((id) => review.get(id)!.find((e) => e.similarity)?.similarity)
-            .flatMap((x) => x?.opinions ?? [])
-            .find((o) => o.level === "near-duplicate")?.recommendation;
-          return (
-            <div
-              key={ids.join("|")}
-              role="note"
-              className="space-y-1 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-950"
-            >
-              <p className="flex items-center gap-1.5 font-medium">
-                <Copy className="size-4 shrink-0" /> {ids.length} clips
-                waiting look nearly the same
-              </p>
-              <p className="text-pretty">
-                {firsts.map((f, i) => (
-                  <span key={queueGroup(f)}>
-                    {i > 0 && (i === firsts.length - 1 ? " and " : ", ")}
-                    <button
-                      type="button"
-                      className="underline underline-offset-2"
-                      onClick={() => openClip(queueGroup(f))}
-                    >
-                      “{f.clipTitle}”
-                    </button>
-                  </span>
-                ))}
-                . Posting all of them makes the channel look repetitive.
-              </p>
-              {rec && (
-                <p className="text-pretty">
-                  <span className="font-medium">AI recommends:</span> {rec}
-                </p>
-              )}
-            </div>
-          );
-        })}
+        <div className="space-y-0.5">
+          <h2 className="text-lg font-semibold">Waiting ({review.size})</h2>
+          <p className="text-sm text-muted-foreground">
+            Clips waiting for a free slot. You can approve or skip any of them
+            by hand.
+          </p>
+        </div>
         {review.size === 0 && (
           <p className="text-sm text-muted-foreground">
-            Nothing to review. Render clips and they show up here (with
-            Auto-post on and an account connected).
+            Nothing waiting. New clips show up here until they get a slot.
           </p>
         )}
-        {[...byVideo.entries()].map(([jobId, firsts]) => (
+        {waitingPage.map(({ jobId, firsts, shown }) => shown.length > 0 && (
           <div key={jobId} className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="min-w-0 truncate text-sm text-muted-foreground">
@@ -321,7 +339,7 @@ export function QueueView() {
                 </Button>
               )}
             </div>
-            {firsts.map((f) => (
+            {shown.map((f) => (
               <ReviewCard
                 key={queueGroup(f)}
                 entries={review.get(queueGroup(f))!}
@@ -334,7 +352,14 @@ export function QueueView() {
             ))}
           </div>
         ))}
+        {review.size > waitingShown && (
+          <Button variant="outline" onClick={() => setWaitingShown((n) => n + WAITING_PAGE)}>
+            Show {Math.min(WAITING_PAGE, review.size - waitingShown)} more
+          </Button>
+        )}
       </section>}
+
+      <NarrationResults />
 
       {reviewing && review.get(reviewing) && (
         <Dialog.Root open onOpenChange={(o) => !o && setReviewing(null)}>

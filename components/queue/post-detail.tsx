@@ -468,7 +468,7 @@ function Delivery({
   );
 }
 
-/** Post now / change time / remove, retries and the YouTube remote schedule. Post now always asks first. */
+/** Post now / change time / remove, retries and having YouTube publish at a set time. Post now always asks first. */
 function Actions({
   entries,
   at,
@@ -722,13 +722,13 @@ function RemoteScheduleForm({
   return (
     <details className="rounded-lg border bg-card px-3 py-2 text-xs">
       <summary className="cursor-pointer text-sm">
-        YouTube upload ahead and remote schedule
+        Upload early and let YouTube publish it
       </summary>
       <div className="space-y-2 py-2">
         <p>
           {verified
-            ? "Choose an exact publication time and approve a new package."
-            : "Unavailable until remote scheduling is verified for this exact publishing destination through a separately authorized upload."}
+            ? "Pick the exact time it goes public and approve it."
+            : "Not available yet. capy first needs to see scheduling work on this channel, which takes one test upload you've agreed to."}
         </p>
         {entry.remoteSchedule && (
           <p>
@@ -739,7 +739,7 @@ function RemoteScheduleForm({
           </p>
         )}
         <label className="block">
-          Publish at (this computer’s time zone)
+          Goes public at (this computer’s time zone)
           <Input
             type="datetime-local"
             value={when}
@@ -748,7 +748,7 @@ function RemoteScheduleForm({
           />
         </label>
         <label className="block">
-          Upload ahead (minutes, 1–1440)
+          Upload this early (minutes, 1–1440)
           <Input
             type="number"
             min={1}
@@ -765,8 +765,8 @@ function RemoteScheduleForm({
             onChange={(e) => setAck(e.target.checked)}
             disabled={!verified}
           />
-          I approve uploading early and publication by YouTube at this time.
-          Pausing or closing capy cannot cancel an accepted remote schedule.
+          Upload it early and have YouTube make it public at this time. Once
+          YouTube has accepted, pausing or closing capy can&apos;t stop it.
         </label>
         <Button
           size="sm"
@@ -785,7 +785,7 @@ function RemoteScheduleForm({
                   }),
                 },
               );
-              onChange("Remote schedule explicitly approved");
+              onChange("Approved. YouTube will make it public at that time");
             } catch (error) {
               onChange(error instanceof Error ? error.message : String(error));
             } finally {
@@ -793,7 +793,7 @@ function RemoteScheduleForm({
             }
           }}
         >
-          Approve new remote schedule
+          Approve this time
         </Button>
       </div>
     </details>

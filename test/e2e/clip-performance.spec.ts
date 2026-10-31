@@ -62,6 +62,7 @@ test("raw cached publication results, explicit uncertainty and scoped deletion u
     path: path.join(root, "clip-performance.png"),
     fullPage: true,
   });
+  await panel.getByText("Advanced", { exact: true }).click();
   await panel
     .getByRole("button", { name: "Delete cached results", exact: true })
     .click();
@@ -78,6 +79,7 @@ test("Capy template suggestion changes only the draft until explicit creator rec
 }) => {
   await page.goto("/automation");
   const creator = page.getByRole("article", { name: "Performance creator" });
+  await creator.getByText("Channel settings", { exact: true }).click();
   await creator.getByText("More options", { exact: true }).click();
   const before = await (await request.get("/api/automation/health")).json();
   const old = before.policies["performance-creator"].recipeId;

@@ -255,8 +255,9 @@ export function SubscriptionPicker({
             Also make clips from each one's newest video now
           </label>
           <p className="text-xs text-muted-foreground">
-            Channels you already watch keep their settings. Nothing is posted
-            without your OK.
+            Channels you already watch keep their settings. Clips that pass
+            every check are scheduled by themselves, and you can skip any of
+            them in Short form before they post.
           </p>
           <Button
             type="button"

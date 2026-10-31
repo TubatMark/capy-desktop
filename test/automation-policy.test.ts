@@ -409,7 +409,6 @@ it("health shows expired worker offline and preserves current stage/backlog/dura
   const h = await automationHealth();
   expect(h.online).toBe(false);
   expect(h.activeStage).toBeUndefined();
-  expect(h.publication.enabled).toBe(false);
   expect(h.reasons).toContainEqual({
     id: "source",
     reason: "Destination calendar is at capacity",

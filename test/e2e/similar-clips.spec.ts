@@ -122,7 +122,7 @@ async function mock(page: Page) {
     rechecks.push(decodeURIComponent(new URL(route.request().url()).pathname.split("/")[3]!));
     return route.fulfill({ status: 202, json: entries[0] });
   });
-  await page.route("**/api/jobs", (route) => route.fulfill({ json: [{ id: "speed", channel: "IShowSpeed" }] }));
+  await page.route("**/api/jobs/channels", (route) => route.fulfill({ json: { channels: { speed: "IShowSpeed" } } }));
   await page.route("**/api/channel/performance", (route) =>
     route.fulfill({ json: { destinationId: "dest", attemptedAt: NOW, status: "skipped", publications: [] } }),
   );
@@ -135,7 +135,7 @@ test("waiting clips show both AIs' similar-clip verdicts, the linked clips and t
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
 
   const box = card(page, 1).getByRole("region", { name: "Similar clips" });
   await expect(box).toContainText("Similar clips: Nearly the same as 3 other clips");
@@ -146,7 +146,7 @@ test("waiting clips show both AIs' similar-clip verdicts, the linked clips and t
   const linked = box.getByRole("list", { name: "Linked clips" });
   await expect(linked.getByRole("listitem")).toHaveCount(3);
   await expect(linked).toContainText("Gets Raided Mid-Wager");
-  await expect(linked).toContainText("Waiting for your OK");
+  await expect(linked).toContainText("Waiting for a slot");
   await expect(linked).toContainText("Posted");
   await expect(linked.locator("img")).toHaveCount(3);
 
@@ -165,7 +165,7 @@ test("waiting clips show both AIs' similar-clip verdicts, the linked clips and t
 
 test("a missing second opinion and a disagreement are said plainly", async ({ page }) => {
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   const single = card(page, 2).getByRole("region", { name: "Similar clips" });
   await expect(single).toContainText("Only Claude answered; the second opinion was unavailable.");
   await expect(single.getByLabel("Codex's opinion")).toContainText(
@@ -182,7 +182,7 @@ test("a missing second opinion and a disagreement are said plainly", async ({ pa
 
 test("linked clips open: a posted one in the post panel (with its own verdict), a waiting one scrolls into view", async ({ page }) => {
   await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   const linked = card(page, 1).getByRole("list", { name: "Linked clips" });
   await linked.getByRole("button", { name: /Calls Out Rival/ }).click();
   const sheet = page.getByRole("dialog", { name: "Calls Out Rival" });
@@ -199,7 +199,7 @@ test("linked clips open: a posted one in the post panel (with its own verdict), 
 
 test("Check again asks the server to compare the clip again", async ({ page }) => {
   const m = await mock(page);
-  await page.goto("/queue");
+  await page.goto("/short-form?view=calendar");
   await card(page, 1).getByRole("button", { name: "Check again" }).click();
   await expect(page.getByRole("status").filter({ hasText: "compare this clip again" })).toBeVisible();
   expect(m.rechecks).toEqual(["speed:1:youtube"]);

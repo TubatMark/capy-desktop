@@ -847,7 +847,7 @@ export async function switchQueueThumbnail(
     statuses: ATTACHABLE,
     note:
       entry.status === "scheduled"
-        ? "Thumbnail changed; approve again to schedule it"
+        ? "Thumbnail changed; waiting for a new slot"
         : "Thumbnail changed",
   });
   return deps.store

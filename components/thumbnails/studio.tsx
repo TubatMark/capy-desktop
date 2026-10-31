@@ -163,7 +163,7 @@ export function ThumbnailStudio({
   async function save() {
     if (!doc) return;
     await action(async (epoch) => {
-      setStatus("Saving local edits…");
+      setStatus("Saving your edits…");
       const res = await fetch(`/api/thumbnails/${doc.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -176,7 +176,7 @@ export function ThumbnailStudio({
       const next = await res.json();
       if (!res.ok) throw Error(next.error);
       await load(doc.id, { epoch });
-      setStatus("Saved locally. No image generation call.");
+      setStatus("Saved. This didn't use AI.");
     });
   }
   async function regenerate(kind: "variation" | "background") {
@@ -190,7 +190,7 @@ export function ThumbnailStudio({
           requestId: crypto.randomUUID(),
         },
       );
-      setStatus("Explicit regeneration queued; image budget applies.");
+      setStatus("Making it again. This counts toward your AI budget.");
       await awaitJob(record.jobId);
       const result = await request<{ state: string; error?: string }>(
         `/api/thumbnails/${doc.id}/regenerate?requestId=${record.id}`,
@@ -200,7 +200,7 @@ export function ThumbnailStudio({
           result.error ?? "Regeneration did not replace the selected design",
         );
       await load(doc.id, { epoch });
-      setStatus("Regeneration saved as a new version.");
+      setStatus("Saved as a new version.");
     });
   }
   async function zip() {
@@ -259,8 +259,8 @@ export function ThumbnailStudio({
       {status && <p role="status">{status}</p>}
       {doc?.reviewState === "stale" && (
         <p className="rounded border border-amber-500 p-3">
-          The footage changed. Saved versions remain downloadable; attach a
-          design from the current edit.
+          The footage changed. You can still download saved versions. To use
+          one on a post, make a new design from the current clip.
         </p>
       )}
       <VariationGrid
@@ -290,13 +290,13 @@ export function ThumbnailStudio({
             disabled={busy || !source}
             onClick={() => generate()}
           >
-            Generate three variations
+            Make three designs
           </button>
         </section>
       )}
       <div className="flex flex-wrap items-center gap-3">
         <label>
-          Aspect preset
+          Shape
           <select
             disabled={busy}
             className="ml-2 rounded border p-2"
@@ -319,7 +319,7 @@ export function ThumbnailStudio({
                   const response = await res.json();
                   if (!res.ok) throw Error(response.error);
                   await load(doc.id, { epoch });
-                  setStatus("Preset recomposed locally as a new version.");
+                  setStatus("Shape changed and saved as a new version.");
                 });
             }}
           >
@@ -363,8 +363,8 @@ export function ThumbnailStudio({
                   : `Saved version ${doc.editRevision}`}
               </p>
             </div>
-            <section aria-label="320 pixel readability preview">
-              <h2 className="mb-2 font-medium">320 px readability preview</h2>
+            <section aria-label="How it looks small">
+              <h2 className="mb-2 font-medium">How it looks small</h2>
               <img
                 src={preview}
                 alt="Small thumbnail preview"
@@ -406,21 +406,21 @@ export function ThumbnailStudio({
                 onClick={() => regenerate("variation")}
                 className="rounded border p-2"
               >
-                Regenerate this variation
+                Make this design again
               </button>
               <button
                 disabled={busy || dirty}
                 onClick={() => regenerate("background")}
                 className="rounded border p-2"
               >
-                Regenerate background
+                Make a new background
               </button>
             </div>
             <p className="text-xs text-muted-foreground">
               {doc.imageGeneration.reason ??
-                `Image generation: ${doc.imageGeneration.status}`}{" "}
-              · Provider: {doc.provenance.provider}. Text, crop, color and font
-              edits use local composition.
+                `AI images are ${doc.imageGeneration.status}.`}{" "}
+              Made with {doc.provenance.provider}. Text, crop, color and font
+              edits don&apos;t use AI.
             </p>
             <section className="space-y-2">
               <h2 className="font-semibold">Version history</h2>
@@ -445,7 +445,7 @@ export function ThumbnailStudio({
                       version.layers.find((l) => l.id === "source")?.assetId,
                     );
                     setStatus(
-                      "Historical geometry restored locally. Save edits to create a new version.",
+                      "Older layout brought back. Save edits to keep it as a new version.",
                     );
                   }}
                 >
@@ -454,7 +454,7 @@ export function ThumbnailStudio({
               ))}
             </section>
             <section className="space-y-2">
-              <h2 className="font-semibold">Attach to publish package</h2>
+              <h2 className="font-semibold">Use on a post</h2>
               <button
                 className="rounded border p-2"
                 disabled={busy || dirty || doc.reviewState === "stale"}
@@ -465,24 +465,29 @@ export function ThumbnailStudio({
                     });
                     await load(doc.id, { epoch });
                     setStatus(
-                      "Exact thumbnail version reviewed. Package approval is a separate decision.",
+                      "Thumbnail approved. This doesn't schedule the clip by itself.",
                     );
                   })
                 }
               >
-                Approve thumbnail version
+                Approve this thumbnail
               </button>
               <p className="text-xs text-muted-foreground">
-                Thumbnail review: {doc.reviewState}. Check the source, headline
-                and small preview before approving.
+                {doc.reviewState === "approved"
+                  ? "Approved."
+                  : doc.reviewState === "stale"
+                    ? "Out of date: the footage changed."
+                    : "Not approved yet."}{" "}
+                Check the picture, the headline and how it looks small before
+                approving.
               </p>
               <select
-                aria-label="Publish package"
+                aria-label="Post to use it on"
                 className="rounded border p-2"
                 value={packageId}
                 onChange={(e) => setPackageId(e.target.value)}
               >
-                <option value="">Choose a reviewed video package</option>
+                <option value="">Choose a post</option>
                 {data.packages?.map((pkg) => (
                   <option key={pkg.id} value={pkg.id}>
                     {pkg.label}
@@ -503,16 +508,17 @@ export function ThumbnailStudio({
                     await load(doc.id, { epoch });
                     setPackageId("");
                     setStatus(
-                      "Attached exact version. The package needs a new approval. Platform upload has not run.",
+                      "Added to the post. It's waiting for a new slot, and nothing has been uploaded yet.",
                     );
                   })
                 }
               >
-                Attach selected version
+                Use this version
               </button>
               <p className="text-xs text-muted-foreground">
-                Attachment creates a new package identity. A download alone
-                never changes your video or approval.
+                Using a new thumbnail takes the post off its time slot until it
+                gets a new one. Downloading never changes your video or its
+                schedule.
               </p>
             </section>
           </div>

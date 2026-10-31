@@ -232,6 +232,15 @@ export function ClipPerformance() {
           >
             Refresh clip results
           </Button>
+        </div>
+      </header>
+      <p className="text-xs text-muted-foreground">
+        Analytics can arrive later than view totals. Non-random results do not
+        prove a recipe or thumbnail caused an improvement.
+      </p>
+      <details className="rounded-lg border p-3 text-sm">
+        <summary className="cursor-pointer font-medium">Advanced</summary>
+        <div className="mt-3 space-y-2">
           <Button
             size="sm"
             variant="outline"
@@ -240,14 +249,12 @@ export function ClipPerformance() {
           >
             Delete cached results
           </Button>
+          <p className="text-xs text-muted-foreground">
+            Your videos, publishing history and YouTube posts stay. capy fetches
+            the numbers again next time.
+          </p>
         </div>
-      </header>
-      <p className="text-xs text-muted-foreground">
-        Deleting cached results preserves local media and publishing history,
-        and does not delete YouTube posts. Analytics can arrive later than view
-        totals. Non-random results do not prove a recipe or thumbnail caused an
-        improvement.
-      </p>
+      </details>
       {error && (
         <p role="alert" className="text-sm text-red-700">
           {error}

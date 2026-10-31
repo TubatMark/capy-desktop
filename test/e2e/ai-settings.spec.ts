@@ -20,6 +20,7 @@ test("adapter-only and premium edits populate defaults; privacy limits save with
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/settings");
+  await page.getByText("Advanced: which AI does which job").click();
   const panel = page.getByRole("region", {
     name: "AI task routing and limits",
   });
@@ -50,6 +51,7 @@ test("adapter-only and premium edits populate defaults; privacy limits save with
   });
   expect(saved.tasks.metadata.escalation).toBeUndefined();
   await page.reload();
+  await page.getByText("Advanced: which AI does which job").click();
   await expect(panel.getByLabel("metadata model", { exact: true })).toHaveValue(
     "gpt-6-luna",
   );
@@ -94,6 +96,7 @@ test("a rejected routing save never reports Saved and restores last confirmed po
   request,
 }, testInfo) => {
   await page.goto("/settings");
+  await page.getByText("Advanced: which AI does which job").click();
   const panel = page.getByRole("region", {
     name: "AI task routing and limits",
   });

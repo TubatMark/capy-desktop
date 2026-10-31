@@ -76,6 +76,7 @@ test("saves channel options, separate pause controls, bounded policy and locked 
     postPaused: false,
   });
   const card = page.getByRole("article").filter({ hasText: "More options" });
+  await card.getByText("Channel settings", { exact: true }).click();
   await card.getByText("More options", { exact: true }).click();
   await card.getByLabel("New videos").selectOption("automatic_drafts");
   await card.getByLabel("Caption style").selectOption("clean-portrait-v1");

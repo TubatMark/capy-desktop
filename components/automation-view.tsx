@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -20,6 +20,7 @@ import { AutomationDashboard } from "@/components/automation-dashboard";
 import { CreatorPolicyForm } from "@/components/creator-policy-form";
 import { SubscriptionPicker } from "@/components/subscription-picker";
 import { api } from "@/hooks/use-job";
+import { useVisibleInterval } from "@/hooks/use-visible-interval";
 import type { AutomationHealth } from "@/lib/creator-policy";
 import type { WatchedChannel, WatchFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ const ago = (t?: number) => {
         : `${Math.round(m / 1440)} d ago`;
 };
 
-/** Monitor: watch YouTube channels; new uploads are clipped, checked and wait in Queue for the user's OK. */
+/** Monitor: watch YouTube channels; new uploads are clipped, checked and scheduled in Short form, where the owner can step in. */
 export function AutomationView() {
   const [data, setData] = useState<Data | null>(null);
   const [health, setHealth] = useState<AutomationHealth | null>(null);
@@ -59,14 +60,7 @@ export function AutomationView() {
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
-  useEffect(() => {
-    void load();
-    const t = setInterval(
-      () => document.visibilityState === "visible" && void load(),
-      5000,
-    );
-    return () => clearInterval(t);
-  }, [load]);
+  useVisibleInterval(load, 5000);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -96,11 +90,11 @@ export function AutomationView() {
         </h1>
         <p className="text-pretty text-sm text-muted-foreground">
           Add YouTube channels to keep an eye on. When one posts a new video,
-          capy makes clips from it and puts them in{" "}
+          capy makes clips from it, checks them and schedules the good ones in{" "}
           <Link href="/short-form" className="underline underline-offset-2">
-            Queue
-          </Link>
-          . Nothing is posted until you approve it.
+            Short form
+          </Link>{" "}
+          by itself. You can change or skip any of them before they post.
         </p>
       </div>
 
@@ -111,7 +105,7 @@ export function AutomationView() {
       {data && !data.postingReady && (
         <Notice>
           You haven&apos;t connected an account to post to, so clips stay in
-          Library instead of going to Queue.{" "}
+          Library instead of going to Short form.{" "}
           <Link
             href="/settings#accounts"
             className="underline underline-offset-2"
@@ -209,13 +203,14 @@ function StatusBar({
     }).catch(() => {});
     await onChange();
   };
+  // the one pause for everything; single steps can be paused under Behind the scenes
   const togglePause = async () => {
     await api("/api/automation/health", {
       method: "PUT",
       body: JSON.stringify({
         controls: stopped
           ? { ...health.controls, monitorPaused: false, globalStop: false }
-          : { ...health.controls, monitorPaused: true },
+          : { ...health.controls, globalStop: true },
       }),
     }).catch(() => {});
     await onChange();
@@ -262,7 +257,7 @@ function StatusBar({
             variant="outline"
             onClick={() => void togglePause()}
           >
-            {stopped ? <Play /> : <Pause />} {stopped ? "Turn on" : "Pause"}
+            {stopped ? <Play /> : <Pause />} {stopped ? "Turn on" : "Pause everything"}
           </Button>
         </div>
       </div>
@@ -295,85 +290,19 @@ function StatusBar({
         </Select>
         <span>videos a day in total.</span>
       </div>
-      <AutoSchedule />
+      <p className="text-sm text-muted-foreground">
+        What capy does by itself is set in{" "}
+        <Link href="/settings#automation" className="underline underline-offset-2">
+          Settings
+        </Link>
+        .
+      </p>
       {!stopped && !health.online && (
         <p className="text-xs text-muted-foreground">
           capy only checks while it&apos;s open (or running in the menu bar).
         </p>
       )}
     </section>
-  );
-}
-
-/** The owner's switch for scheduling clips that pass every check without waiting for approval (on by default). */
-function AutoSchedule() {
-  const [on, setOn] = useState<boolean | null>(null);
-  const [caution, setCaution] = useState(true);
-  useEffect(() => {
-    void api<{
-      settings: { autoSchedule?: boolean; autoScheduleCaution?: boolean };
-    }>("/api/settings")
-      .then((r) => {
-        setOn(r.settings.autoSchedule ?? true);
-        setCaution(r.settings.autoScheduleCaution ?? true);
-      })
-      .catch(() => {});
-  }, []);
-  if (on === null) return null;
-  return (
-    <div className="space-y-2 border-t pt-2">
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="mt-0.5 size-4 accent-[var(--primary)]"
-          checked={on}
-          onChange={async (e) => {
-            const next = e.target.checked;
-            setOn(next);
-            await api("/api/settings", {
-              method: "PUT",
-              body: JSON.stringify({ autoSchedule: next }),
-            }).catch(() => setOn(!next));
-          }}
-        />
-        <span>
-          <span className="font-medium">
-            Schedule clips that pass every check without asking me
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            No AI says don&apos;t post, it isn&apos;t a near-copy of your recent
-            clips, and it has a designed thumbnail. It still waits for its time
-            slot, so you can remove it from Queue before it posts. Turning this
-            off also holds back clips it already scheduled.
-          </span>
-        </span>
-      </label>
-      {on && (
-        <label className="ml-6 flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5 size-4 accent-[var(--primary)]"
-            checked={caution}
-            onChange={async (e) => {
-              const next = e.target.checked;
-              setCaution(next);
-              await api("/api/settings", {
-                method: "PUT",
-                body: JSON.stringify({ autoScheduleCaution: next }),
-              }).catch(() => setCaution(!next));
-            }}
-          />
-          <span>
-            <span className="font-medium">
-              Also schedule clips the AI marked &quot;check this&quot;
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              Only clips an AI says not to post wait for you.
-            </span>
-          </span>
-        </label>
-      )}
-    </div>
   );
 }
 
@@ -498,54 +427,6 @@ function ChannelCard({
           {new Date(d.nextAttemptAt).toLocaleTimeString()}.
         </p>
       )}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Field label="Clips per video">
-          <Select
-            value={s.clips}
-            onChange={(e) => setting("clips", Number(e.target.value))}
-          >
-            {[1, 2, 3, 4, 5, 6, 8].map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Skip videos shorter than">
-          <Select
-            value={s.minVideoSec}
-            onChange={(e) => setting("minVideoSec", Number(e.target.value))}
-          >
-            {[120, 240, 480, 900].map((v) => (
-              <option key={v} value={v}>
-                {v / 60} min
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Most videos a day">
-          <Select
-            value={s.perDay}
-            onChange={(e) => setting("perDay", Number(e.target.value))}
-          >
-            {[1, 2, 3, 5, 10].map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Caption language">
-          <Select
-            value={s.audience ?? ""}
-            onChange={(e) => setting("audience", e.target.value || undefined)}
-          >
-            <option value="">Use my default</option>
-            <option value="en-us">English (US)</option>
-            <option value="original">Same as the video</option>
-          </Select>
-        </Field>
-      </div>
       {c.history.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">
@@ -574,7 +455,7 @@ function ChannelCard({
                   {h.status === "processing"
                     ? "making clips…"
                     : h.status === "rendered"
-                      ? (h.note ?? "clips ready in Queue")
+                      ? (h.note ?? "clips ready in Short form")
                       : h.error}
                 </span>
               </li>
@@ -582,16 +463,71 @@ function ChannelCard({
           </ul>
         </div>
       )}
-      {policy && health && (
-        <CreatorPolicyForm
-          // remount when the card's own fields change the saved options
-          key={`${policy.recipeId ?? "initial"}:${policy.clips}:${policy.minDurationSec}`}
-          channelId={c.id}
-          policy={policy}
-          accounts={health.accounts}
-          onSaved={() => void onChange()}
-        />
-      )}
+      <details className="rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          Channel settings
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Field label="Clips per video">
+              <Select
+                value={s.clips}
+                onChange={(e) => setting("clips", Number(e.target.value))}
+              >
+                {[1, 2, 3, 4, 5, 6, 8].map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Skip videos shorter than">
+              <Select
+                value={s.minVideoSec}
+                onChange={(e) => setting("minVideoSec", Number(e.target.value))}
+              >
+                {[120, 240, 480, 900].map((v) => (
+                  <option key={v} value={v}>
+                    {v / 60} min
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Most videos a day">
+              <Select
+                value={s.perDay}
+                onChange={(e) => setting("perDay", Number(e.target.value))}
+              >
+                {[1, 2, 3, 5, 10].map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Caption language">
+              <Select
+                value={s.audience ?? ""}
+                onChange={(e) => setting("audience", e.target.value || undefined)}
+              >
+                <option value="">Use my default</option>
+                <option value="en-us">English (US)</option>
+                <option value="original">Same as the video</option>
+              </Select>
+            </Field>
+          </div>
+          {policy && health && (
+            <CreatorPolicyForm
+              // remount when the card's own fields change the saved options
+              key={`${policy.recipeId ?? "initial"}:${policy.clips}:${policy.minDurationSec}`}
+              channelId={c.id}
+              policy={policy}
+              accounts={health.accounts}
+              onSaved={() => void onChange()}
+            />
+          )}
+        </div>
+      </details>
     </article>
   );
 }

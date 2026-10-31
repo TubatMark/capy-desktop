@@ -193,7 +193,6 @@ export interface AutomationHealth {
   reasons: { id: string; reason: string; at: number }[];
   policies: Record<string, CreatorPolicy>;
   creatorNames: Record<string, string>;
-  publication: { enabled: false; reason: string };
 }
 
 export const MediaQualityReportSchema = z

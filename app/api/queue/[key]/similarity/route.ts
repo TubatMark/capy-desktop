@@ -18,7 +18,7 @@ export async function POST(
     return NextResponse.json({ error: "Not in the queue" }, { status: 404 });
   if (e.status !== "review")
     return NextResponse.json(
-      { error: "Only clips waiting for your OK are compared" },
+      { error: "Only waiting clips are compared" },
       { status: 409 },
     );
   try {

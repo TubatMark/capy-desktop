@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Activity, AlertTriangle, CheckCircle2, Loader2, RefreshCw, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/hooks/use-job";
@@ -21,7 +22,7 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
 );
 
 /** What the daily check found on posted Shorts, what capy changed, and anything worth knowing. */
-export function DailyCheck({ onChecked }: { onChecked?: () => void }) {
+export function DailyCheck() {
   const [data, setData] = useState<{ report: DailyReport | null; tuning: Tuning } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -34,7 +35,6 @@ export function DailyCheck({ onChecked }: { onChecked?: () => void }) {
     setErr(null);
     try {
       setData(await api("/api/daily-check", { method: "POST" }));
-      onChecked?.();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -81,6 +81,7 @@ export function DailyCheck({ onChecked }: { onChecked?: () => void }) {
               <CheckCircle2 className="size-3.5" /> Nothing changed today.
             </p>
           )}
+          {r.focus && <p className="text-sm">{r.focus}</p>}
           {data && (
             <p className="text-xs text-muted-foreground">
               Now: {data.tuning.narrate === "all" ? "narrating every new Short" : data.tuning.narrate === "off" ? "not narrating" : "narrating half of new Shorts"}, clips up to {data.tuning.clipMaxSec} seconds.
@@ -91,5 +92,26 @@ export function DailyCheck({ onChecked }: { onChecked?: () => void }) {
       )}
       {err && <p className="text-sm text-destructive">{err}</p>}
     </section>
+  );
+}
+
+/** The daily check in one line, for pages where the full report (on Dashboard) would be in the way. */
+export function DailyCheckLine() {
+  const [report, setReport] = useState<DailyReport | null | undefined>(undefined);
+  useEffect(() => {
+    void api<{ report: DailyReport | null }>("/api/daily-check")
+      .then((r) => setReport(r.report))
+      .catch(() => {});
+  }, []);
+  if (report === undefined) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+      <Activity className="size-4 shrink-0" /> Daily check
+      {report && <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", TONE[report.health].className)}>{TONE[report.health].label}</span>}
+      {!report && <span>runs shortly.</span>}
+      <Link href="/channel" className="underline underline-offset-2">
+        See it on Dashboard
+      </Link>
+    </p>
   );
 }

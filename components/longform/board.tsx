@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, Bot, CalendarClock, Mic, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, ExternalLink, Film, HardDrive, Loader2, Plus, RotateCcw, Trash2, Upload, Users, X } from "lucide-react";
 import { QueueCalendar } from "@/components/queue/queue-calendar";
 import { KIND, KindMark } from "@/components/queue/post-bits";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/hooks/use-job";
+import { useVisibleInterval } from "@/hooks/use-visible-interval";
 import {
   LONG_COLUMNS,
   longDayItems,
@@ -20,7 +22,6 @@ import {
   formatLength,
   philippineTime,
   type AudienceReport,
-  type AutopilotLogEntry,
   type AutopilotSettings,
   type CreatorFootage,
   type LiveTime,
@@ -29,20 +30,16 @@ import {
   type SlotResult,
   type UploadSlot,
 } from "@/lib/longform";
-import type { ShortTestGroup, ShortTestState, ShortTestSummary } from "@/lib/shorts-test";
 import { cn } from "@/lib/utils";
 
 interface Board {
   videos: LongVideo[];
-  footage: CreatorFootage[];
   audience: AudienceReport | null;
   slots: UploadSlot[];
   recommended: { slot: UploadSlot; at: number } | null;
   results: SlotResult[];
   live: Record<string, LiveTime>;
-  shortsTest: ShortTestState & { narrate: "half" | "all" | "off"; narrateManual?: "all" | "half"; summary: ShortTestSummary };
   autopilot: AutopilotSettings;
-  autopilotLog: AutopilotLogEntry[];
 }
 interface CleanupPlan {
   allowed: boolean;
@@ -86,11 +83,7 @@ export function LongFormBoard() {
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
-  useEffect(() => {
-    void load();
-    const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [load]);
+  useVisibleInterval(load, 4000);
 
   const open = board?.videos.find((v) => v.id === openId);
 
@@ -146,9 +139,13 @@ export function LongFormBoard() {
         </div>
       )}
 
-      {board && <AutopilotPanel settings={board.autopilot} log={board.autopilotLog} onChange={load} />}
-
-      {board && <ShortsTestPanel test={board.shortsTest} onChange={load} />}
+      <p className="text-sm text-muted-foreground">
+        What capy does by itself is set in{" "}
+        <Link href="/settings#automation" className="underline underline-offset-2">
+          Settings
+        </Link>
+        .
+      </p>
 
       {board && (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -157,7 +154,7 @@ export function LongFormBoard() {
         </div>
       )}
 
-      {board && <NewVideoDialog open={picking} footage={board.footage} onClose={() => setPicking(false)} onCreated={load} />}
+      {picking && <NewVideoDialog onClose={() => setPicking(false)} onCreated={load} />}
       {open && board && <VideoDialog video={open} live={board.live[open.id]} publishOn={board.autopilot.publish} board={board} onClose={() => setOpenId(null)} onChange={load} />}
     </div>
   );
@@ -224,9 +221,19 @@ function Sheet({ open, title, onClose, wide, children }: { open: boolean; title:
   );
 }
 
-function NewVideoDialog({ open, footage, onClose, onCreated }: { open: boolean; footage: CreatorFootage[]; onClose: () => void; onCreated: () => void }) {
+function NewVideoDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [footage, setFootage] = useState<CreatorFootage[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // walks every clip, so it's only worked out when this dialog opens
+  useEffect(() => {
+    void api<{ footage: CreatorFootage[] }>("/api/longform?footage=1")
+      .then((r) => setFootage(r.footage))
+      .catch((e) => {
+        setFootage([]);
+        setErr(e instanceof Error ? e.message : String(e));
+      });
+  }, []);
   async function create(creator: string) {
     setBusy(creator);
     setErr(null);
@@ -241,10 +248,15 @@ function NewVideoDialog({ open, footage, onClose, onCreated }: { open: boolean; 
     }
   }
   return (
-    <Sheet open={open} title="New long video" onClose={onClose}>
+    <Sheet open title="New long video" onClose={onClose}>
       <p className="mb-3 text-sm text-muted-foreground">Footage that hasn't gone into a long video yet. A video needs at least 8 minutes.</p>
       <ul className="divide-y">
-        {footage.map((f) => (
+        {!footage && (
+          <li className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Adding up the footage…
+          </li>
+        )}
+        {footage?.map((f) => (
           <li key={f.creator} className="flex items-center justify-between gap-3 py-2">
             <div>
               <p className="text-sm font-medium">{f.creator}</p>
@@ -257,7 +269,7 @@ function NewVideoDialog({ open, footage, onClose, onCreated }: { open: boolean; 
             </Button>
           </li>
         ))}
-        {!footage.length && <li className="py-3 text-sm text-muted-foreground">No unused footage yet.</li>}
+        {footage && !footage.length && !err && <li className="py-3 text-sm text-muted-foreground">No unused footage yet.</li>}
       </ul>
       {err && <p className="mt-3 text-sm text-destructive">{err}</p>}
     </Sheet>
@@ -331,7 +343,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
             <p className="text-xs">{easternTime(live.at)}</p>
             {!live.booked && (
               <p className="mt-1 text-xs">
-                {live.needsOwner ? "Not booked yet. The checks found a file problem, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it automatically, 6 hours or more after processing. You can pick a time yourself once it's on YouTube." : "Not booked yet. Turn on Schedule going public, or schedule it yourself once it's on YouTube."}
+                {live.needsOwner ? "Not booked yet. The checks found a file problem, so this one needs you to schedule it." : publishOn ? "Not booked yet. capy books it automatically, 6 hours or more after processing. You can pick a time yourself once it's on YouTube." : "Not booked yet. Turn on Go public in Settings, or schedule it yourself once it's on YouTube."}
               </p>
             )}
           </div>
@@ -612,127 +624,6 @@ function LongCalendar({ board, onOpen }: { board: Board; onOpen: (id: string) =>
           </ul>
         </div>
       </div>
-    </section>
-  );
-}
-
-const SWITCHES: { key: keyof AutopilotSettings; label: string; hint: string; warn?: string }[] = [
-  { key: "draft", label: "Draft new videos", hint: "Checks the footage regularly and starts a video when a creator has enough. At most 6 wait for review." },
-  { key: "upload", label: "Upload as Private", hint: "One a day, once the file checks pass. A video with a file problem waits for you." },
-  { key: "publish", label: "Go public", hint: "Books the next open slot, 6 hours or more after processing. A video with a file problem waits for you.", warn: "Videos go public without you watching them. A claim or strike can affect your whole channel." },
-  { key: "free", label: "Delete local files", hint: "Removes long-form footage and masters 48 hours after processing, and rendered Shorts 48 hours after posting.", warn: "This permanently deletes files without asking. Footage for Shorts that haven't posted is always kept." },
-];
-
-function AutopilotPanel({ settings, log, onChange }: { settings: AutopilotSettings; log: AutopilotLogEntry[]; onChange: () => void }) {
-  const [err, setErr] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<keyof AutopilotSettings | null>(null);
-  async function set(key: keyof AutopilotSettings, value: boolean) {
-    setErr(null);
-    setConfirming(null);
-    try {
-      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "autopilot", settings: { ...settings, [key]: value } }) });
-      onChange();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }
-  return (
-    <section className="space-y-3 rounded-xl border p-4">
-      <h2 className="flex items-center gap-2 font-medium">
-        <Bot className="size-4" /> Autopilot
-      </h2>
-      <ul className="grid gap-3 sm:grid-cols-2">
-        {SWITCHES.map((s) => (
-          <li key={s.key} className="space-y-1 text-sm">
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 size-4 accent-[var(--primary)]"
-                checked={settings[s.key]}
-                onChange={(e) => (e.target.checked && s.warn ? setConfirming(s.key) : set(s.key, e.target.checked))}
-              />
-              <span>
-                <span className="font-medium">{s.label}</span>
-                <span className="block text-xs text-muted-foreground">{s.hint}</span>
-              </span>
-            </label>
-            {confirming === s.key && (
-              <div className="ml-6 space-y-2 rounded-lg border p-2 text-xs">
-                <p>{s.warn}</p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => set(s.key, true)}>
-                    Turn on
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
-                    Keep off
-                  </Button>
-                </div>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-      {err && <p className="text-sm text-destructive">{err}</p>}
-      {log.length > 0 && (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Latest: {log[0]!.text}</summary>
-          <ul className="mt-1 space-y-0.5">
-            {log.map((l) => (
-              <li key={`${l.at}${l.text}`}>
-                {new Date(l.at).toLocaleString()}: {l.text}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </section>
-  );
-}
-
-function ShortsTestPanel({ test, onChange }: { test: Board["shortsTest"]; onChange: () => void }) {
-  const [err, setErr] = useState<string | null>(null);
-  async function choose(mode: string) {
-    setErr(null);
-    try {
-      await api("/api/longform", { method: "POST", body: JSON.stringify({ action: "shorts-test", mode }) });
-      onChange();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }
-  const row = (label: string, g: ShortTestGroup, tone: string) => (
-    <div className={cn("rounded-lg p-3 text-sm", tone)}>
-      <p className="font-medium">{label}</p>
-      <p className="text-2xl font-semibold tabular-nums">{g.feedViews.toLocaleString("en-US")}</p>
-      <p className="text-xs">
-        feed views from {g.posts} Shorts. {g.reachedFeed} reached the feed, median {g.medianFeedViews.toLocaleString("en-US")}.
-        {g.stayedToWatch !== undefined ? ` ${Math.round(g.stayedToWatch * 100)}% stayed to watch.` : ""}
-      </p>
-    </div>
-  );
-  return (
-    <section className="space-y-3 rounded-xl border p-4">
-      <h2 className="flex items-center gap-2 font-medium">
-        <Mic className="size-4" /> Narrated Shorts
-      </h2>
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Label htmlFor="narrate-mode">Narration</Label>
-        <select id="narrate-mode" className="rounded-md border bg-background px-2 py-1 text-sm" value={!test.on ? "off" : test.narrateManual ?? "auto"} onChange={(e) => choose(e.target.value)}>
-          <option value="auto">Automatic: the daily check decides</option>
-          <option value="all">Every new Short</option>
-          <option value="half">Half of new Shorts</option>
-          <option value="off">None</option>
-        </select>
-        <span className="text-xs text-muted-foreground">
-          {!test.on ? "Not narrating." : `Now: ${test.narrate === "all" ? "every new Short" : test.narrate === "off" ? "no new Shorts" : "half of new Shorts"}.`} Shorts already made or scheduled don&apos;t change.
-        </span>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {row("Narrated", test.summary.narrated, "bg-violet-500/10")}
-        {row("Plain", test.summary.plain, "bg-slate-500/10")}
-      </div>
-      <p className="text-sm">{test.summary.verdict}</p>
-      {err && <p className="text-sm text-destructive">{err}</p>}
     </section>
   );
 }

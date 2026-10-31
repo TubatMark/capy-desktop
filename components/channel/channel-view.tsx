@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Gauge } from "@/components/gauge";
 import { ClipPerformance } from "@/components/channel/clip-performance";
+import { DailyCheck } from "@/components/daily-check";
 import { ViewsChart } from "@/components/channel/views-chart";
 import { VideosTable } from "@/components/channel/videos-table";
 import { KeywordsPanel } from "@/components/channel/keywords-panel";
@@ -95,6 +96,7 @@ export function ChannelView() {
         <p className="text-sm text-red-700">
           {data.error ?? "Couldn't load the channel."}
         </p>
+        <DailyCheck />
         <ClipPerformance />
         <Button
           variant="outline"
@@ -257,6 +259,7 @@ function Overview({
 
   return (
     <div className="space-y-6">
+      <DailyCheck />
       <section
         aria-label="Channel health"
         className="grid grid-cols-2 gap-y-6 rounded-xl border bg-card py-6 md:grid-cols-4 md:divide-x"

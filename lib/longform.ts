@@ -295,13 +295,29 @@ export type AutopilotAction =
   | { kind: "publish"; id: string }
   | { kind: "free"; id: string };
 
+/** Too little footage after screening isn't a failure: the moments go back and capy tries again with new clips. */
+const shortOfFootage = (v: LongVideo) => !v.youtube?.id && /usable footage/.test(v.error ?? "");
+
+/**
+ * Whether a long video is stuck until the owner steps in: an error capy has stopped retrying, or file-check notes on a
+ * video it won't publish alone. A footage shortage doesn't count, and neither do notes on a video the owner took over.
+ */
+export function longVideoNeedsOwner(v: LongVideo): "error" | "warnings" | null {
+  if (shortOfFootage(v)) return null;
+  if (v.error) {
+    const retrying = !v.manual && !v.youtube?.rejected && !!v.failedStep && (v.autoRetries ?? 0) < MAX_AUTO_RETRIES;
+    return retrying ? null : "error";
+  }
+  const settled = v.status === "public" || v.status === "freed" || v.slotAt !== undefined || v.youtube?.publishedAt !== undefined;
+  return v.check?.warnings?.length && !v.manual && !settled ? "warnings" : null;
+}
+
 const WORKING: LongStatus[] = ["draft", "planning", "narrating", "rendering", "checking"];
 
 /** What the autopilot should do now. Pure, so every rule is testable. */
 export function autopilotActions(all: LongVideo[], footage: CreatorFootage[], s: AutopilotSettings, now: number): AutopilotAction[] {
   const out: AutopilotAction[] = [];
-  // screening can leave too little footage: that isn't a failure, the moments go back and it tries again with new clips
-  const short = (v: LongVideo) => !v.youtube?.id && /usable footage/.test(v.error ?? "");
+  const short = shortOfFootage;
   for (const v of all) if (short(v) && !v.manual) out.push({ kind: "dismiss", id: v.id });
   // what the owner took over still counts for slots and limits, but gets no actions
   const videos = all.filter((v) => !short(v));

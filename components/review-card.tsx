@@ -16,7 +16,7 @@ import { api } from "@/hooks/use-job";
 import { fmtSlot } from "@/hooks/use-queue";
 import type { Platform, PostText, QueueEntry } from "@/lib/types";
 
-/** One rendered clip waiting for the user's OK: watch it, pick platforms, tweak the text, approve or reject. */
+/** One rendered clip waiting for a slot: watch it, pick platforms, tweak the text, approve or reject. */
 export function ReviewCard({
   entries,
   nextFree,

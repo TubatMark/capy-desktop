@@ -93,8 +93,8 @@ async function mock(page: Page) {
       },
     }),
   );
-  await page.route("**/api/jobs", (route) =>
-    route.fulfill({ json: [{ id: "j", channel: "Wild Calm TV" }] }),
+  await page.route("**/api/jobs/channels", (route) =>
+    route.fulfill({ json: { channels: { j: "Wild Calm TV" } } }),
   );
   await page.route("**/api/channel/performance", (route) => {
     if (route.request().method() === "POST") refreshes++;

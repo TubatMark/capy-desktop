@@ -263,7 +263,7 @@ export function missingReason(m: MetricObservation | undefined): string {
 /** Where a clip sits on the Short form board. */
 export type ShortColumn = "waiting" | "scheduled" | "posting" | "posted" | "attention" | "skipped";
 export const SHORT_COLUMNS: { id: ShortColumn; label: string; hint: string }[] = [
-  { id: "waiting", label: "Waiting", hint: "Being checked for a slot" },
+  { id: "waiting", label: "Waiting", hint: "Waiting for a free slot. You can approve or skip them by hand." },
   { id: "scheduled", label: "Scheduled", hint: "Has a time to post" },
   { id: "posting", label: "Posting", hint: "Going to YouTube now" },
   { id: "posted", label: "Posted", hint: "Live" },

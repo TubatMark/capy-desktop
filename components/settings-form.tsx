@@ -98,6 +98,9 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
         </CardContent>
       </Card>
 
+      <details className="rounded-xl border bg-card p-5 shadow-sm">
+        <summary className="cursor-pointer font-semibold">Advanced: how Claude is paid for</summary>
+        <div className="mt-4">
       <Card>
         <CardHeader>
           <CardTitle>Claude billing</CardTitle>
@@ -163,6 +166,8 @@ export function SettingsForm({ initial, meta }: { initial: AppSettings; meta?: {
           )}
         </CardContent>
       </Card>
+        </div>
+      </details>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Button type="submit" size="lg" disabled={busy} className="w-full sm:w-auto">

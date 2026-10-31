@@ -1,6 +1,6 @@
 "use client";
 import { AiRoutingSettings } from "./ai-routing-settings";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   CircleAlert,
@@ -21,13 +21,12 @@ type TestResult = { ok: boolean; ms: number; error?: string };
 
 export function SettingsView({
   initialSettings,
-  initialAgents,
 }: {
   initialSettings: AppSettings;
-  initialAgents: AgentInfo[];
 }) {
   const [settings, setSettings] = useState(initialSettings);
-  const [agents, setAgents] = useState(initialAgents);
+  // looking for AI tools can take seconds, so the rest of the page doesn't wait for it
+  const [agents, setAgents] = useState<AgentInfo[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -35,9 +34,18 @@ export function SettingsView({
     Partial<Record<AgentId, TestResult | "running">>
   >({});
 
-  const installed = agents.filter((a) => a.installed);
-  const missing = agents.filter((a) => !a.installed);
-  const current = agents.find((a) => a.id === settings.agent);
+  useEffect(() => {
+    void api<{ agents: AgentInfo[] }>("/api/settings")
+      .then((r) => setAgents(r.agents))
+      .catch((e) => {
+        setAgents([]);
+        setErr(e instanceof Error ? e.message : String(e));
+      });
+  }, []);
+
+  const installed = agents?.filter((a) => a.installed) ?? [];
+  const missing = agents?.filter((a) => !a.installed) ?? [];
+  const current = agents?.find((a) => a.id === settings.agent);
 
   async function save(patch: Partial<AppSettings>) {
     setErr(null);
@@ -94,21 +102,16 @@ export function SettingsView({
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Preferences for this Mac. They apply to every video.
-        </p>
-      </div>
-
+    <div className="space-y-8">
       <section className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold">AI</h2>
             <p className="mt-1 max-w-prose text-sm text-muted-foreground">
               The AI that picks clips and writes titles, hooks and descriptions.
-              capy found {installed.length} on this Mac.
+              {agents
+                ? `capy found ${installed.length} on this computer.`
+                : "Looking for them on this computer…"}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -198,17 +201,27 @@ export function SettingsView({
         )}
       </section>
 
-      <AiRoutingSettings
-        settings={settings}
-        onSave={async (patch) => {
-          const result = await api<{ settings: AppSettings }>("/api/settings", {
-            method: "PUT",
-            body: JSON.stringify(patch),
-          });
-          setSettings(result.settings);
-          return result.settings;
-        }}
-      />
+      <details className="rounded-xl border bg-card p-5 shadow-sm">
+        <summary className="cursor-pointer font-semibold">
+          Advanced: which AI does which job
+        </summary>
+        <div className="mt-4">
+          <AiRoutingSettings
+            settings={settings}
+            onSave={async (patch) => {
+              const result = await api<{ settings: AppSettings }>(
+                "/api/settings",
+                {
+                  method: "PUT",
+                  body: JSON.stringify(patch),
+                },
+              );
+              setSettings(result.settings);
+              return result.settings;
+            }}
+          />
+        </div>
+      </details>
 
       {missing.length > 0 && (
         <section className="rounded-xl border bg-card p-5 shadow-sm">

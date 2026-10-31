@@ -45,7 +45,7 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
   await page.getByLabel("Crop x", { exact: true }).fill("0.1");
   await page.getByLabel("Crop width", { exact: true }).fill("0.8");
   await page.getByRole("button", { name: "Save edits", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   await page.reload();
   await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
     "LOCAL EDIT",
@@ -54,10 +54,10 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
     "0.8",
   );
   await page
-    .getByRole("combobox", { name: "Aspect preset", exact: true })
+    .getByRole("combobox", { name: "Shape", exact: true })
     .selectOption("portrait");
   await expect(page.getByRole("status")).toContainText(
-    "Preset recomposed locally",
+    "Shape changed",
   );
   await page.getByLabel("Frame time (seconds)", { exact: true }).fill("1.23");
   await page
@@ -74,7 +74,7 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
     .first()
     .click();
   await page.getByRole("button", { name: "Save edits", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   await page.getByLabel("Include text in download").uncheck();
   const png = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download PNG", exact: true }).click();
@@ -99,7 +99,7 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
     .click();
   expect((await zip).suggestedFilename()).toBe("capy-thumbnails.zip");
   await page
-    .getByRole("button", { name: "Regenerate background", exact: true })
+    .getByRole("button", { name: "Make a new background", exact: true })
     .click();
   await expect(
     page
@@ -110,18 +110,18 @@ test("no-account local edits, aspect reflow, downloads, history and exact attach
     "LOCAL EDIT",
   );
   await page
-    .getByRole("button", { name: "Approve thumbnail version", exact: true })
+    .getByRole("button", { name: "Approve this thumbnail", exact: true })
     .click();
   await expect(page.getByRole("status")).toContainText(
-    "Exact thumbnail version reviewed",
+    "Thumbnail approved",
   );
   await page
-    .getByLabel("Publish package", { exact: true })
+    .getByLabel("Post to use it on", { exact: true })
     .selectOption("browser-package");
   await page
-    .getByRole("button", { name: "Attach selected version", exact: true })
+    .getByRole("button", { name: "Use this version", exact: true })
     .click();
-  await expect(page.getByRole("status")).toContainText("needs a new approval");
+  await expect(page.getByRole("status")).toContainText("waiting for a new slot");
   const saved = await request.get("/api/thumbnails/browser-bold");
   expect(saved.ok()).toBe(true);
   expect((await saved.json()).history.length).toBe(4);
@@ -163,7 +163,7 @@ test("frame discovery preserves unsaved headline and crop", async ({
     "0.8",
   );
   await page.getByRole("button", { name: "Save edits", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   await page.reload();
   await expect(headline).toHaveValue("UNSAVED FRAME DRAFT");
   await expect(page.getByLabel("Crop width", { exact: true })).toHaveValue(
@@ -185,7 +185,7 @@ test("busy restore is blocked and cross-aspect restoration saves exact historica
   await page.getByLabel("Crop x", { exact: true }).fill("0.1");
   await page.getByLabel("Crop width", { exact: true }).fill("0.8");
   await page.getByRole("button", { name: "Save edits", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   const landscape: ThumbnailStudioDocument = (
     await (await request.get("/api/thumbnails/browser-minimal")).json()
   ).document;
@@ -195,10 +195,10 @@ test("busy restore is blocked and cross-aspect restoration saves exact historica
     )
   ).body();
   await page
-    .getByRole("combobox", { name: "Aspect preset", exact: true })
+    .getByRole("combobox", { name: "Shape", exact: true })
     .selectOption("portrait");
   await expect(page.getByRole("status")).toContainText(
-    "Preset recomposed locally",
+    "Shape changed",
   );
 
   let release!: () => void;
@@ -233,17 +233,17 @@ test("busy restore is blocked and cross-aspect restoration saves exact historica
   } finally {
     release();
   }
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   await page.unroute("**/api/thumbnails/browser-minimal");
   await restore.click();
   await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
     "HISTORICAL LANDSCAPE",
   );
   await expect(
-    page.getByRole("combobox", { name: "Aspect preset", exact: true }),
+    page.getByRole("combobox", { name: "Shape", exact: true }),
   ).toHaveValue("landscape");
   await page.getByRole("button", { name: "Save edits", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Saved locally");
+  await expect(page.getByRole("status")).toContainText("Saved.");
   await page.reload();
   await expect(page.getByLabel("Headline", { exact: true })).toHaveValue(
     "HISTORICAL LANDSCAPE",

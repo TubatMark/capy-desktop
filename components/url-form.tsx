@@ -11,7 +11,7 @@ import { api } from "@/hooks/use-job";
 import type { JobState, JobSettings } from "@/lib/types";
 import { DEFAULT_SETTINGS } from "@/lib/types";
 
-export function UrlForm({ large = false }: { large?: boolean }) {
+export function UrlForm() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,21 +35,20 @@ export function UrlForm({ large = false }: { large?: boolean }) {
   return (
     <form onSubmit={submit} className="w-full min-w-0">
       {/* input on its own row below sm; the button row then fills the width */}
-      <div className={large ? "flex flex-col gap-3 sm:flex-row" : "flex flex-wrap gap-2"}>
+      <div className="flex flex-wrap gap-2">
         <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="Paste a YouTube link…"
-          className={large ? "h-12 min-w-0 flex-1 text-base" : "min-w-0 flex-1"}
-          autoFocus={large}
+          className="min-w-52 flex-1"
           required
         />
         <div className="flex shrink-0 gap-2">
-          <Button type="button" variant="outline" size={large ? "lg" : "default"} className={large ? "px-3" : ""} onClick={() => setOpen((o) => !o)} aria-label="Clip settings" aria-expanded={open}>
+          <Button type="button" variant="outline" onClick={() => setOpen((o) => !o)} aria-label="Clip settings" aria-expanded={open}>
             <Settings2 />
           </Button>
           <AccessGate action="createJob">
-            <Button type="submit" size={large ? "lg" : "default"} className="flex-1" disabled={busy || !url.trim()}>
+            <Button type="submit" className="flex-1" disabled={busy || !url.trim()}>
               {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />}
               Make clips
             </Button>
@@ -97,7 +96,7 @@ export function UrlForm({ large = false }: { large?: boolean }) {
           <Field label="Auto-post" className="col-span-2 sm:col-span-3 lg:col-span-6">
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={s.autoPost !== false} onChange={(e) => setS({ ...s, autoPost: e.target.checked })} />
-              Rendered clips wait in Queue for your OK, then post to your connected accounts
+              Send finished clips to Short form. Clips from a pasted link post to your connected accounts once you approve them
             </label>
           </Field>
           <Field label="Focus (optional)" className="col-span-2 sm:col-span-3 lg:col-span-4">

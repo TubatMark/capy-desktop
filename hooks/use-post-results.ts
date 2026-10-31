@@ -1,7 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { MetricsRefresh } from "@/lib/performance";
-import type { JobState } from "@/lib/types";
 
 export type ResultsState = "loading" | "ready" | "disconnected" | "error";
 
@@ -56,16 +55,10 @@ export function useSourceChannels() {
   const [channels, setChannels] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     let live = true;
-    fetch("/api/jobs")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((jobs: JobState[]) => {
-        if (!live || !Array.isArray(jobs)) return;
-        const m = new Map<string, string>();
-        for (const j of jobs) {
-          const name = j.channel ?? j.automation?.channelName;
-          if (name) m.set(j.id, name);
-        }
-        setChannels(m);
+    fetch("/api/jobs/channels")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((r: { channels: Record<string, string> } | null) => {
+        if (live && r) setChannels(new Map(Object.entries(r.channels)));
       })
       .catch(() => {});
     return () => {

@@ -11,7 +11,7 @@ import { fmtSlot, useQueue } from "@/hooks/use-queue";
 import type { ContentReview, QueueEntry } from "@/lib/types";
 
 const LABEL: Record<QueueEntry["status"], string> = {
-  review: "waiting for your OK",
+  review: "waiting for a slot",
   scheduled: "scheduled",
   posting: "posting now",
   posted: "posted",
@@ -20,9 +20,9 @@ const LABEL: Record<QueueEntry["status"], string> = {
   rejected: "rejected",
 };
 
-/** This clip's posting: its own slot and status per platform, or Approve/Reject while it waits for review. */
+/** This clip's posting: its own slot and status per platform, or Approve/Reject while it waits for a slot. */
 export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; review?: ContentReview }) {
-  const { data, refresh } = useQueue();
+  const { data, refresh } = useQueue({ jobId, n });
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const mine = data?.entries.filter((e) => e.jobId === jobId && e.n === n && e.status !== "rejected") ?? [];
@@ -47,9 +47,9 @@ export function ClipPosting({ jobId, n, review }: { jobId: string; n: number; re
       {waiting.length > 0 ? (
         <>
           <p className="text-sm text-muted-foreground">
-            Approve to schedule{data.nextFree ? ` (next free: ${fmtSlot(data.nextFree, tz)})` : ""}. Edit the text per platform in{" "}
+            Clips from watched channels get a slot by themselves once every check passes. Approve to schedule it yourself{data.nextFree ? ` (next free: ${fmtSlot(data.nextFree, tz)})` : ""}. Edit the text per platform in{" "}
             <Link href="/short-form" className="underline underline-offset-2">
-              Queue
+              Short form
             </Link>
             .
           </p>

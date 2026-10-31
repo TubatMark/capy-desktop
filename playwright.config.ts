@@ -25,7 +25,7 @@ export default defineConfig({
   },
   webServer: {
     command: "node test/fixtures/studio-server.mjs",
-    url: "http://127.0.0.1:3031/studio",
+    url: "http://127.0.0.1:3031/settings",
     reuseExistingServer: false,
     timeout: 120000,
     env: {

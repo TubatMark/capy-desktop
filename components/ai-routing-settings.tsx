@@ -136,7 +136,7 @@ export function AiRoutingSettings({
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        Limits include retries, configured escalation, Stories and explicit
+        Limits include retries, configured escalation and explicit
         diagnostics. Application admission bounds run/turn allowances and
         reserves token allowance; provider-internal requests and tokens can
         exceed that allowance. Unknown CLI costs retain their USD allowance; SDK

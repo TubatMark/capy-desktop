@@ -20,7 +20,7 @@ const LEVEL_WORD: Record<SimilarityLevel, string> = {
   distinct: "Different",
 };
 const STATE_WORD: Record<string, string> = {
-  waiting: "Waiting for your OK",
+  waiting: "Waiting for a slot",
   scheduled: "Scheduled",
   posted: "Posted",
   rejected: "Rejected",

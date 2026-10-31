@@ -267,7 +267,7 @@ export async function prepareRenderReview(
     clipTitle: current.name ?? "Studio project",
     videoTitle: current.name ?? "Studio project",
     videoUrl: mediaUrl(artifact.path, deps.root),
-    link: `/studio/${projectId}`,
+    link: "/short-form",
     publicationFiles: { file: artifact.path },
     text,
     attempts: 0,

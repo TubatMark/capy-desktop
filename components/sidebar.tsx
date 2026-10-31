@@ -93,7 +93,7 @@ export function AppSidebar() {
   useEffect(() => setShortcut(isMac() ? "⌘B" : "Ctrl B"), []);
   useEffect(() => setDrawer(false), [path]);
 
-  const counts: Record<string, number | undefined> = { "/todo": summary?.todo || undefined, "/short-form": summary?.review || undefined, "/automation": summary?.watching || undefined };
+  const counts: Record<string, number | undefined> = { "/todo": summary?.todo || undefined, "/short-form": summary?.review || undefined };
 
   return (
     <Tooltip.Provider delayDuration={300} skipDelayDuration={0}>
@@ -132,7 +132,7 @@ export function AppSidebar() {
             <Mark className="size-7" />
             <Wordmark className="h-6" />
           </Link>
-          <Link href="/short-form" className="no-drag relative ml-auto grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-accent" aria-label={summary?.review ? `Queue: ${summary.review} waiting for your OK` : "Queue"}>
+          <Link href="/short-form" className="no-drag relative ml-auto grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-accent" aria-label={summary?.review ? `Short form: ${summary.review} waiting` : "Short form"}>
             <Smartphone className="size-5" />
             {!!summary?.review && <Count n={summary.review} urgent dot />}
           </Link>
@@ -169,7 +169,7 @@ function NavGroups({ path, counts, collapsed }: { path: string; counts: Record<s
       {/* on the folded rail the heading becomes a thin divider */}
       {g.label && (collapsed ? <hr className="mx-2 mb-1 border-border/60" /> : <p className="sb-label px-3 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">{g.label}</p>)}
       {g.items.map((item) => (
-        <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/queue" || item.href === "/todo"} collapsed={collapsed} />
+        <NavItem key={item.href} item={item} active={isActive(item, path)} count={counts[item.href]} urgent={item.href === "/short-form" || item.href === "/todo"} collapsed={collapsed} />
       ))}
     </div>
   ));
@@ -177,7 +177,7 @@ function NavGroups({ path, counts, collapsed }: { path: string; counts: Record<s
 
 function NavItem({ item, active, count, urgent, collapsed }: { item: Item; active: boolean; count?: number; urgent?: boolean; collapsed: boolean }) {
   const Icon = item.icon;
-  const hint = count ? (item.href === "/todo" ? `${count} to do` : urgent ? `${count} waiting for your OK` : `${count} watched`) : undefined;
+  const hint = count ? (item.href === "/todo" ? `${count} to do` : `${count} waiting`) : undefined;
   return (
     <Tip show={collapsed} label={item.label} hint={hint}>
       <Link href={item.href} aria-current={active ? "page" : undefined} className={cn("sb-item no-drag relative", active ? "sb-active" : "text-muted-foreground")}>
