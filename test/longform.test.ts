@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeFor, nextFormat, liveTimes, philippineTime as pht, PUBLISH_HOLD_MS, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
+import { badgeFor, longVideoNeedsOwner, nextFormat, liveTimes, philippineTime as pht, PUBLISH_HOLD_MS, AUTO_HOLD_MS, AUTO_UPLOAD_GAP_MS, DEFAULT_AUTOPILOT, MAX_WAITING_VIDEOS, autopilotActions, DEFAULT_SLOTS, MAX_PER_WEEKEND, creatorName, easternTime, nextOccurrence, philippineTime, rankValue, recommendSlot, slotResults, weekendKey } from "../lib/longform";
 import { hideChat, assText, captionGroups, chapterLines, maskSlurs, cardArgs, clipArgs, concatList, keepRanges, mapTime, rangesLength, readProblems, wordsInCut } from "../src/longform/edit";
 
 const word = (text: string, start: number, end: number) => ({ text, start, end });
@@ -107,6 +107,9 @@ describe("autopilot", () => {
     const off = { ...DEFAULT_AUTOPILOT, draft: false };
     expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: [] } })], [], off, NOW)).toEqual([{ kind: "fix", id: "a" }]);
     expect(autopilotActions([good], [], off, NOW)).toEqual([{ kind: "upload", id: "a" }]);
+    const held = video({ master: "m", fixTried: true, check: { ok: false, warnings: [], script: { verdict: "caution", serious: true, notes: ["n"] } } });
+    expect(autopilotActions([held], [], off, NOW)).toEqual([]);
+    expect(longVideoNeedsOwner(held)).toBe("script");
     expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: ["no sound"] } })], [], off, NOW)).toEqual([]);
     const recent = video({ id: "b", status: "private", uploadStartedAt: NOW - AUTO_UPLOAD_GAP_MS + 1 });
     expect(autopilotActions([good, recent], [], off, NOW)).toEqual([]);

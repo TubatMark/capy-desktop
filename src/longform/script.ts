@@ -30,8 +30,10 @@ export type LongScript = z.infer<typeof ScriptSchema>;
 
 const ReviewSchema = z.object({
   verdict: z.enum(["ok", "caution"]),
+  serious: z.boolean().describe("True only for a claim about a real person that the script gives no support for and that they could fairly object to, or the host reversing a judgement. Weak wording, repetition, label mix-ups and opinions about how someone comes across are never serious"),
   notes: z.array(z.string()).describe("What to fix, at most 4 short notes; empty when ok"),
 });
+export type ScriptReview = z.infer<typeof ReviewSchema>;
 
 /** `clips` run from the lowest rank to number one. */
 export function scriptPrompt(creator: string, clips: (LongClip & { excerpt: string })[], format: LongFormat = "countdown"): string {
@@ -140,8 +142,25 @@ export async function pickCovers(files: string[], title: string): Promise<{ inde
 export async function reviewScript(script: LongScript, o: AiOpts) {
   const res = await askAgent(
     o.agent,
-    `Review this countdown script for YouTube. "caution" if the host mostly describes the clips rather than adding opinion and comparison, contradicts themself between lines, or says anything about a real person that sounds invented or unfair.\n\nIntro: ${script.intro}\n${script.lines.map((l) => `#${l.rank}: ${l.line}`).join("\n")}\nOutro: ${script.outro}`,
-    { task: "review", model: o.model, maxTurns: 2, effort: "low", system: "You are a careful editor. Answer only with the requested JSON.", schema: schemaOf(ReviewSchema) },
+    `Review this countdown script for YouTube. "caution" if the host mostly describes the clips rather than adding opinion and comparison, contradicts themself between lines, or says anything about a real person that sounds invented or unfair. The outro is meant to name a moment the host would move in the ranking, so that isn't a contradiction.\n\nIntro: ${script.intro}\n${script.lines.map((l) => `#${l.rank}: ${l.line}`).join("\n")}\nOutro: ${script.outro}`,
+    { task: "review", context: o.context, model: o.model, maxTurns: 2, effort: "low", system: "You are a careful editor. Answer only with the requested JSON.", schema: schemaOf(ReviewSchema) },
   );
   return ReviewSchema.parse(res.data);
+}
+
+/**
+ * Two AIs read the script on their own. Either one's notes get the rewrite, but only both calling it serious holds the
+ * video: on real scripts one AI alone called most of them serious, which would stop a pipeline meant to run by itself.
+ * One AI being unavailable leaves the other's review standing; both failing throws.
+ */
+export async function reviewScriptTwice(script: LongScript, first: AiOpts, second: AiOpts): Promise<ScriptReview> {
+  const [a, b] = await Promise.allSettled([reviewScript(script, first), reviewScript(script, second)]);
+  const reads = [a, b].flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  if (!reads.length) throw new Error("Neither AI could review the script");
+  const unhappy = reads.filter((r) => r.verdict === "caution");
+  return {
+    verdict: unhappy.length ? "caution" : "ok",
+    serious: reads.length === 2 && reads.every((r) => r.verdict === "caution" && r.serious),
+    notes: unhappy.flatMap((r) => r.notes),
+  };
 }

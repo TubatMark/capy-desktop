@@ -309,6 +309,12 @@ export function routingFor(
   };
 }
 
+/** The other AI's options, for a review that has to come from someone other than the one who wrote it. */
+export function secondOpinion(agent: string) {
+  const other: SimilarityAgent = agent === "codex" ? "claude" : "codex";
+  return { agent: other, context: { settings: routingFor(other) } };
+}
+
 /** Why an AI couldn't give its opinion, in words for the card. */
 export function unavailableReason(agent: SimilarityAgent, e: unknown): string {
   const name = SIMILARITY_AGENT_NAME[agent];

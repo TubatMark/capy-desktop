@@ -6,7 +6,8 @@ import { detectEncoder } from "../../src/render";
 import { run } from "../../src/exec";
 import { assembleArgs, candidateArgs, cardArgs, cardAss, chapterLines, clipArgs, clipAss, concatList, keepRanges, rangesLength, readProblems, thumbArgs, thumbAss, wordsInCut, type Range } from "../../src/longform/edit";
 import { speak } from "../../src/longform/narrate";
-import { pickCovers, reviewScript, reviseScript, screenClips, writeScript, type LongScript } from "../../src/longform/script";
+import { pickCovers, reviewScriptTwice, reviseScript, screenClips, writeScript, type LongScript, type ScriptReview } from "../../src/longform/script";
+import { secondOpinion } from "../similarity";
 import { getAccessToken, loadAccounts } from "../accounts";
 import { loadSnapshot } from "../channel";
 import { OUTPUT_ROOT } from "../paths";
@@ -104,14 +105,15 @@ async function plan(v: LongVideo): Promise<Step> {
   const screened = await screenPicks(v, screenedOut);
   const withWords = screened.map(excerpt);
   let script: LongScript = await writeScript(v.creator, withWords, ai(), v.format);
-  const reviewFailed = { verdict: "caution" as const, notes: ["The automatic script review couldn't run"] };
-  let review = await reviewScript(script, ai()).catch(() => reviewFailed);
+  const reviewFailed: ScriptReview = { verdict: "caution", serious: false, notes: ["The automatic script review couldn't run"] };
+  const review2 = (s: LongScript) => reviewScriptTwice(s, ai(), secondOpinion(ai().agent)).catch(() => reviewFailed);
+  let review: ScriptReview = await review2(script);
   let fixTried = v.fixTried;
   if (review.verdict === "caution" && review !== reviewFailed) {
     fixTried = true;
     patchVideo(v.id, { step: "Fixing the review's notes" });
     script = await reviseScript(v.creator, withWords, script, review.notes, ai(), v.format);
-    review = await reviewScript(script, ai()).catch(() => reviewFailed);
+    review = await review2(script);
   }
   const clips = screened.map((c, i) => {
     const spoken = script.lines.find((l) => l.rank === screened.length - i)!;
