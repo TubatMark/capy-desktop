@@ -49,6 +49,7 @@ The host has to add something a viewer can't get from the clips alone, because a
 - Every line needs a verdict you could defend: why this beats the one below it. If someone could write the line just by watching the clip, rewrite it.
 - Never just describe what's about to happen, and don't spoil the punchline.
 - Say only what the clips support. Don't invent facts, motives, quotes or background about real people.
+- Stay consistent: one host with one view of these moments, from the intro to the outro.
 - Sound like a person talking: short sentences, no hype words like "insane" or "you won't believe".
 - If a moment touches something serious, treat it with care and don't joke about it.
 - Never claim to have watched more than these clips, or to have been there.
@@ -139,7 +140,7 @@ export async function pickCovers(files: string[], title: string): Promise<{ inde
 export async function reviewScript(script: LongScript, o: AiOpts) {
   const res = await askAgent(
     o.agent,
-    `Review this countdown script for YouTube. "caution" if the host mostly describes the clips rather than adding opinion and comparison, or says anything about a real person that sounds invented or unfair.\n\nIntro: ${script.intro}\n${script.lines.map((l) => `#${l.rank}: ${l.line}`).join("\n")}\nOutro: ${script.outro}`,
+    `Review this countdown script for YouTube. "caution" if the host mostly describes the clips rather than adding opinion and comparison, contradicts themself between lines, or says anything about a real person that sounds invented or unfair.\n\nIntro: ${script.intro}\n${script.lines.map((l) => `#${l.rank}: ${l.line}`).join("\n")}\nOutro: ${script.outro}`,
     { task: "review", model: o.model, maxTurns: 2, effort: "low", system: "You are a careful editor. Answer only with the requested JSON.", schema: schemaOf(ReviewSchema) },
   );
   return ReviewSchema.parse(res.data);

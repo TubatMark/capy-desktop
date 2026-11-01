@@ -29,6 +29,7 @@ What is said: ${o.excerpt}
 ${o.others?.length ? `\nOther recent moments from ${o.creator}, to compare with if it helps:\n${o.others.map((t) => `- ${t}`).join("\n")}\n` : ""}
 Write what the host says. Take a real side that a viewer could argue with in the comments, not a safe observation. YouTube doesn't count a voice-over that describes the screen as original, so never narrate what's happening. Argue something, predict something, rank it against other moments, or say what it shows about ${o.creator}. If someone could write your line just by watching this clip, it isn't good enough.
 - Say only what the clip supports. Don't invent facts, motives or background about real people, and don't state what someone privately feels as fact.
+- All three lines are one person's view from start to finish: never praise something and then call it dumb.
 - Don't spoil the punchline in the opening.
 - Sound like a person talking: short, plain, no hype words like "insane" or "you won't believe".`;
 }
@@ -42,12 +43,14 @@ export const fitsLength = (c: ShortCommentary) => words(c.opening) <= MAX_OPENIN
 
 const GateSchema = z.object({
   adds: z.boolean().describe("True if the lines give an opinion, comparison or prediction, not just a description of the clip"),
-  why: z.string().describe("If not, what's missing, in one sentence"),
+  consistent: z.boolean().describe("True if all three lines could come from one person holding one view. False if any line contradicts another, like calling the same thing smart and then dumb"),
+  why: z.string().describe("If either is false, what's wrong, in one sentence"),
 });
+export type CommentaryGate = z.infer<typeof GateSchema>;
 
-/** A second read: would YouTube's "not just describing the screen" test pass? */
-export async function commentaryAdds(c: ShortCommentary, title: string, ai: AiOpts): Promise<{ adds: boolean; why: string }> {
-  const res = await askAgent(ai.agent, `A clips channel's host says these lines about "${title}". Do they add a real opinion, comparison or prediction, or could anyone write them just by watching the clip?\n\nOpening: ${c.opening}\nMiddle: ${c.middle}\nVerdict: ${c.verdict}`, {
+/** A second read: is it more than describing the screen, and does the host agree with themself? */
+export async function checkCommentary(c: ShortCommentary, title: string, ai: AiOpts): Promise<CommentaryGate> {
+  const res = await askAgent(ai.agent, `A clips channel's host says these three lines, in this order, about "${title}". Do they add a real opinion, comparison or prediction, or could anyone write them just by watching the clip? And do they all hold the same view, or does the host contradict themself? Changing focus is fine; reversing a judgement is not.\n\nOpening: ${c.opening}\nMiddle: ${c.middle}\nVerdict: ${c.verdict}`, {
     task: "review",
     model: ai.model,
     maxTurns: 2,
@@ -58,12 +61,23 @@ export async function commentaryAdds(c: ShortCommentary, title: string, ai: AiOp
   return GateSchema.parse(res.data);
 }
 
-/** Write the lines; if they only describe the clip, once more with the editor's note. */
+const REWRITES = 2;
+
+/**
+ * Write the lines, and rewrite with the editor's note if they fall short. Lines that still only describe the clip beat no
+ * commentary, but a host who contradicts themself sounds broken, so that throws and the clip stays plain.
+ */
 export async function writeCheckedCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts): Promise<ShortCommentary> {
-  const first = await writeCommentary(o, ai);
-  const gate = await commentaryAdds(first, o.title, ai).catch(() => ({ adds: true, why: "" }));
-  if (gate.adds) return first;
-  return writeCommentary(o, ai, `An editor rejected your last try: ${gate.why}`).catch(() => first);
+  let lines = await writeCommentary(o, ai);
+  // the check itself failing says nothing about the lines
+  const check = (c: ShortCommentary) => checkCommentary(c, o.title, ai).catch((): CommentaryGate => ({ adds: true, consistent: true, why: "" }));
+  let gate = await check(lines);
+  for (let i = 0; i < REWRITES && !(gate.adds && gate.consistent); i++) {
+    lines = await writeCommentary(o, ai, `An editor rejected your last try: ${gate.why}`);
+    gate = await check(lines);
+  }
+  if (!gate.consistent) throw new Error(`The host's lines contradict each other: ${gate.why}`);
+  return lines;
 }
 
 export async function writeCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts, note?: string): Promise<ShortCommentary> {
