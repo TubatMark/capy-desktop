@@ -45,9 +45,11 @@ vi.mock("../src/translate", async (orig) => ({
   translatePhrases: (...a: unknown[]) => translatePhrases(...a),
 }));
 const reviewContent = vi.fn();
+const applyReviewNotes = vi.fn();
 vi.mock("../src/content-review", async (orig) => ({
   ...(await orig<typeof import("../src/content-review")>()),
   reviewContent: (...a: unknown[]) => reviewContent(...a),
+  applyReviewNotes: (...a: unknown[]) => applyReviewNotes(...a),
 }));
 vi.mock("../src/pipeline", async (orig) => ({
   ...(await orig<typeof import("../src/pipeline")>()),
@@ -199,6 +201,7 @@ const enFor = (phrases: { i: number; start: number; end: number }[]) =>
   phrases.map((p) => ({ text: `EN${p.i}`, start: p.start, end: p.end }));
 
 beforeEach(() => {
+  applyReviewNotes.mockReset();
   reviewContent.mockReset();
   reviewContent.mockResolvedValue({
     verdict: "ok",
@@ -396,6 +399,32 @@ describe("automation jobs", () => {
     expect(jobs().get(job.id)!.clips[0]!.contentReview).toMatchObject({
       verdict: "ok",
     });
+  });
+  it.each([
+    ["applies", {}, true],
+    ["leaves the owner's own words alone", { edited: true }, false],
+  ])("%s when a reviewer leaves notes", async (_name, extra, applied) => {
+    reviewContent.mockImplementation(async (_i: unknown, o: { agent: string }) => ({
+      verdict: "caution",
+      summary: "s",
+      issues: o.agent === "codex" ? [{ kind: "misleading", note: "codex note" }] : [],
+      at: 1,
+    }));
+    applyReviewNotes.mockResolvedValue({ ytTitle: "Fixed", description: "d", hashtags: [] });
+    const job = await seedJob(
+      [clip(1, 100, 140, { publish: { ytTitle: "Old", description: "o", hashtags: [], ...extra } })],
+      { automation: { channelId: "UC1", channelName: "Creator" }, settings: original },
+    );
+    watching(job.id);
+    await jobs().onReady(job);
+    await vi.waitFor(() => expect(jobs().get(job.id)!.clips[0]!.render.status).toBe("done"), { timeout: 5000 });
+    const c = jobs().get(job.id)!.clips[0]!;
+    expect(applyReviewNotes.mock.calls.length).toBe(applied ? 1 : 0);
+    if (applied) {
+      expect(applyReviewNotes.mock.calls[0]![2]).toEqual(["codex note"]);
+      expect(applyReviewNotes.mock.calls[0]![3]).toMatchObject({ agent: "claude" });
+      expect(c.publish?.ytTitle).toBe("Fixed");
+    } else expect(c.publish?.ytTitle).toBe("Old");
   });
   it("a new automation video is durable before metadata and remains recoverable after a failure", async () => {
     watching("newvideo001");

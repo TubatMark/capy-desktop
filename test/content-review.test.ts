@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { buildContentPrompt, normalizeContentReview, reviewUnavailable } from "../src/content-review";
+import { describe, expect, it, vi } from "vitest";
+const agents = vi.hoisted(() => ({ askAgent: vi.fn() }));
+vi.mock("../src/agents", () => agents);
+import { applyReviewNotes, buildContentPrompt, normalizeContentReview, reviewUnavailable } from "../src/content-review";
 
 describe("normalizeContentReview", () => {
   it("keeps a valid review and stamps the time", () => {
@@ -47,5 +49,24 @@ describe("kids profile", () => {
     expect(p).toMatch(/made for kids/i);
     expect(p).toMatch(/scary|imitate/i);
     expect(p).not.toMatch(/credit to the original creator/i);
+  });
+});
+
+describe("applyReviewNotes", () => {
+  const text = { ytTitle: "Old #shorts", description: "What happens\nCredit: DDG", hashtags: ["ddg"] };
+  const input = { videoTitle: "v", channel: "DDG", transcript: "words" };
+  const fixed = { ytTitle: "New #shorts", description: "Fixed\nCredit: DDG", hashtags: ["ddg"] };
+
+  it("sends every note to the writer and returns the corrected text", async () => {
+    agents.askAgent.mockResolvedValue({ data: fixed });
+    expect(await applyReviewNotes(input, text, ["the caption oversells it"], { agent: "claude" })).toEqual(fixed);
+    expect(agents.askAgent.mock.calls.at(-1)![0]).toBe("claude");
+    expect(agents.askAgent.mock.calls.at(-1)![1]).toContain("the caption oversells it");
+  });
+  it("refuses text that lost the credit line or the title", async () => {
+    agents.askAgent.mockResolvedValue({ data: { ...fixed, description: "Fixed" } });
+    await expect(applyReviewNotes(input, text, ["n"], { agent: "claude" })).rejects.toThrow(/credit/);
+    agents.askAgent.mockResolvedValue({ data: { ...fixed, ytTitle: " " } });
+    await expect(applyReviewNotes(input, text, ["n"], { agent: "claude" })).rejects.toThrow(/title/);
   });
 });

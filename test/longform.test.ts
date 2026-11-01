@@ -103,7 +103,9 @@ describe("autopilot", () => {
   });
 
   it("fixes a script with notes once, then uploads it, at most one a day", () => {
-    const good = video({ master: "m", fixTried: true, check: { ok: false, warnings: [], script: { verdict: "caution", notes: ["n"] } } });
+    const good = video({ master: "m", fixTried: true, check: { ok: false, warnings: [], script: { verdict: "caution", serious: false, notes: ["n"] } } });
+    const once = video({ master: "m", fixTried: true, check: { ok: true, warnings: [], script: { verdict: "ok", notes: [] } } });
+    expect(autopilotActions([once], [], { ...DEFAULT_AUTOPILOT, draft: false }, NOW)).toEqual([{ kind: "fix", id: "a" }]);
     const off = { ...DEFAULT_AUTOPILOT, draft: false };
     expect(autopilotActions([video({ master: "m", check: { ok: false, warnings: [] } })], [], off, NOW)).toEqual([{ kind: "fix", id: "a" }]);
     expect(autopilotActions([good], [], off, NOW)).toEqual([{ kind: "upload", id: "a" }]);

@@ -26,6 +26,8 @@ const ai = () => {
   const app = effective();
   return { agent: app.agent, model: app.agent === "claude" ? app.model : app.models[app.agent] };
 };
+/** The writer acts on both AIs' notes; a note can survive one pass, so it gets a second. */
+const SCRIPT_REWRITES = 2;
 const key = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 const rel = (abs: string) => path.relative(OUTPUT_ROOT, abs);
 const footage = (c: LongClip) => path.join(OUTPUT_ROOT, c.file);
@@ -109,7 +111,7 @@ async function plan(v: LongVideo): Promise<Step> {
   const review2 = (s: LongScript) => reviewScriptTwice(s, ai(), secondOpinion(ai().agent)).catch(() => reviewFailed);
   let review: ScriptReview = await review2(script);
   let fixTried = v.fixTried;
-  if (review.verdict === "caution" && review !== reviewFailed) {
+  for (let i = 0; i < SCRIPT_REWRITES && review.verdict === "caution" && review !== reviewFailed; i++) {
     fixTried = true;
     patchVideo(v.id, { step: "Fixing the review's notes" });
     script = await reviseScript(v.creator, withWords, script, review.notes, ai(), v.format);

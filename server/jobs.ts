@@ -80,6 +80,7 @@ import { publicAccounts } from "./accounts";
 import { markHistory, watch } from "./watch";
 
 import {
+  applyReviewNotes,
   combineReviews,
   reviewContent,
   reviewUnavailable,
@@ -1912,6 +1913,13 @@ class JobManager extends EventEmitter {
           "render",
           `clip ${c.n} AI review: ${c.contentReview.verdict}${c.contentReview.summary ? ` (${c.contentReview.summary})` : ""}`,
         );
+        await this.applyReview(job, c, words).catch((e) =>
+          this.log(
+            job,
+            "render",
+            `clip ${c.n} review notes not applied: ${e instanceof Error ? e.message : String(e)}`,
+          ),
+        );
       }
       if (qualityChecksum && c.contentReview)
         recordSupplementaryReview(qualityChecksum, c.contentReview);
@@ -2159,6 +2167,28 @@ class JobManager extends EventEmitter {
       ].join("\n"),
       "utf8",
     ).catch(() => {});
+  }
+
+  /** Claude corrects the upload text from both reviewers' notes. The owner's own words and blocked clips stay as they are. */
+  private async applyReview(job: JobState, c: ClipState, captionWords: Word[]) {
+    const review = c.contentReview;
+    if (!review || !c.publish || c.publish.edited) return;
+    if (review.unavailable || review.verdict === "block" || !review.issues.length) return;
+    const app = effective();
+    const fixed = await applyReviewNotes(
+      {
+        videoTitle: job.title ?? "",
+        channel: job.channel,
+        transcript: cleanCaptionWords(wordsInRange(captionWords, c.start, c.end))
+          .map((w) => w.text)
+          .join(" "),
+      },
+      c.publish,
+      review.issues.map((i) => i.note),
+      { agent: "claude", model: app.agent === "claude" ? app.model : undefined },
+    );
+    c.publish = { ...c.publish, ...fixed };
+    this.log(job, "render", `clip ${c.n} upload text corrected from the review's notes`);
   }
 
   /** The AI content reviewer on a finished clip: what viewers read, what it's posted with, and the original words. */
