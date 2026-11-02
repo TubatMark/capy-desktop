@@ -4,6 +4,7 @@ import { run } from "./exec";
 import { buildAss, STYLES, styleFor, type HookSpec } from "./ass";
 import type { Word } from "./types";
 import { vibeById, type Look, type VibeId } from "../lib/look";
+import { cueInputs, mixCues, type Cue } from "./sfx";
 
 export interface RenderOpts {
   /** "center" crops the middle third; "blur" letterboxes over a blurred copy. */
@@ -17,6 +18,8 @@ export interface RenderOpts {
   look?: Look;
   /** Cut this window out of the input (seconds from the input's start). Omit to use the whole file. */
   trim?: { start: number; duration: number };
+  /** Sound effects over the clip's own sound (times are from the output's start). */
+  cues?: Cue[];
   /** Progress callback with seconds of output encoded so far. */
   onProgress?: (outSec: number) => void;
 }
@@ -75,6 +78,12 @@ export async function probeVideo(file: string): Promise<{ width: number; height:
   return { width: s.width ?? 1920, height: s.height ?? 1080, fps: den ? num! / den : 30 };
 }
 
+/** Whether a file has any sound to lay effects over. */
+export async function hasAudio(file: string): Promise<boolean> {
+  const { stdout } = await run("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", file]);
+  return stdout.trim() !== "";
+}
+
 /** How much the source gets enlarged to fill 1080x1920 (>1 means upscaling). */
 export function upscaleFactor(src: { width: number; height: number }, layout: RenderOpts["layout"]): number {
   const cover = Math.max(1080 / src.width, 1920 / src.height);
@@ -115,6 +124,10 @@ export async function renderClip(
   if (useSubs) filter += `,ass=filename=${escapeFilterPath(path.basename(assPath))}`;
   if (src.fps > 61) filter += ",fps=60"; // keep 60fps motion, cap anything higher
   filter += ",format=yuv420p[v]";
+  // Shorts play at about -14 LUFS; a quiet clip sounds weak next to the one before it in the feed
+  const loudness = "loudnorm=I=-14:TP=-1.5:LRA=11";
+  const cues = o.cues?.length && (await hasAudio(input)) ? o.cues : [];
+  if (cues.length) filter += `;[0:a]${loudness},aresample=48000[clipa];${mixCues("clipa", "a", cues, 1)}`;
 
   const vcodec =
     enc === "h264_videotoolbox"
@@ -132,16 +145,15 @@ export async function renderClip(
     ...trim,
     "-i",
     input,
+    ...cueInputs(cues),
     "-filter_complex",
     filter,
     "-map",
     "[v]",
     "-map",
-    "0:a?",
+    cues.length ? "[a]" : "0:a?",
     ...vcodec,
-    // Shorts play at about -14 LUFS; a quiet clip sounds weak next to the one before it in the feed
-    "-af",
-    "loudnorm=I=-14:TP=-1.5:LRA=11",
+    ...(cues.length ? [] : ["-af", loudness]),
     "-c:a",
     "aac",
     "-b:a",

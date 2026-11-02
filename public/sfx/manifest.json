@@ -1,0 +1,33 @@
+{
+  "note": "Original SFXMint files, unchanged. Every sound here must be CC0 with a source link.",
+  "sounds": [
+    {
+      "id": "whoosh",
+      "file": "whoosh.wav",
+      "license": "CC0-1.0",
+      "source": "https://sfxmint.com/sounds/throw-whoosh-04",
+      "sha256": "ed60d8bc7ff3a789367aea6009bfb550fd25907f3f53034337505e342b001c4c"
+    },
+    {
+      "id": "impact",
+      "file": "impact.wav",
+      "license": "CC0-1.0",
+      "source": "https://sfxmint.com/sounds/bass-drop-01",
+      "sha256": "178cb4b6aad929eda7deb54e89f3b4c5ea053f1040b8a1737ccf7ff295633197"
+    },
+    {
+      "id": "riser",
+      "file": "riser.wav",
+      "license": "CC0-1.0",
+      "source": "https://sfxmint.com/sounds/transition-riser-01",
+      "sha256": "d9b77a06e8f011caeace75abe5638d28164695b7ae5f58109291e942bed57f32"
+    },
+    {
+      "id": "drone",
+      "file": "drone.wav",
+      "license": "CC0-1.0",
+      "source": "https://sfxmint.com/sounds/tension-drone-01",
+      "sha256": "8b65b5f580cdc4ef95a1dad9c5c1c4c21040fb2eed1e1fff89c52a582f3cf4bc"
+    }
+  ]
+}

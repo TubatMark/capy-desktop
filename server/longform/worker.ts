@@ -6,6 +6,7 @@ import { detectEncoder } from "../../src/render";
 import { run } from "../../src/exec";
 import { assembleArgs, candidateArgs, cardArgs, cardAss, chapterLines, clipArgs, clipAss, concatList, keepRanges, rangesLength, readProblems, thumbArgs, thumbAss, wordsInCut, type Range } from "../../src/longform/edit";
 import { speak } from "../../src/longform/narrate";
+import { sectionCues } from "../../src/sfx";
 import { pickCovers, reviewScript, reviseScript, screenClips, writeScript, type LongScript } from "../../src/longform/script";
 import { getAccessToken, loadAccounts } from "../accounts";
 import { loadSnapshot } from "../channel";
@@ -156,7 +157,8 @@ const seconds = async (file: string) => {
   return Number(stdout.trim());
 };
 
-async function renderSection(v: LongVideo, s: Section, out: string) {
+async function renderSection(v: LongVideo, s: Section, out: string, next?: Section) {
+  const effects = effective().soundEffects;
   const dir = path.dirname(out);
   const assName = `${s.name}.ass`;
   const enc = await detectEncoder("auto");
@@ -167,7 +169,7 @@ async function renderSection(v: LongVideo, s: Section, out: string) {
     const total = (await seconds(speech)) + LEAD + TAIL;
     writeFileSync(path.join(dir, assName), cardAss({ badge: s.badge, format: v.format, title: s.title, line: s.line, seconds: total, credit: s.credit }));
     const w = clipWindow(s.clip);
-    await run("ffmpeg", cardArgs({ footage: footage(s.clip), offset: w.start - s.clip.segStart, narration: speech, seconds: total, lead: LEAD, ass: assName, out: temp, enc }), { cwd: dir });
+    await run("ffmpeg", cardArgs({ footage: footage(s.clip), offset: w.start - s.clip.segStart, narration: speech, seconds: total, lead: LEAD, ass: assName, out: temp, enc, cues: effects ? sectionCues({ kind: "card", name: s.name, seconds: total }) : [] }), { cwd: dir });
   } else {
     const words = wordsFor(s.clip);
     const w = clipWindow(s.clip);
@@ -178,7 +180,7 @@ async function renderSection(v: LongVideo, s: Section, out: string) {
       ? clipAss({ title: "Coming up", credit: `Source: ${s.clip.channel}`, seconds: total, words: on })
       : clipAss({ badge: s.badge, title: s.clip.title, credit: `Source: ${s.clip.channel}`, seconds: total, words: on });
     writeFileSync(path.join(dir, assName), ass);
-    await run("ffmpeg", clipArgs({ footage: footage(s.clip), ranges: toFootage(cut, s.clip), ass: assName, out: temp, enc }), { cwd: dir });
+    await run("ffmpeg", clipArgs({ footage: footage(s.clip), ranges: toFootage(cut, s.clip), ass: assName, out: temp, enc, cues: effects ? sectionCues({ kind: s.kind, name: s.name, seconds: total, lastTeaser: next?.kind !== "teaser" }) : [] }), { cwd: dir });
   }
   await run("mv", [temp, out]);
 }
@@ -190,7 +192,7 @@ async function render(v: LongVideo, index: number): Promise<Step> {
   mkdirSync(dir, { recursive: true });
   patchVideo(v.id, { status: "rendering", step: `Editing ${index + 1} of ${all.length}`, progress: index / all.length, error: undefined, failedStep: undefined });
   const out = path.join(dir, `${pad(index)}-${s.name}.mp4`);
-  if (!existsSync(out)) await renderSection(v, s, out);
+  if (!existsSync(out)) await renderSection(v, s, out, all[index + 1]);
   return index + 1 < all.length ? { id: v.id, step: "render", index: index + 1 } : { id: v.id, step: "assemble" };
 }
 

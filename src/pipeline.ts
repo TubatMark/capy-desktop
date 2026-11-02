@@ -22,6 +22,7 @@ import {
   type RenderOpts,
 } from "./render";
 import { transcribe } from "./transcribe";
+import { shortCues } from "./sfx";
 import { pad2, slug } from "./util";
 import { isCancelled } from "./exec";
 import type { Clip, VideoMeta, Word } from "./types";
@@ -214,9 +215,10 @@ export async function stageRender(
   o: Pick<
     RenderOpts,
     "layout" | "style" | "captions" | "look" | "onProgress"
-  > & { hook: boolean },
+  > & { hook: boolean; soundEffects?: boolean },
 ): Promise<string> {
   const out = path.join(jobDir, `${pad2(n)}-${slug(clip.title)}.mp4`);
+  const hookSeconds = Math.min(3, clip.end - clip.start);
   await renderClip(
     seg.file,
     out,
@@ -229,8 +231,9 @@ export async function stageRender(
       look: o.look,
       hook:
         o.hook && clip.hook
-          ? { text: clip.hook, seconds: Math.min(3, clip.end - clip.start) }
+          ? { text: clip.hook, seconds: hookSeconds }
           : undefined,
+      cues: o.soundEffects ? shortCues(clip.end - clip.start, o.hook && clip.hook ? hookSeconds : undefined) : undefined,
       trim: { start: clip.start - seg.start, duration: clip.end - clip.start },
       onProgress: o.onProgress,
     },

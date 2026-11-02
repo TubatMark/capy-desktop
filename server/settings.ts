@@ -203,6 +203,8 @@ function clean(
     out.autoSchedule = obj.autoSchedule;
   if (typeof obj.autoScheduleCaution === "boolean")
     out.autoScheduleCaution = obj.autoScheduleCaution;
+  if (typeof obj.soundEffects === "boolean")
+    out.soundEffects = obj.soundEffects;
   return out;
 }
 
@@ -293,6 +295,8 @@ export interface EffectiveSettings {
   /** AUDIENCES id whose time zone posting slots use. */
   postingAudience: string;
   postingPaused: boolean;
+  /** Sound effects on new videos (on unless turned off). */
+  soundEffects: boolean;
   autoSchedule: boolean;
   autoScheduleCaution: boolean;
 }
@@ -328,6 +332,7 @@ export function effective(): EffectiveSettings {
     postingPaused: s.postingPaused ?? false,
     autoSchedule: s.autoSchedule ?? true,
     autoScheduleCaution: s.autoScheduleCaution ?? true,
+    soundEffects: s.soundEffects ?? true,
   };
 }
 

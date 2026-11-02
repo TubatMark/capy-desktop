@@ -2,6 +2,7 @@ import { z } from "zod";
 import { askAgent } from "./agents";
 import { assText, maskSlurs } from "./longform/edit";
 import { escapeFilterPath } from "./render";
+import { cueInputs, mixCues, type Cue } from "./sfx";
 import type { AiOpts } from "./story/write";
 
 /**
@@ -175,12 +176,14 @@ export function commentaryArgs(o: {
   ass: string;
   out: string;
   enc: string;
+  cues?: Cue[];
 }): { args: string[]; added: number } {
   const added = outroLength(o.verdictSeconds);
   // the last seconds of the clip keep moving behind the verdict, shorter clips start over
   const from = r3(Math.max(0, o.clipSeconds - added));
   const hold = r3(o.openingSeconds + 0.25);
   const total = r3(o.clipSeconds + added);
+  const cues = o.cues ?? [];
   const filter = [
     `[0:v]split[main][tail0]`,
     `[0:a]asplit[clipa][taila0]`,
@@ -194,14 +197,15 @@ export function commentaryArgs(o: {
     `[taila0]atrim=start=${from},asetpts=PTS-STARTPTS,aresample=48000,volume=${DUCK},apad=whole_dur=${added},atrim=0:${added}[low]`,
     `[2:a]aresample=48000,${LUFS},aresample=48000,apad=whole_dur=${added},atrim=0:${added}[say]`,
     `[low][say]amix=inputs=2:normalize=0:duration=first[back]`,
-    `[front][back]concat=n=2:v=0:a=1,alimiter=limit=0.95,afade=t=out:st=${r3(total - 0.25)}:d=0.25[a]`,
+    `[front][back]concat=n=2:v=0:a=1,alimiter=limit=0.95,afade=t=out:st=${r3(total - 0.25)}:d=0.25${cues.length ? "[voiced]" : "[a]"}`,
+    ...(cues.length ? [mixCues("voiced", "a", cues, o.middle ? 4 : 3)] : []),
   ].join(";");
   const encoder = o.enc === "h264_videotoolbox" ? ["-c:v", o.enc, "-b:v", "14M", "-maxrate", "20M", "-profile:v", "high", "-allow_sw", "1"] : ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-profile:v", "high"];
   return {
     added,
     args: [
       "-y", "-hide_banner", "-loglevel", "error", "-threads", "4", "-filter_threads", "2", "-filter_complex_threads", "2",
-      "-i", o.clip, "-i", o.opening, "-i", o.verdict, ...(o.middle ? ["-i", o.middle.file] : []),
+      "-i", o.clip, "-i", o.opening, "-i", o.verdict, ...(o.middle ? ["-i", o.middle.file] : []), ...cueInputs(cues),
       "-filter_complex", filter, "-map", "[v]", "-map", "[a]",
       ...encoder, "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-t", String(total), o.out,
     ],

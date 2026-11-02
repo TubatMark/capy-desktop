@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, Mic, Star } from "lucide-react";
+import { CalendarClock, Mic, Music, Star } from "lucide-react";
 import { AutopilotPanel } from "@/components/autopilot-panel";
 import { Label } from "@/components/ui/label";
 import { api } from "@/hooks/use-job";
@@ -33,9 +33,48 @@ export function AutomationSettings() {
       </div>
       {err && <p className="text-sm text-destructive">{err}</p>}
       <AutoSchedule />
+      <SoundEffects />
       {data && <Narration test={data.shortsTest} onChange={load} />}
       <FocusCreators />
       {data && <AutopilotPanel settings={data.autopilot} log={data.autopilotLog} onChange={load} />}
+    </section>
+  );
+}
+
+/** The owner's switch for laying sound effects over new videos (on by default). */
+function SoundEffects() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    void api<{ settings: { soundEffects?: boolean } }>("/api/settings")
+      .then((r) => setOn(r.settings.soundEffects ?? true))
+      .catch(() => {});
+  }, []);
+  return (
+    <section className="space-y-2 border-t pt-4" aria-label="Sound effects">
+      <h3 className="flex items-center gap-2 text-sm font-semibold">
+        <Music className="size-4" /> Sound effects
+      </h3>
+      {on !== null && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={on}
+            onChange={async (e) => {
+              const next = e.target.checked;
+              setOn(next);
+              await api("/api/settings", {
+                method: "PUT",
+                body: JSON.stringify({ soundEffects: next }),
+              }).catch(() => setOn(!next));
+            }}
+          />
+          <span>
+            <span className="font-medium">Add sound effects to new Shorts and long videos</span>
+            <span className="block text-xs text-muted-foreground">Hits and whooshes on hooks and cuts, and a quiet background sound under narrated cards. Only free-to-use (CC0) sounds.</span>
+          </span>
+        </label>
+      )}
     </section>
   );
 }

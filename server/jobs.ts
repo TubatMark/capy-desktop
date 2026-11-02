@@ -1802,6 +1802,7 @@ class JobManager extends EventEmitter {
           captions: job.settings.captions,
           hook: job.settings.hook,
           look: normalizeLook(job.settings.look, job.settings.style),
+          soundEffects: effective().soundEffects,
           onProgress: (outSec) => {
             c.render.progress = Math.min(0.99, outSec / len);
             this.emitJob(job);

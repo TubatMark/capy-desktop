@@ -10,6 +10,7 @@ import { detectEncoder } from "../src/render";
 import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCheckedCommentary } from "../src/shorts-commentary";
 import { runtimeStore } from "./db/runtime";
 import { dataDir, effective } from "./settings";
+import { outroCues } from "../src/sfx";
 
 const CONFIG = "longform-config";
 const seconds = async (file: string) => {
@@ -102,6 +103,7 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
       ass: path.basename(`${base}.narrated.ass`),
       out: `${out}.mp4`,
       enc: await detectEncoder("auto"),
+      cues: app.soundEffects ? outroCues(clipSeconds) : [],
     });
     await run("ffmpeg", args, { cwd: path.dirname(file) });
     renameSync(`${out}.mp4`, file);

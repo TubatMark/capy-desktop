@@ -30,6 +30,7 @@ const Patch = z.strictObject({
   postingPaused: z.boolean().optional(),
   autoSchedule: z.boolean().optional(),
   autoScheduleCaution: z.boolean().optional(),
+  soundEffects: z.boolean().optional(),
 });
 
 /** GET = saved settings (API key redacted) + every AI CLI found on this machine (?rescan=1 skips the cache). */

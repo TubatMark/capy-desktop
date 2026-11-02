@@ -1,5 +1,6 @@
 import { cleanCaptionWords } from "../ass";
 import { escapeFilterPath } from "../render";
+import { cueInputs, mixCues, type Cue } from "../sfx";
 import type { Word } from "../types";
 
 /**
@@ -185,7 +186,8 @@ const audioFades = (seconds: number) => `afade=t=in:st=0:d=${FADE},afade=t=out:s
  * A clip section: the kept ranges of one footage file, joined. Commands run in the section's folder and name the ASS
  * file bare, so no folder name has to survive filter escaping.
  */
-export function clipArgs(o: { footage: string; ranges: Range[]; ass: string; out: string; enc: string }): string[] {
+export function clipArgs(o: { footage: string; ranges: Range[]; ass: string; out: string; enc: string; cues?: Cue[] }): string[] {
+  const cues = o.cues ?? [];
   const seconds = rangesLength(o.ranges);
   const parts = o.ranges.map(
     (r, i) => `[0:v]trim=${r3(r.start)}:${r3(r.end)},setpts=PTS-STARTPTS[v${i}];[0:a]atrim=${r3(r.start)}:${r3(r.end)},asetpts=PTS-STARTPTS[a${i}]`,
@@ -197,23 +199,28 @@ export function clipArgs(o: { footage: string; ranges: Range[]; ass: string; out
     `[vc]${fit}[vf]`,
     hideChat("vf", "vh"),
     `[vh]ass=filename=${escapeFilterPath(o.ass)},${fades(seconds)},format=yuv420p[v]`,
-    `[ac]aresample=48000,${LUFS},aresample=48000,${audioFades(seconds)}[a]`,
+    // effects go over the fades, or the dip at the start of a section would swallow their attack
+    `[ac]aresample=48000,${LUFS},aresample=48000,${audioFades(seconds)}${cues.length ? "[faded]" : "[a]"}`,
+    ...(cues.length ? [mixCues("faded", "a", cues, 1)] : []),
   ].join(";");
-  return ["-y", "-hide_banner", "-loglevel", "error", ...LOW_MEMORY, "-i", o.footage, "-filter_complex", filter, "-map", "[v]", "-map", "[a]", ...videoEncoder(o.enc), ...AUDIO, "-t", String(seconds), o.out];
+  return ["-y", "-hide_banner", "-loglevel", "error", ...LOW_MEMORY, "-i", o.footage, ...cueInputs(cues), "-filter_complex", filter, "-map", "[v]", "-map", "[a]", ...videoEncoder(o.enc), ...AUDIO, "-t", String(seconds), o.out];
 }
 
 /** A card: the footage blurred behind the text, its sound low under the narrator. */
-export function cardArgs(o: { footage: string; offset: number; narration: string; seconds: number; lead: number; ass: string; out: string; enc: string }): string[] {
+export function cardArgs(o: { footage: string; offset: number; narration: string; seconds: number; lead: number; ass: string; out: string; enc: string; cues?: Cue[] }): string[] {
+  const cues = o.cues ?? [];
   const filter = [
     `[0:v]fps=${FPS},scale=480:270:force_original_aspect_ratio=increase,crop=480:270,boxblur=10:2,scale=${W}:${H},eq=brightness=-0.3,setsar=1,ass=filename=${escapeFilterPath(o.ass)},${fades(o.seconds)},format=yuv420p[v]`,
     `[0:a]aresample=48000,volume=0.08,apad[bg]`,
     `[1:a]aresample=48000,adelay=delays=${Math.round(o.lead * 1000)}:all=1,${LUFS},aresample=48000,apad[n]`,
-    `[bg][n]amix=inputs=2:normalize=0:duration=longest,atrim=0:${r3(o.seconds)},${audioFades(o.seconds)}[a]`,
+    `[bg][n]amix=inputs=2:normalize=0:duration=longest,atrim=0:${r3(o.seconds)},${audioFades(o.seconds)}${cues.length ? "[faded]" : "[a]"}`,
+    ...(cues.length ? [mixCues("faded", "a", cues, 2)] : []),
   ].join(";");
   return [
     "-y", "-hide_banner", "-loglevel", "error", ...LOW_MEMORY,
     "-ss", String(r3(o.offset)), "-stream_loop", "-1", "-i", o.footage,
     "-i", o.narration,
+    ...cueInputs(cues),
     "-filter_complex", filter, "-map", "[v]", "-map", "[a]",
     ...videoEncoder(o.enc), ...AUDIO, "-t", String(r3(o.seconds)), o.out,
   ];

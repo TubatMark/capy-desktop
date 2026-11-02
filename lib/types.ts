@@ -759,6 +759,8 @@ export interface AppSettings {
   autoSchedule?: boolean;
   /** Auto-scheduling also takes clips the AI marked "check this"; only "don't post" waits (on unless turned off). */
   autoScheduleCaution?: boolean;
+  /** Lay the CC0 sound effects from public/sfx over new Shorts and long videos (on unless turned off). */
+  soundEffects?: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
