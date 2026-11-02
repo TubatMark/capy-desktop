@@ -39,6 +39,8 @@ export type ThumbnailSource =
       path: string;
       checksum: string;
       sourceOffsetUs?: number;
+      /** The same cut with no captions or hook on it, and how long it runs (a narrated render goes on past it). */
+      clean?: { path: string; durationUs: number };
     }
   | {
       kind: "project";
@@ -163,6 +165,8 @@ export interface ThumbnailDesign extends Omit<
   pick?: { by: "ai" | "heuristic"; reason?: string };
   /** The thumbnail reviewer's verdict across this clip's designs: 1 = the one it judged most effective. */
   judged?: { by: "ai" | "default"; rank: number; reason?: string; at: number };
+  /** The last check before posting: is this design fit to go public, and if not, why. */
+  thumbnailReview?: { by: "ai" | "default"; ok: boolean; severe: boolean; problems?: string; at: number };
 }
 export interface ThumbnailRequest {
   source: ThumbnailSourceRef;

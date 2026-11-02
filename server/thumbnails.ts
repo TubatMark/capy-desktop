@@ -32,7 +32,10 @@ import { aiCacheIdentity } from "./ai-router";
 import { extractFrameCandidates } from "../src/thumbnails/frames";
 import { buildThumbnailBrief } from "../src/thumbnails/brief";
 import { creatorPolicy } from "./automation-policy";
-import { judgeThumbnails } from "./thumbnail-judge";
+import { judgeThumbnails, orderByReview, reviewThumbnails } from "./thumbnail-judge";
+import { detectEncoder, verticalFilter, vibeFilter } from "../src/render";
+import { run } from "../src/exec";
+import { normalizeLook } from "../lib/look";
 import { footageCurrent } from "./thumbnail-footage";
 import { pickThumbnail, type VisionAsk } from "./thumbnail-pick";
 import {
@@ -753,6 +756,40 @@ async function originalDesign(
     return undefined;
   }
 }
+/**
+ * The clip again from its footage, cut and coloured like the render but with nothing burned in: a frame from the
+ * render carries whatever caption was on screen, usually half a sentence. No footage left: the render's frames serve.
+ */
+async function cleanClipFootage(ref: ThumbnailSourceRef, directory: string, deps: ThumbnailDependencies) {
+  if (ref.kind !== "legacy") return undefined;
+  const job = deps.store.get<JobState>("legacy-jobs", ref.jobId)?.value;
+  const clip = job?.clips.find((c) => c.n === ref.clipN);
+  if (!job || !clip || clip.segment?.status !== "done" || !clip.segment.url) return undefined;
+  const footage = path.join(deps.root, decodeURIComponent(clip.segment.url.split("?")[0]!.replace(/^\/api\/media\//, "")));
+  try {
+    const seconds = clip.end - clip.start;
+    const look = normalizeLook(job.settings.look, job.settings.style);
+    const out = path.join(directory, "clean.mp4");
+    const vibe = vibeFilter(look.vibe);
+    const enc = await detectEncoder("auto");
+    await run(
+      "ffmpeg",
+      [
+        "-v", "error", "-y", "-threads", "4",
+        "-ss", (clip.start - clip.segment.start).toFixed(3), "-t", seconds.toFixed(3), "-i", footage,
+        "-filter_complex", `${verticalFilter(job.settings.layout)}${vibe ? `,${vibe}` : ""},format=yuv420p[v]`,
+        "-map", "[v]", "-an",
+        ...(enc === "h264_videotoolbox" ? ["-c:v", enc, "-b:v", "14M"] : ["-c:v", enc, "-preset", "veryfast", "-crf", "18"]),
+        out,
+      ],
+      { timeoutMs: 150_000 },
+    );
+    return { path: out, durationUs: Math.round(seconds * 1_000_000) };
+  } catch {
+    return undefined;
+  }
+}
+
 export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
   return [
     {
@@ -764,7 +801,11 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
           source = await resolveThumbnailSource(input.source, deps);
         if (input.selectedFrameIds?.length)
           return { data: { frames: selectedFrames(input, deps) } };
-        const frames = await extractFrameCandidates(source, ctx.signal, {
+        const clean =
+          source.kind === "legacy" && aiPicks(input) && input.frameKind !== "finished"
+            ? await cleanClipFootage(input.source, ctx.workspace, deps)
+            : undefined;
+        const frames = await extractFrameCandidates(clean && source.kind === "legacy" ? { ...source, clean } : source, ctx.signal, {
           directory: ctx.workspace,
           timesUs:
             input.frameTimeUs !== undefined ? [input.frameTimeUs] : undefined,
@@ -1131,17 +1172,59 @@ export function thumbnailStages(deps = thumbnailDependencies()): WorkStage[] {
       },
     },
     {
+      // Automatic requests: the ranking says which design earns taps, this says whether it's fit to go public. Designs
+      // that pass lead. With only severe failures nothing is attached, and the post waits (auto-schedule requires one).
+      name: "thumbnail-review",
+      timeoutMs: 180_000,
+      run: async (ctx) => {
+        const input = requestFor(ctx, deps);
+        const designs = ctx.data.designs as ThumbnailDesign[] | undefined;
+        if (!aiPicks(input) || !designs?.length) return;
+        const clip =
+          input.source.kind === "legacy"
+            ? deps.store
+                .get<JobState>("legacy-jobs", input.source.jobId)
+                ?.value.clips.find((c) => input.source.kind === "legacy" && c.n === input.source.clipN)
+            : undefined;
+        const verdicts = await reviewThumbnails(
+          { designs, title: input.clipContext?.title ?? clip?.title, hook: input.clipContext?.hook ?? clip?.hook, directory: ctx.workspace },
+          deps.ask,
+        );
+        ctx.assert();
+        const at = Date.now();
+        const reviewed = orderByReview(designs, verdicts).map((d) => ({
+          ...d,
+          thumbnailReview: { by: verdicts.by, ...(verdicts.of[d.id] ?? { ok: true, severe: false }), at },
+        }));
+        ctx.fenced(() => {
+          for (const d of reviewed) {
+            const stored = deps.store.get<ThumbnailDesign>("thumbnails", d.id)?.value;
+            if (stored) deps.store.put("thumbnails", d.id, { ...stored, thumbnailReview: d.thumbnailReview });
+          }
+        });
+        return { data: { designs: reviewed } };
+      },
+    },
+    {
       // The best design goes onto the clip's YouTube post while it still waits for review. Never fails the work.
       name: "thumbnail-attach",
       run: async (ctx) => {
         const input = requestFor(ctx, deps);
         const top = (ctx.data.designs as ThumbnailDesign[] | undefined)?.[0];
         if (!aiPicks(input) || !top) return;
+        const review = top.thumbnailReview;
+        if (review?.severe)
+          return { data: { attachError: `The thumbnail review rejected every design: ${review.problems ?? "not fit to post"}` } };
         const { autoAttachThumbnail } = await import("./thumbnail-studio");
         try {
           return {
             data: {
-              attached: await autoAttachThumbnail(input.source, top.id, deps),
+              attached: await autoAttachThumbnail(
+                input.source,
+                top.id,
+                deps,
+                review?.by === "ai" ? (review.ok ? "AI thumbnail added, review passed" : `AI thumbnail added, the best of a weak set: ${review.problems ?? "see Studio"}`) : undefined,
+              ),
             },
           };
         } catch (error) {

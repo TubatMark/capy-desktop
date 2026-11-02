@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { run } from "../src/exec";
-import { judgeThumbnails } from "../server/thumbnail-judge";
+import { judgeThumbnails, orderByReview, reviewThumbnails } from "../server/thumbnail-judge";
+import { buildAss, STYLES } from "../src/ass";
 import type { ThumbnailDesign } from "../lib/thumbnails";
 
 const dir = mkdtempSync(path.join(tmpdir(), "capy-judge-"));
@@ -39,4 +40,46 @@ it("without an answer the designs keep their order and the clip is not held up",
   expect(j.reason).toMatch(/unavailable/);
   // a single design needs no review
   expect((await judgeThumbnails({ designs: designs.slice(0, 1), directory: dir }, async () => { throw new Error("must not ask"); })).by).toBe("default");
+});
+
+it("the review can reject: passing designs lead, weak ones follow, severe ones go last", async () => {
+  const designs = [await design("top", "red"), await design("next", "blue"), await design("third", "green")];
+  const review = await reviewThumbnails({ designs, title: "A clip", directory: dir }, async (_p, o) => {
+    expect(o.images.map((i) => i.label)).toEqual(["Design A", "Design B", "Design C"]);
+    const data = {
+      designs: [
+        { design: "A", ok: false, severe: true, problems: "A slur is readable in the caption." },
+        { design: "B", ok: false, severe: false, problems: "Player controls show." },
+        { design: "C", ok: true, severe: false },
+      ],
+    };
+    expect(o.validate(data)).toBe(true);
+    expect(o.validate({ designs: [{ design: "A" }] })).toBe(false);
+    return { data };
+  });
+  expect(review.by).toBe("ai");
+  expect(orderByReview(designs, review).map((d) => d.id)).toEqual(["third", "next", "top"]);
+  expect(review.of.top).toEqual({ ok: false, severe: true, problems: "A slur is readable in the caption." });
+});
+
+it("a severe finding can't also pass", async () => {
+  const designs = [await design("both", "red")];
+  const review = await reviewThumbnails({ designs, directory: dir }, async () => ({ data: { designs: [{ design: "A", ok: true, severe: true }] } }));
+  expect(review.of.both).toEqual({ ok: false, severe: true });
+});
+
+it("without a review answer the ranking stands and nothing is held", async () => {
+  const designs = [await design("r1", "red"), await design("r2", "blue")];
+  const review = await reviewThumbnails({ designs, directory: dir }, async () => {
+    throw new Error("no login");
+  });
+  expect(review.by).toBe("default");
+  expect(review.reason).toMatch(/unavailable/);
+  expect(orderByReview(designs, review).map((d) => d.id)).toEqual(["r1", "r2"]);
+});
+
+it("a Short's captions and hook never spell a slur out", () => {
+  const ass = buildAss([{ text: "nigga", start: 0, end: 1 }], STYLES.bold!, { text: "that nigga asked", seconds: 1 });
+  expect(ass.toLowerCase()).not.toContain("nigga");
+  expect(ass).toContain("N****");
 });

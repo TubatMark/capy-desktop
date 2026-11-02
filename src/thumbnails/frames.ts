@@ -164,6 +164,11 @@ export async function extractFrameCandidates(
       let extractionFile = file,
         extractionUs = renderUs,
         frameKind: FrameCandidate["frameKind"] = "finished";
+      if (source.kind === "legacy" && source.clean && !options.finished) {
+        if (renderUs >= source.clean.durationUs) continue;
+        extractionFile = source.clean.path;
+        frameKind = "clean";
+      }
       if (source.kind === "project") {
         const frame = (renderUs * source.project.fps.numerator) / (1_000_000 * source.project.fps.denominator);
         const visualTracks = new Set(

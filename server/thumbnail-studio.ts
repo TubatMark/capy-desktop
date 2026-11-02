@@ -787,6 +787,7 @@ export async function autoAttachThumbnail(
   source: ThumbnailSourceRef,
   designId: string,
   deps = thumbnailDependencies(),
+  note?: string,
 ): Promise<string[]> {
   const doc = getThumbnail(designId, undefined, deps);
   if (doc.reviewState === "stale" || doc.generationState !== "ready")
@@ -803,7 +804,7 @@ export async function autoAttachThumbnail(
       designId,
       doc.editRevision,
       deps,
-      { provisional: true, statuses: ["review"], note: "AI thumbnail added" },
+      { provisional: true, statuses: ["review"], note: note ?? "AI thumbnail added" },
     );
     attached.push(key);
   }

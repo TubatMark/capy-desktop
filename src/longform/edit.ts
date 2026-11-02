@@ -1,4 +1,4 @@
-import { cleanCaptionWords } from "../ass";
+import { cleanCaptionWords, maskSlurs } from "../ass";
 import { escapeFilterPath } from "../render";
 import { cueInputs, mixCues, type Cue } from "../sfx";
 import type { Word } from "../types";
@@ -127,9 +127,7 @@ export function cardAss(o: { badge?: string; format?: string; title: string; lin
   return out;
 }
 
-/** Burned-in captions never spell a slur out; the words stay in the creator's own audio. */
-const SLURS = /\b(nigg)(a|as|er|ers|ah|uh)\b|\b(fagg?)(ot|ots|)\b|\b(retard)(ed|s|)\b|\b(chink|gook|spic|kike|tranny)(s|)\b/gi;
-export const maskSlurs = (text: string) => text.replace(SLURS, (m) => `${m[0]}${"*".repeat(m.length - 1)}`);
+export { maskSlurs };
 
 /** Group words into short captions, no longer than `maxSec` on screen. */
 export function captionGroups(words: Word[], maxWords = 6, maxSec = 3): { start: number; end: number; text: string }[] {

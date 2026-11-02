@@ -26,11 +26,11 @@ const clean = (text: string) =>
 const jpgOf = (d: ThumbnailDesign) => d.versions.filter((v) => v.format === "jpg").at(-1);
 
 /** About the size a Short's thumbnail shows in the feed and channel grid: legibility is judged there. */
-async function feedSize(file: string, directory: string, id: string) {
-  const out = path.join(directory, `judge-${id}.jpg`);
+async function feedSize(file: string, directory: string, id: string, width = 270) {
+  const out = path.join(directory, `judge-${width}-${id}.jpg`);
   await run(
     "ffmpeg",
-    ["-v", "error", "-i", file, "-vf", "scale=w=270:h=480:force_original_aspect_ratio=decrease", "-q:v", "5", "-frames:v", "1", "-y", out],
+    ["-v", "error", "-i", file, "-vf", `scale=w=${width}:h=${Math.round((width * 16) / 9)}:force_original_aspect_ratio=decrease`, "-q:v", "5", "-frames:v", "1", "-y", out],
     { timeoutMs: 30_000 },
   );
   return (await readFile(out)).toString("base64");
@@ -102,4 +102,98 @@ export async function judgeThumbnails(
   } catch (error) {
     return fallback(`Thumbnail review unavailable: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
   }
+}
+
+export interface ThumbnailVerdict {
+  ok: boolean;
+  /** Must never go public, whatever else is available. */
+  severe: boolean;
+  problems?: string;
+}
+export interface ThumbnailReview {
+  by: "ai" | "default";
+  of: Record<string, ThumbnailVerdict>;
+  reason?: string;
+}
+
+/**
+ * The last check before a design goes public. The ranking above only compares designs, so the best of a bad set still
+ * won; this can say no. Never throws: without an answer the ranking stands and the clip isn't held up.
+ */
+export async function reviewThumbnails(input: ThumbnailJudgeInput, ask: VisionAsk = askClaude): Promise<ThumbnailReview> {
+  const designs = input.designs.filter((d) => jpgOf(d)).slice(0, LABELS.length);
+  if (!designs.length) return { by: "default", of: {} };
+  try {
+    await mkdir(input.directory, { recursive: true });
+    const labels = LABELS.slice(0, designs.length);
+    const images: AiImage[] = [];
+    for (const [i, d] of designs.entries())
+      images.push({
+        mediaType: "image/jpeg",
+        label: `Design ${labels[i]}`,
+        // large enough to read every word on it: a slur has to be caught even if it's small
+        data: await feedSize(jpgOf(d)!.path, input.directory, d.id, 540),
+      });
+    const title = clean(input.title ?? "").slice(0, 300),
+      hook = clean(input.hook ?? "").slice(0, 300);
+    const schema = {
+      type: "object",
+      properties: {
+        designs: {
+          type: "array",
+          minItems: labels.length,
+          maxItems: labels.length,
+          items: {
+            type: "object",
+            properties: {
+              design: { type: "string", enum: labels },
+              ok: { type: "boolean" },
+              severe: { type: "boolean" },
+              problems: { type: "string", maxLength: 200 },
+            },
+            required: ["design", "ok", "severe"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["designs"],
+      additionalProperties: false,
+    };
+    const prompt = [
+      "You are the last check on these YouTube Short thumbnails before they go public. Check each design on its own.",
+      title && `Video title: ${title}`,
+      hook && `Hook: ${hook}`,
+      `The ${labels.length} designs (${labels.join(", ")}) follow.`,
+      "ok is false when any of these is true: a video caption or half a sentence is burned into the picture; video player controls, a browser bar or social media interface show in the picture; the picture is blurred, mostly dark or has no clear subject; the headline is cut off, hard to read or doesn't fit the title. Otherwise ok is true.",
+      "severe is true only for: a readable slur or hateful word, explicit sexual words or imagery, graphic injury, or a headline that states something false. Lines of stream chat too small to read at phone size don't count. Everything else is not severe.",
+      "problems: when ok is false, one short sentence in plain words for the channel owner. Leave it out otherwise.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const { data } = await ask(prompt, {
+      system: "You review finished thumbnails from the images shown. Answer only with JSON that matches the schema.",
+      schema,
+      images,
+      validate: (value) => {
+        const v = value as { designs?: { design?: string }[] };
+        return Array.isArray(v?.designs) && labels.every((l) => v.designs!.some((d) => d.design === l));
+      },
+    });
+    const answer = data as { designs: { design: string; ok: boolean; severe: boolean; problems?: string }[] };
+    const of: Record<string, ThumbnailVerdict> = {};
+    for (const a of answer.designs) {
+      const d = designs[labels.indexOf(a.design)];
+      if (d) of[d.id] = { ok: a.ok && !a.severe, severe: a.severe, ...(a.problems ? { problems: clean(a.problems).slice(0, 200) } : {}) };
+    }
+    if (!Object.keys(of).length) throw Error("The answer named no designs");
+    return { by: "ai", of };
+  } catch (error) {
+    return { by: "default", of: {}, reason: `Thumbnail review unavailable: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200) };
+  }
+}
+
+/** Keeps the ranking within each group: designs that pass, then weak ones, then those that must not be posted. */
+export function orderByReview<T extends { id: string }>(designs: T[], review: ThumbnailReview): T[] {
+  const group = (d: T) => (review.of[d.id]?.severe ? 2 : review.of[d.id]?.ok === false ? 1 : 0);
+  return [...designs].sort((a, b) => group(a) - group(b));
 }

@@ -124,6 +124,10 @@ export function cleanCaptionWords(words: Word[]): Word[] {
     .filter((w) => w.text.length > 0);
 }
 
+/** Burned-in captions never spell a slur out; the words stay in the creator's own audio. */
+const SLURS = /\b(nigg)(a|as|er|ers|ah|uh)\b|\b(fagg?)(ot|ots|)\b|\b(retard)(ed|s|)\b|\b(chink|gook|spic|kike|tranny)(s|)\b/gi;
+export const maskSlurs = (text: string) => text.replace(SLURS, (m) => `${m[0]}${"*".repeat(m.length - 1)}`);
+
 export function stripEmoji(text: string): string {
   return text.replace(EMOJI, "").replace(/\s+/g, " ").trim();
 }
@@ -189,9 +193,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const lines: string[] = [];
   const hookText = hook ? stripEmoji(hook.text) : "";
   if (hook && hookText) {
-    lines.push(`Dialogue: 1,${assTime(0)},${assTime(hook.seconds)},Hook,,0,0,0,,${escapeAss(hook.keepCase ? hookText : hookText.toUpperCase())}`);
+    lines.push(`Dialogue: 1,${assTime(0)},${assTime(hook.seconds)},Hook,,0,0,0,,${escapeAss(maskSlurs(hook.keepCase ? hookText : hookText.toUpperCase()))}`);
   }
-  const fmt = (w: Word) => escapeAss(style.uppercase ? w.text.toUpperCase() : w.text);
+  const fmt = (w: Word) => escapeAss(maskSlurs(style.uppercase ? w.text.toUpperCase() : w.text));
   const karaoke = style.highlight !== style.primary;
   const groups = groupWords(cleanCaptionWords(words), style.groupWords, style.groupSec, style.groupChars);
   for (let gi = 0; gi < groups.length; gi++) {
