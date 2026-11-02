@@ -44,6 +44,21 @@ describe("checking the host's lines", () => {
     script([lines("a"), lines("b"), lines("c")], [describes, describes, describes]);
     expect((await writeCheckedCommentary(o, ai)).opening).toBe("c");
   });
+  it("asks the second AI too, and rewrites when only it objects", async () => {
+    const second = { agent: "codex" as const };
+    script([lines("first"), lines("second")], [pass, contradicts, pass, pass]);
+    expect((await writeCheckedCommentary(o, ai, second)).opening).toBe("second");
+    const checkers = agents.askAgent.mock.calls.filter((c) => String(c[1]).startsWith("A clips channel's host says")).map((c) => c[0]);
+    expect(checkers).toEqual(["claude", "codex", "claude", "codex"]);
+  });
+  it("leaves the clip plain if the second AI never accepts the lines", async () => {
+    script([lines("a"), lines("b"), lines("c")], [pass, contradicts, pass, contradicts, pass, contradicts]);
+    await expect(writeCheckedCommentary(o, ai, { agent: "codex" })).rejects.toThrow(/contradict/);
+  });
+  it("keeps the first AI's read when the second is unavailable", async () => {
+    script([lines("first")], [pass, new Error("not logged in")]);
+    expect((await writeCheckedCommentary(o, ai, { agent: "codex" })).opening).toBe("first");
+  });
   it("doesn't lose a clip because the check itself failed", async () => {
     script([lines("first")], [new Error("down")]);
     expect((await writeCheckedCommentary(o, ai)).opening).toBe("first");

@@ -8,9 +8,10 @@ import { run } from "../src/exec";
 import { speak } from "../src/longform/narrate";
 import { detectEncoder } from "../src/render";
 import { commentaryArgs, commentaryAss, middleAt, outroLength, writeCheckedCommentary } from "../src/shorts-commentary";
+import { secondOpinion } from "./similarity";
 import { runtimeStore } from "./db/runtime";
 import { dataDir, effective } from "./settings";
-import { outroCues } from "../src/sfx";
+import { commentaryCues } from "../src/sfx";
 
 const CONFIG = "longform-config";
 const seconds = async (file: string) => {
@@ -73,6 +74,7 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
     const lines = await writeCheckedCommentary(
       { creator: job.channel ?? "this creator", title: c.title, reason: c.reason, excerpt, others },
       { agent: app.agent, model: app.agent === "claude" ? app.model : app.models[app.agent] },
+      secondOpinion(app.agent),
     );
     const opening = await speak(lines.opening, `${base}.opening`, dataDir());
     const verdict = await speak(lines.verdict, `${base}.verdict`, dataDir());
@@ -103,7 +105,7 @@ export async function applyShortTest(job: JobState, c: ClipState, file: string, 
       ass: path.basename(`${base}.narrated.ass`),
       out: `${out}.mp4`,
       enc: await detectEncoder("auto"),
-      cues: app.soundEffects ? outroCues(clipSeconds) : [],
+      cues: app.soundEffects ? commentaryCues(clipSeconds, opening.seconds) : [],
     });
     await run("ffmpeg", args, { cwd: path.dirname(file) });
     renameSync(`${out}.mp4`, file);

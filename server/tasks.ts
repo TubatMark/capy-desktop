@@ -82,6 +82,8 @@ export function videoTasks(videos: LongVideo[]): TodoTask[] {
       out.push({ id: `long:${v.id}`, kind: "video", tone: "block", href: "/longform", title: `“${v.title}” stopped`, detail: v.error, at: v.createdAt });
     else if (need === "warnings")
       out.push({ id: `long:${v.id}`, kind: "video", tone: "warn", href: "/longform", title: `Check “${v.title}”`, detail: v.check!.warnings.join(" "), at: v.createdAt });
+    else if (need === "script")
+      out.push({ id: `long:${v.id}`, kind: "video", tone: "warn", href: "/longform", title: `Check the script of “${v.title}”`, detail: v.check!.script!.notes.join(" "), at: v.createdAt });
   }
   return out;
 }

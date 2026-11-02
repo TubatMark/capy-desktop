@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { cardArgs, clipArgs } from "../src/longform/edit";
 import { commentaryArgs } from "../src/shorts-commentary";
-import { cueInputs, mixCues, outroCues, sectionCues, shortCues, soundFile } from "../src/sfx";
+import { commentaryCues, cueInputs, mixCues, sectionCues, shortCues, soundFile } from "../src/sfx";
 
 const names = (c: { file: string }[]) => c.map((x) => path.basename(x.file, ".wav"));
 
@@ -74,7 +74,10 @@ describe("the mix", () => {
     const args = clipArgs({ footage: "f.mp4", ranges: [{ start: 0, end: 2 }], ass: "x.ass", out: "o.mp4", enc: "libx264" });
     expect(args[args.indexOf("-filter_complex") + 1]).not.toContain("amix");
   });
-  it("puts the cut to the verdict on a whoosh", () => {
-    expect(names(outroCues(50))).toEqual(["whoosh"]);
+  it("puts a narrated Short's effects over the host, not under them", () => {
+    const c = commentaryCues(50, 3);
+    expect(names(c)).toEqual(["impact", "whoosh", "whoosh"]);
+    expect(c.map((x) => x.at)).toEqual([0, 3.1, 50]);
+    expect(names(commentaryCues(3.5, 3))).toEqual(["impact", "whoosh"]);
   });
 });

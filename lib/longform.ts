@@ -90,7 +90,8 @@ export interface LongCheck {
   ok: boolean;
   duration: number;
   warnings: string[];
-  script?: { verdict: "ok" | "caution"; notes: string[] };
+  /** `serious`: both AIs still call it a real problem after the rewrite, so it doesn't upload by itself. */
+  script?: { verdict: "ok" | "caution"; notes: string[]; serious?: boolean };
 }
 
 export interface LongMetrics {
@@ -302,15 +303,20 @@ const shortOfFootage = (v: LongVideo) => !v.youtube?.id && /usable footage/.test
  * Whether a long video is stuck until the owner steps in: an error capy has stopped retrying, or file-check notes on a
  * video it won't publish alone. A footage shortage doesn't count, and neither do notes on a video the owner took over.
  */
-export function longVideoNeedsOwner(v: LongVideo): "error" | "warnings" | null {
+export function longVideoNeedsOwner(v: LongVideo): "error" | "warnings" | "script" | null {
   if (shortOfFootage(v)) return null;
   if (v.error) {
     const retrying = !v.manual && !v.youtube?.rejected && !!v.failedStep && (v.autoRetries ?? 0) < MAX_AUTO_RETRIES;
     return retrying ? null : "error";
   }
   const settled = v.status === "public" || v.status === "freed" || v.slotAt !== undefined || v.youtube?.publishedAt !== undefined;
-  return v.check?.warnings?.length && !v.manual && !settled ? "warnings" : null;
+  if (v.manual || settled) return null;
+  if (v.check?.warnings?.length) return "warnings";
+  return v.status === "review" && v.check?.script?.serious ? "script" : null;
 }
+
+/** Waiting to upload, but its script was only read by one AI: `serious` didn't exist then. */
+const reviewedOnce = (v: LongVideo) => v.status === "review" && !!v.check?.script && v.check.script.serious === undefined && !v.check.warnings?.length;
 
 const WORKING: LongStatus[] = ["draft", "planning", "narrating", "rendering", "checking"];
 
@@ -327,7 +333,7 @@ export function autopilotActions(all: LongVideo[], footage: CreatorFootage[], s:
 
   const working = videos.some((v) => WORKING.includes(v.status) && !v.error);
   // made before the review could fix its own notes, or the review ran late: run the script again before it goes anywhere
-  const unfixed = videos.filter((v) => v.status === "review" && v.check && !v.check.ok && !v.check.warnings?.length && !v.fixTried && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+  const unfixed = videos.filter((v) => v.status === "review" && v.check && !v.check.ok && !v.check.warnings?.length && !v.fixTried && !v.error || (reviewedOnce(v) && !v.error)).sort((a, b) => a.createdAt - b.createdAt)[0];
   if (unfixed && !unfixed.manual && !working && !out.some((a) => a.kind !== "dismiss")) out.push({ kind: "fix", id: unfixed.id });
   const waiting = videos.filter((v) => v.status === "review").length;
   if (s.draft && !working && !out.some((a) => a.kind !== "dismiss") && failed.length < MAX_FAILED_VIDEOS && waiting < MAX_WAITING_VIDEOS) {
@@ -343,7 +349,7 @@ export function autopilotActions(all: LongVideo[], footage: CreatorFootage[], s:
   const lastUpload = Math.max(0, ...videos.map((v) => v.uploadStartedAt ?? 0));
   if (s.upload && !uploading && now - lastUpload >= AUTO_UPLOAD_GAP_MS) {
     // a script keeps the review's remaining notes after its one rewrite (reviewers rarely find nothing); a broken file waits for the owner
-    const ready = auto.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && (v.check.ok || v.fixTried) && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
+    const ready = auto.filter((v) => v.status === "review" && v.master && v.check && !v.check.warnings?.length && (v.check.ok || v.fixTried) && !v.check.script?.serious && !reviewedOnce(v) && !v.error).sort((a, b) => a.createdAt - b.createdAt)[0];
     if (ready) out.push({ kind: "upload", id: ready.id });
   }
 

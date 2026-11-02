@@ -9,7 +9,7 @@ import path from "node:path";
 export type SoundId = "whoosh" | "impact" | "riser" | "drone";
 
 /** Brings each file to a level that sits under speech at -14 LUFS (the files' own peaks differ by several dB). */
-const GAIN_DB: Record<SoundId, number> = { whoosh: -10, impact: -9, riser: -12, drone: -26 };
+const GAIN_DB: Record<SoundId, number> = { whoosh: -4, impact: -5, riser: -8, drone: -26 };
 const RISER_SECONDS = 2;
 
 export interface Cue {
@@ -50,8 +50,18 @@ export function shortCues(seconds: number, hookSeconds?: number): Cue[] {
   ]);
 }
 
-/** The cut from a Short's clip to the host's verdict. */
-export const outroCues = (at: number): Cue[] => cues([{ id: "whoosh", at }]);
+/**
+ * A narrated Short. The clip's sound, with its own effects, sits low under the host's opening, so the hook's hit and
+ * the cuts around the host go on top: a hit under the first words, a whoosh back to the clip, a whoosh to the verdict.
+ */
+export function commentaryCues(clipSeconds: number, openingSeconds: number): Cue[] {
+  const back = openingSeconds + 0.1;
+  return cues([
+    { id: "impact", at: 0 },
+    ...(back + 1 < clipSeconds ? [{ id: "whoosh" as const, at: back }] : []),
+    { id: "whoosh", at: clipSeconds },
+  ]);
+}
 
 /** A long video's section. Moments play with their own sound only. */
 export function sectionCues(s: { kind: "teaser" | "card" | "clip"; name: string; seconds: number; lastTeaser?: boolean }): Cue[] {

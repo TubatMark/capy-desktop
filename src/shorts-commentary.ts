@@ -53,6 +53,7 @@ export type CommentaryGate = z.infer<typeof GateSchema>;
 export async function checkCommentary(c: ShortCommentary, title: string, ai: AiOpts): Promise<CommentaryGate> {
   const res = await askAgent(ai.agent, `A clips channel's host says these three lines, in this order, about "${title}". Do they add a real opinion, comparison or prediction, or could anyone write them just by watching the clip? And do they all hold the same view, or does the host contradict themself? Changing focus is fine; reversing a judgement is not.\n\nOpening: ${c.opening}\nMiddle: ${c.middle}\nVerdict: ${c.verdict}`, {
     task: "review",
+    context: ai.context,
     model: ai.model,
     maxTurns: 2,
     effort: "low",
@@ -68,10 +69,19 @@ const REWRITES = 2;
  * Write the lines, and rewrite with the editor's note if they fall short. Lines that still only describe the clip beat no
  * commentary, but a host who contradicts themself sounds broken, so that throws and the clip stays plain.
  */
-export async function writeCheckedCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts): Promise<ShortCommentary> {
+export async function writeCheckedCommentary(o: Parameters<typeof commentaryPrompt>[0], ai: AiOpts, second?: AiOpts): Promise<ShortCommentary> {
   let lines = await writeCommentary(o, ai);
-  // the check itself failing says nothing about the lines
-  const check = (c: ShortCommentary) => checkCommentary(c, o.title, ai).catch((): CommentaryGate => ({ adds: true, consistent: true, why: "" }));
+  // the check itself failing says nothing about the lines, so one AI being unavailable leaves the other's read standing
+  const read = (c: ShortCommentary, who: AiOpts) => checkCommentary(c, o.title, who).catch((): CommentaryGate => ({ adds: true, consistent: true, why: "" }));
+  const check = async (c: ShortCommentary): Promise<CommentaryGate> => {
+    const gates = await Promise.all([ai, ...(second ? [second] : [])].map((who) => read(c, who)));
+    const passes = (g: CommentaryGate) => g.adds && g.consistent;
+    return {
+      adds: gates.every((g) => g.adds),
+      consistent: gates.every((g) => g.consistent),
+      why: gates.filter((g) => !passes(g)).map((g) => g.why).join(" "),
+    };
+  };
   let gate = await check(lines);
   for (let i = 0; i < REWRITES && !(gate.adds && gate.consistent); i++) {
     lines = await writeCommentary(o, ai, `An editor rejected your last try: ${gate.why}`);

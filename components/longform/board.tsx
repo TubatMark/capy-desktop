@@ -370,6 +370,7 @@ function VideoDialog({ video: v, live, publishOn, board, onClose, onChange }: { 
               {v.check.warnings.map((w) => <li key={w}>{w}</li>)}
               {v.check.script?.notes.map((n) => <li key={n}>{n}</li>)}
             </ul>
+            {v.check.script?.serious && <p className="font-medium text-amber-700 dark:text-amber-500">Held back: both AIs still see a serious problem after the rewrite, so this won&apos;t upload by itself.</p>}
             {v.voice && <p className="text-xs text-muted-foreground">Narrator: {v.voice}</p>}
           </div>
         ) : null}

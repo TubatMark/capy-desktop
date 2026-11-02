@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { askAgent } from "../agents";
+import type { AiTaskContext } from "../../lib/ai-policy";
 import type { AgentId, StoryPage, StoryPlan, StoryReview, StorySeries, StoryState } from "../../lib/types";
 import { layoutCast, sanitizeSvg } from "./svg";
 import { storyName } from "./plan";
@@ -12,6 +13,8 @@ import { storyName } from "./plan";
 export interface AiOpts {
   agent: AgentId;
   model?: string;
+  /** Routing for this call, when a second opinion has to really reach a different AI. */
+  context?: AiTaskContext;
 }
 
 const strip = (s: Record<string, unknown>) => {

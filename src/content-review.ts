@@ -47,6 +47,55 @@ const Schema = z.object({
     ),
 });
 
+const UploadTextSchema = z.object({
+  ytTitle: z.string(),
+  description: z.string(),
+  hashtags: z.array(z.string()),
+});
+export type UploadText = z.infer<typeof UploadTextSchema>;
+
+/**
+ * Act on the reviewers' notes: the words that go out with a Short get corrected rather than just reported. The video is
+ * already rendered, so notes about what's in it can't be fixed here and are left alone.
+ */
+export async function applyReviewNotes(
+  i: Pick<ContentInput, "videoTitle" | "channel" | "transcript">,
+  text: UploadText,
+  notes: string[],
+  o: { agent: AgentId; model?: string },
+): Promise<UploadText> {
+  const { $schema: _d, ...schema } = z.toJSONSchema(UploadTextSchema, { target: "draft-7" }) as Record<string, unknown>;
+  const { data } = await askAgent(
+    o.agent,
+    `A Short cut from "${i.videoTitle}"${i.channel ? ` by ${i.channel}` : ""} goes out with this text:
+
+YouTube title: ${text.ytTitle}
+Caption: ${text.description}
+Hashtags: ${text.hashtags.join(" ")}
+
+Captions viewers read:
+${i.transcript}
+
+Reviewers left these notes:
+${notes.map((n) => `- ${n}`).join("\n")}
+
+Fix the title, caption and hashtags wherever a note applies to them, using only what the captions support. Ignore notes about the video itself or its captions, since you can't change those. Change nothing else: keep the title's creator name first and its hashtags, and keep the credit line.`,
+    {
+      task: "metadata",
+      model: o.model,
+      maxTurns: 2,
+      effort: "low",
+      system: "You correct upload text for Shorts. Answer only with the requested JSON.",
+      schema,
+    },
+  );
+  const next = UploadTextSchema.parse(data);
+  if (!next.ytTitle.trim()) throw new Error("The corrected title came back empty");
+  if (/credit:/i.test(text.description) && !/credit:/i.test(next.description))
+    throw new Error("The corrected caption lost its credit line");
+  return next;
+}
+
 export function buildContentPrompt(i: ContentInput): string {
   if (i.profile === "kids") return kidsPrompt(i);
   return `A vertical short was cut from "${i.videoTitle}"${i.channel ? ` by ${i.channel}` : ""} and is about to be posted to YouTube Shorts, Instagram Reels and TikTok.
